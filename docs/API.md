@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-21（1.1 模型 9；1.2 主题 4；1.3 状态 5；1.4 入口 3；1.5 页面 5 + 组件 1；1.6 设置 5 + 组件 1）
+- 最后更新：2026-09-22（1.1–1.6 内核骨架；2.1 存储层；2.1.5 模块配置与明暗偏好落盘）
 
 ---
 
@@ -407,9 +407,9 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 
 ### `module_provider.dart` — ModuleProvider（`ChangeNotifier`）
 
-导航栏模块状态。不引用其他 Provider；插件能力经 `updateCapabilities` 外部注入。
+导航栏模块状态。不引用其他 Provider；插件能力经 `updateCapabilities` 外部注入。**Phase 2.1.5 起 enabled 状态持久化到 `settings` Box**。
 
-常量：`const int kMaxModules = 5`（CONTEXT 4.1 建议 `MAX_MODULES`，但 `constant_identifier_names` lint 会报 info，故用 `k` 前缀）
+常量：`const int kMaxModules = 5`
 
 初始状态：
 
@@ -430,25 +430,74 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 - `List<ModuleInfo> get visibleModules` — 导航栏实际显示。**选择规则**：常驻模块永远包含；非常驻需 `available && enabled`；总数最多 `kMaxModules`，超出时优先保留常驻、其余按模块列表顺序取。**输出顺序**：始终按 `_modules` 原始顺序（timetable → courseList → exam → homework → message → settings），而非"常驻在前、可选在后"，保证 toggle 时导航栏顺序不跳动
 - `int get visibleCount`
 - `ModuleInfo? getByType(ModuleType type)`
-- `void toggle(ModuleType type, bool enabled)` — 常驻模块（课表/设置）为**空操作**，不可关闭
+- `void toggle(ModuleType type, bool enabled)` — 常驻模块（课表/设置）为**空操作**，不可关闭；**变更后自动落盘**（fire-and-forget，见 `saveToStorage`）
 - `void updateCapabilities(Set<String> capabilities)` — 当前**只调整 `homework`**：能力含 `'homework'` → `available = true`。`timetable`/`courseList`/`message` 是内置能力恒可用；`exam` 是插件可选增强（无插件也能手动添加考试），不由此方法改变
-- `void resetToDefaults()` — 恢复初始配置
+- `void resetToDefaults()` — 恢复初始配置，**同样落盘**（否则重启又被旧配置覆盖）
+
+**持久化（`settings` Box，键 `kModuleEnabledStateKey`）**
+
+- `Future<void> loadFromStorage()` — 恢复用户上次的开关配置。边界情况全部不崩溃：没存过/空串/坏 JSON/非对象 → 保持默认；某键值类型不符 → 跳过该键；只存了部分模块 → 其余用默认；存了不存在的模块 ID → 忽略；**常驻模块即使存的是 `false` 也强制启用**
+- `Future<void> saveToStorage()` — 写入 `{"<capabilityId>": bool, ...}`
+- `Map<String, bool> encodeEnabledState()` — 当前状态（`capabilityId → enabled`）
+- `static Map<String, bool> decodeEnabledState(String? raw)` — 解析存储值，任何解析不出的内容被忽略；宽松接受 `bool` / 数字 `0|1` / `"true"|"false"|"1"|"0"`
+
+> 键用 `ModuleInfo.capabilityId` 而不是 `ModuleType.name`：内置模块两者相等，插件模块没有 `ModuleType` 只有 `capabilityId`，用它才能统一覆盖两类。
+> `available` **不受** `loadFromStorage` 影响——能力仍由插件决定；存储里的 `homework: true` 只是记录用户意图，等能力到位自动生效。
 
 ---
 
 ### `course_provider.dart` — CourseProvider（`ChangeNotifier`）
 
-课程列表状态。**Phase 1 仅内存**，不接 Hive，重启清空。
+课程列表状态。**Phase 2.1 起接入 Hive**：原始数据存 `courses` Box，覆盖层存 `overrides` Box（key 均为课程 ID）。
 
 - `List<Course> get courses` — 全部课程（含隐藏），不可变视图
 - `List<Course> get visibleCourses` — 过滤 `userOverride?.hidden == true`（即 `Course.isHidden`）
 - `int get hiddenCount` / `int get length`
+- `bool get isLoaded` — 是否已从 Hive 载入过（UI 可区分"空数据"与"尚未加载"）
 - `Course? getById(String id)`
-- `void setCourses(List<Course> list)`
-- `void addCourse(Course c)` — 同 id 已存在则替换
-- `void updateCourse(Course c)` — 按 id 定位；找不到则按新增处理（upsert）
-- `void deleteCourse(String id)` — 教务课程应改用 `userOverride.hidden`，见 CONTEXT 3.3
-- `void clear()`
+
+**Hive 读写（异步，内部 try-catch + `debugPrint`，失败不抛异常）**
+
+- `Future<void> loadFromStorage()` — 读 `courses` Box，并把 `OverrideEngine.getAllOverrides()` **一次性**读出的覆盖层按课程 ID 挂载；解析失败的单条数据被跳过。会**替换**内存列表（不是累加）
+- `Future<void> saveCourse(Course c)` — **先落盘再更新内存**：剥离覆盖层写 `courses` Box，覆盖层另交 `OverrideEngine` 写 `overrides` Box；落盘失败仍更新内存（本次会话的修改不丢）
+- `Future<void> deleteCourse(String id)` — 同时删除 `courses` 与 `overrides` 中的记录（避免孤儿覆盖层）。教务课程应改用 `userOverride.hidden`，见 CONTEXT 3.3
+- `Future<void> clearAll()` — 清空两个 Box 与内存（测试 / 重置用）
+
+**纯内存操作（不落盘，供测试 / 临时预览）**
+
+- `void setCourses(List<Course> list)` / `void addCourse(Course c)`（同 id 替换）/ `void updateCourse(Course c)`（upsert）/ `void clear()`
+
+> 覆盖层保护：`saveCourse` 在课程**不带** `userOverride` 时**不会**删除 `overrides` Box 里的既有记录——插件重新同步原始数据时用户的修改必须保留（CONTEXT 3.3）。
+
+---
+
+## lib/services/
+
+### `storage_service.dart` — StorageService
+
+统一管理 Hive 初始化与 Box 访问。纯静态类（`StorageService._()` 禁止实例化）。
+
+常量（Box 名，落盘后即契约，见 CONTEXT 4.2.1）：`kCoursesBoxName = 'courses'`、`kExamsBoxName = 'exams'`、`kHomeworksBoxName = 'homeworks'`、`kMessagesBoxName = 'messages'`、`kOverridesBoxName = 'overrides'`、`kSettingsBoxName = 'settings'`、`kPluginsBoxName = 'plugins'`、`kSkinsBoxName = 'skins'`
+
+常量（`settings` Box 内的键名，同样属于契约）：`kModuleEnabledStateKey = 'module_enabled_state'`（值为 JSON 对象 `{"<capabilityId>": bool}`）、`kThemeBrightnessKey = 'theme_brightness'`（值为 `light` / `dark`）
+
+- `static Future<void> init({String? path})` — 初始化 Hive 并依次打开 8 个 `Box<String>`。`path == null` 时走 `Hive.initFlutter()`（生产）；传 `path` 时走 `Hive.init(path)`（测试，免去 `path_provider` 平台依赖）。重复调用安全。初始化失败只 `debugPrint` 不抛
+- `static Future<void> close()` — 关闭 Hive 并清空缓存的 Box 引用（测试收尾 / App 退出）
+- `static bool get isInitialized`
+- `static Box<String> get coursesBox` / `examsBox` / `homeworksBox` / `messagesBox` / `overridesBox` / `settingsBox` / `pluginsBox` / `skinsBox` — 未初始化或该 Box 打开失败时抛 `StateError`（由调用方 try-catch 兜住，不静默返回坏数据）
+
+> 设计：所有 Box 统一 `Box<String>` 存 JSON 字符串，**不注册任何 `TypeAdapter`**（CONTEXT 禁止 `build_runner`），模型的 `toJson`/`fromJson` 是唯一序列化途径。
+
+### `override_engine.dart` — OverrideEngine
+
+用户覆盖层的读写入口（纯静态类）。覆盖层与原始数据分离存储，两边都以**课程 ID** 为 key。
+
+- `static UserOverride? getOverride(String courseId)` — 无记录或解析失败返回 `null`
+- `static Future<void> saveOverride(String courseId, UserOverride override)`
+- `static Future<void> removeOverride(String courseId)`
+- `static Map<String, UserOverride> getAllOverrides()` — 用 `box.toMap()` **一次取完**整表，再循环解析。相比"逐门课 `getOverride`"，把加载 N 门课从 O(N) 次 Box 访问降为 1 次；坏数据被跳过而不影响其余条目
+- `static int get count`
+- `static UserOverride? decodeOverride(String? raw)` — 空值 / 非 JSON / 非对象一律返回 `null`
 
 ---
 
@@ -464,8 +513,11 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 - `AppTheme get themedForBrightness` — `currentTheme.withBrightness(brightness)`
 - `Future<void> applySkin(SkinPack skin)` — 调 `engine.loadSkin` 后 `notifyListeners`
 - `Future<void> resetTheme()` — 调 `engine.reset` 后 `notifyListeners`
-- `void setBrightness(Brightness b)` — 同值不通知
+- `void setBrightness(Brightness b)` — 同值不通知；**变更后自动落盘**
 - `AppTheme previewSkin(SkinPack skin)` — 不改状态、不通知
+- `Future<void> loadFromStorage()` — 从 `settings` Box 恢复明暗偏好（键 `kThemeBrightnessKey`，值为 `light` / `dark`）；没存过或值无法识别则保持默认 `Brightness.light`
+- `Future<void> saveToStorage()` — 写入 `_brightness.name`
+- `static Brightness? decodeBrightness(String? raw)` — 无法识别返回 `null`（调用方保持默认）
 - `dispose()` 会一并 `dispose()` 内部引擎
 
 ---
@@ -675,8 +727,10 @@ const EmptyState({
 
 ### `main.dart` — 入口
 
-- `void main()` — `runApp(buildApp())`
-- `Widget buildApp()` — 构建完整 App（Provider 树 + `MyApp`）。抽成函数是为了让 widget 测试直接 `pumpWidget(buildApp())`，验证的就是 `main()` 真正使用的那棵树
+- `Future<void> main()` — `WidgetsFlutterBinding.ensureInitialized()` → `await StorageService.init()` → 依次建 `CourseProvider` / `ModuleProvider` / `ThemeProvider` 并各自 `await loadFromStorage()` → `runApp(buildApp(...))`。**先读数据再起 UI**，避免首帧闪一下默认值（如导航栏先显示默认 4 个模块再跳成用户配置）
+- `Widget buildApp({CourseProvider? courseProvider, ModuleProvider? moduleProvider, ThemeProvider? themeProvider})` — 构建完整 App（Provider 树 + `MyApp`）。抽成函数是为了让 widget 测试直接 `pumpWidget(buildApp())`，验证的就是 `main()` 真正使用的那棵树
+  - `courseProvider` / `themeProvider` 传入时用 `ChangeNotifierProvider.value`（实例归调用方所有，不随树销毁而 dispose）；不传时内部 `create` 空实例（测试 / 预览用，不访问 Hive）
+  - `moduleProvider` 由 `ChangeNotifierProxyProvider` 创建（该 Provider 无 `.value` 变体），注入的实例会被树接管生命周期；**不要**把同一个 `ModuleProvider` 实例同时传给两棵树（先卸载的那棵会 dispose 它）
 
 Provider 顺序（即依赖顺序，被依赖者必须在前）：
 

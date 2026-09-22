@@ -171,14 +171,48 @@
 
 ---
 
-## Phase 2：存储与业务（未开始）
+## Phase 2：存储与业务（进行中）
 
-- [ ] Hive 初始化
-- [ ] `lib/services/storage_service.dart`
-- [ ] `lib/services/override_engine.dart`
+- [x] Hive 初始化
+- [x] `lib/services/storage_service.dart`
+- [x] `lib/services/override_engine.dart`
 - [ ] `lib/services/timetable_logic.dart`（周次解析、网格构建）
-- [ ] CourseProvider 接入 Hive
+- [x] CourseProvider 接入 Hive
 - [ ] 手工塞测试数据，课表能渲染
+
+> 备注：Phase 2.1 由 AI 生成（prompt: Phase 2.1）。> `dart analyze lib` 通过。用 `Box<String>` + 手写 JSON，**未**引入 `TypeAdapter`
+> 或 `build_runner`，未新增依赖。
+> 另用临时 `flutter test` 脚本（真实 Hive + 临时目录）验证了 20 组行为：
+> 8 个 Box 名称与可用性、重复 init、覆盖层 save/get/remove/getAll、
+> 坏数据跳过、saveCourse 落盘后重启可加载、原始数据与覆盖层分离存储、
+> **重新同步不冲掉覆盖层**、deleteCourse 清理孤儿覆盖层、
+> 同 id 覆盖、clearAll、未初始化时抛 StateError 且 Provider 不崩、
+> 全模型 JSON 键名往返与命名规范（无下划线/无连续大写/小写开头）、
+> 时间存 ISO8601、颜色存 hex。脚本已删除。
+>
+> **Schema 冻结检查结果**：9 个模型的 JSON 键名全部为小驼峰，
+> `fromJson` 读取键与 `toJson` 写入键一一对应，**未发现不一致**
+> （无 `sourcePluginID` / `start_time` 之类问题），无需修正。
+> 已把契约写入 CONTEXT.md 4.2.1（CONTEXT 版本随之升到 v1.1）。
+
+> **Phase 2.1.5 修正**（review 发现的真实缺口）：`ModuleProvider` 的 `enabled` 原本
+> 是纯内存状态，用户在"导航栏配置"里取消勾选的模块**重启后会复原**，违反
+> CONTEXT 3.5「模块配置/用户偏好 → Hive Box settings」。现已修复：
+> `ModuleProvider` 新增 `loadFromStorage()` / `saveToStorage()`，
+> 状态以 `{"<capabilityId>": bool}` 存在 `settings` Box 的 `module_enabled_state`，
+> `toggle()` 与 `resetToDefaults()` 成功后自动落盘（fire-and-forget，不阻塞 UI）；
+> `ThemeProvider` 的明暗偏好一并落到 `theme_brightness`；
+> `main.dart` 在起 UI 前依次预加载三个 Provider。
+> 另用临时 `flutter test` 脚本（真实 Hive + 临时目录）验证了 23 组行为，
+> 含**直接复现上报场景**（取消勾选课程/考试 → 重建 Provider → 配置保留）、
+> 坏 JSON / 非对象 / 空串 / 值类型不符 / 部分缺失 / 未知模块 ID /
+> required 强制 true / available 不受影响 / 未初始化存储不崩溃 /
+> 明暗偏好往返 / 导航栏按状态渲染，脚本已删除。
+>
+> **测试注意**：Hive 的异步写入在 `testWidgets` 的 fake-async 时区里**永远不会完成**，
+> 只要在 `testWidgets` 内触发一次写（如 `toggle`），随后的 `pumpAndSettle` 会卡死
+> 直到 10 分钟超时。因此涉及 Hive 的用例一律写成普通 `test()`。
+> 后续阶段写测试时需沿用这条规则。
 
 ---
 
@@ -258,9 +292,12 @@
 |------|------|------|
 | 2026-09-21 | AppTheme 与 default_theme 存在循环 import，Phase 6 皮肤系统时考虑改为单向依赖 | 待处理 |
 | 2026-09-21 | 皮肤令牌 `divider` 在 AppTheme 中无对应字段，需要时补 | 待处理 |
-| 2026-09-21 | `AppTheme.explicitKeys` 因 Dart 私有命名参数限制只能公开，建议加 `@protected` | 待处理 |
+| 2026-09-22 | `AppTheme.explicitKeys` 因 Dart 私有命名参数限制只能公开，建议加 `@protected` | ✅ 已完成（Phase 2.1，`@protected` 无 lint 报错） |
 | 2026-09-22 | `ModuleType` 枚举不携带默认 iconName，保持不依赖 Flutter 的纯净性（现状接受） | 已决定 |
 | 2026-09-22 | `CONTEXT.md` 常量命名规范已从 `MAX_MODULES` 改为 `kMaxModules` | ✅ 已完成 |
 | 2026-09-22 | home_page._iconFromName 建议 Phase 1.7 抽到 lib/widgets/ 复用 | ✅ 已完成（Phase 1.6） |
 | 2026-09-22 | 课表设置页滑块默认 60，而 AppTheme.timetableCellHeight 默认 64；Phase 2 接存储时需统一取值来源 | ✅ 已完成（Phase 1.6.1：滑块初值改从 AppTheme 读取） |
+| 2026-09-22 | `CourseProvider.deleteCourse` 已由同步改为异步（写 Hive）；Phase 5 编辑页调用时需 `await` | 待处理 |
+| 2026-09-22 | 课程/考试/作业/消息 Provider 目前只有 CourseProvider 接了 Hive，其余待 Phase 2.2 接入 | 待处理 |
+| 2026-09-22 | `settings` Box 的键名（`module_enabled_state` / `theme_brightness`）已写入 API.md，属契约；改动需写迁移逻辑 | 已决定 |
 | 2026-09-22 | 导航栏配置页需给出"已达上限 5 个"的提示，并显示哪些模块被挤出 | ✅ 已完成（Phase 1.6） |

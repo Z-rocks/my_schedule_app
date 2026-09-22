@@ -151,7 +151,7 @@ class AppTheme {
     required this.timetableTimeColumnWidth,
     required this.showWeekend,
     required this.timeFormat,
-    Set<String> explicitKeys = const <String>{},
+    @protected Set<String> explicitKeys = const <String>{},
   }) : _explicitFields = explicitKeys;
 
   /// 内置默认蓝主题。实现位于 `default_theme.dart`。

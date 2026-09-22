@@ -1,9 +1,12 @@
 // 模块状态：管理底部导航栏可用模块的启用状态与能力可用性
+import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
 import '../models/module.dart';
+import '../services/storage_service.dart';
 
 /// 底部导航栏最多显示的模块数（CONTEXT.md 3.4）。
 ///
@@ -120,6 +123,8 @@ class ModuleProvider extends ChangeNotifier {
   /// （CONTEXT.md 3.4 "课表、设置不可关闭"）。
   /// 不可用的模块（能力未提供）允许记录用户的启用意图，
   /// 但不会出现在 [visibleModules] 中，等能力可用后自动生效。
+  ///
+  /// 切换成功后**自动落盘**（见 [saveToStorage]），因此杀进程重开仍保留配置。
   void toggle(ModuleType type, bool enabled) {
     final int index = _indexOfType(type);
     if (index < 0) return;
@@ -130,6 +135,9 @@ class ModuleProvider extends ChangeNotifier {
 
     _modules[index] = module.withEnabled(enabled);
     _notify();
+    // 不 await：toggle 是同步接口（Switch.onChanged 直接用），
+    // 落盘失败只记日志，不阻塞 UI 也不回滚内存状态。
+    unawaited(saveToStorage());
   }
 
   /// 用插件声明的能力集合更新各模块的可用性。
@@ -160,11 +168,111 @@ class ModuleProvider extends ChangeNotifier {
   }
 
   /// 恢复初始模块配置（设置页"恢复默认"用）。
+  ///
+  /// 同样会落盘——否则"恢复默认"重启后又被存储里的旧配置覆盖回去。
   void resetToDefaults() {
     _modules
       ..clear()
       ..addAll(_initialModules);
     _notify();
+    unawaited(saveToStorage());
+  }
+
+  // ————————————————— 持久化（settings Box） —————————————————
+
+  /// 从 `settings` Box 恢复用户上次的导航栏开关配置。
+  ///
+  /// 边界情况（都不崩溃）：
+  /// - 没存过 / 空串 / 坏 JSON / 不是对象 → 保持初始默认配置
+  /// - 某个键的值类型不符（如 `"yes"`）→ 跳过该键，该模块用默认值
+  /// - 只存了部分模块 → 未出现的模块用默认值
+  /// - 存了当前不存在的模块 ID（插件卸载等）→ 忽略
+  /// - 常驻模块即使存的是 `false` → 仍强制启用（见下）
+  Future<void> loadFromStorage() async {
+    try {
+      final String? raw =
+          StorageService.settingsBox.get(kModuleEnabledStateKey);
+      final Map<String, bool> stored = decodeEnabledState(raw);
+      if (stored.isEmpty) return;
+
+      bool changed = false;
+      for (int i = 0; i < _modules.length; i++) {
+        final ModuleInfo module = _modules[i];
+        final bool? enabled = stored[module.capabilityId];
+        if (enabled == null) continue; // 存储里没有 → 保持默认
+
+        // 走 withEnabled：它内部对常驻模块强制 true，
+        // 所以"课表/设置不可关闭"的规则只有一份实现（在 ModuleInfo 里），
+        // loadFromStorage 与 toggle 共用，不需要在这里再写一遍。
+        final ModuleInfo next = module.withEnabled(enabled);
+        if (next.enabled == module.enabled) continue;
+        _modules[i] = next;
+        changed = true;
+      }
+      if (changed) _notify();
+    } catch (error, stackTrace) {
+      debugPrint('ModuleProvider.loadFromStorage 失败（保持默认配置）: $error');
+      debugPrint('$stackTrace');
+    }
+  }
+
+  /// 把当前的 enabled 状态写入 `settings` Box。
+  ///
+  /// 存储结构：`settings` Box 的键 [kModuleEnabledStateKey]，
+  /// 值是一个 JSON 对象 `{"<capabilityId>": <bool>, ...}`（见 [encodeEnabledState]）。
+  Future<void> saveToStorage() async {
+    try {
+      await StorageService.settingsBox.put(
+        kModuleEnabledStateKey,
+        jsonEncode(encodeEnabledState()),
+      );
+    } catch (error, stackTrace) {
+      debugPrint('ModuleProvider.saveToStorage 失败: $error');
+      debugPrint('$stackTrace');
+    }
+  }
+
+  /// 当前 enabled 状态：`capabilityId → enabled`。
+  ///
+  /// 用 [ModuleInfo.capabilityId] 而不是 `ModuleType.name` 作键：
+  /// 内置模块两者相等，而插件模块没有 `ModuleType`，只有 `capabilityId`，
+  /// 用它才能统一覆盖两类模块。
+  Map<String, bool> encodeEnabledState() => <String, bool>{
+        for (final ModuleInfo module in _modules)
+          module.capabilityId: module.enabled,
+      };
+
+  /// 解析存储里的模块配置。
+  ///
+  /// 任何解析不出来的内容都被**忽略**而不是抛异常：
+  /// 返回空 Map 表示"整份数据不可用，全部走默认值"，
+  /// 某个键被跳过表示"只有这个模块走默认值"。
+  static Map<String, bool> decodeEnabledState(String? raw) {
+    if (raw == null || raw.isEmpty) return <String, bool>{};
+    try {
+      final Object? decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        debugPrint('ModuleProvider: 模块配置不是 JSON 对象，改用默认配置');
+        return <String, bool>{};
+      }
+
+      final Map<String, bool> result = <String, bool>{};
+      decoded.forEach((dynamic key, dynamic value) {
+        if (key == null) return;
+        final String id = key.toString();
+        if (id.isEmpty) return;
+        final bool? flag = _asBoolOrNull(value);
+        if (flag == null) {
+          debugPrint('ModuleProvider: 模块 "$id" 的配置值类型不符，已忽略');
+          return;
+        }
+        result[id] = flag;
+      });
+      return result;
+    } catch (error) {
+      debugPrint('ModuleProvider: 模块配置解析失败，改用默认配置: $error');
+      return <String, bool>{};
+    }
   }
 
   @override
@@ -185,4 +293,22 @@ class ModuleProvider extends ChangeNotifier {
     }
     return -1;
   }
+}
+
+/// 宽松地把 JSON 值转成 bool：接受 `bool`、数字（0/1）与 `"true"/"false"/"1"/"0"`。
+/// 其余类型返回 `null`（调用方据此跳过该键，改用默认值）。
+bool? _asBoolOrNull(Object? value) {
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  if (value is String) {
+    switch (value.trim().toLowerCase()) {
+      case 'true':
+      case '1':
+        return true;
+      case 'false':
+      case '0':
+        return false;
+    }
+  }
+  return null;
 }

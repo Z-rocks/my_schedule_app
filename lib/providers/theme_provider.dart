@@ -1,7 +1,10 @@
 // 主题状态：包装 ThemeEngine，向 UI 暴露当前主题与明暗模式偏好
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/skin_pack.dart';
+import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_engine.dart';
 
@@ -56,14 +59,61 @@ class ThemeProvider extends ChangeNotifier {
   }
 
   /// 设置明暗模式偏好。
+  ///
+  /// 变更后自动落盘（见 [saveToStorage]），杀进程重开仍保留。
   void setBrightness(Brightness b) {
     if (_brightness == b) return;
     _brightness = b;
     _notify();
+    // 不 await：同步接口，落盘失败只记日志。
+    unawaited(saveToStorage());
   }
 
   /// 预览皮肤效果，**不改变**当前状态、不通知 UI。
   AppTheme previewSkin(SkinPack skin) => _engine.preview(skin);
+
+  // ————————————————— 持久化（settings Box） —————————————————
+
+  /// 从 `settings` Box 恢复明暗模式偏好。
+  ///
+  /// 没存过、空串或值无法识别时保持当前值（默认 `Brightness.light`），不崩溃。
+  Future<void> loadFromStorage() async {
+    try {
+      final String? raw = StorageService.settingsBox.get(kThemeBrightnessKey);
+      final Brightness? stored = decodeBrightness(raw);
+      if (stored == null || stored == _brightness) return;
+      _brightness = stored;
+      _notify();
+    } catch (error, stackTrace) {
+      debugPrint('ThemeProvider.loadFromStorage 失败（保持默认偏好）: $error');
+      debugPrint('$stackTrace');
+    }
+  }
+
+  /// 把明暗模式偏好写入 `settings` Box（值取 `Brightness.name`：`light` / `dark`）。
+  Future<void> saveToStorage() async {
+    try {
+      await StorageService.settingsBox
+          .put(kThemeBrightnessKey, _brightness.name);
+    } catch (error, stackTrace) {
+      debugPrint('ThemeProvider.saveToStorage 失败: $error');
+      debugPrint('$stackTrace');
+    }
+  }
+
+  /// 解析存储里的明暗偏好；无法识别返回 `null`（调用方保持默认）。
+  static Brightness? decodeBrightness(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    switch (raw.trim().toLowerCase()) {
+      case 'light':
+        return Brightness.light;
+      case 'dark':
+        return Brightness.dark;
+      default:
+        debugPrint('ThemeProvider: 无法识别的明暗偏好 "$raw"，改用默认值');
+        return null;
+    }
+  }
 
   @override
   void dispose() {
