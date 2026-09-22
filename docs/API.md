@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-21（1.1 模型 9 文件；1.2 主题 4 文件；1.3 状态管理 5 文件；1.4 入口 3 文件）
+- 最后更新：2026-09-21（1.1 模型 9 文件；1.2 主题 4 文件；1.3 状态管理 5 文件；1.4 入口 3 文件；1.5 页面 5 + 组件 1）
 
 ---
 
@@ -352,6 +352,7 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 - `static AppTheme defaultTheme()` — 内置默认蓝主题（合并基线）
 - `Set<String> get explicitFields` — 被显式设置的字段名只读视图
 - `Brightness get brightness` — 由 `background` 亮度推断
+- `FontWeight get titleFontWeight` — 由 `fontWeightTitle` 换算的类型化字重；只接受 100 的整数倍（100..900），非法值（0 / 150 / 999）回落 `FontWeight.w400`
 - `factory AppTheme.fromJson(Map<String, dynamic> json)` — 缺失/非法字段回落默认值且不计入显式字段；颜色接受 `"#RRGGBB"` / `"#AARRGGBB"` / 无 `#` / `0x` 前缀 / ARGB 整数
 - `Map<String, dynamic> toJson()` — 颜色输出 hex（不透明写 `#RRGGBB`，否则 `#AARRGGBB`）；输出全部 28 个键
 - `AppTheme merge(AppTheme other)` — 仅 `other` 显式设置的字段覆盖 `this`；结果显式字段为并集
@@ -520,17 +521,90 @@ class HomePage extends StatefulWidget {
 
 行为：
 - 用 Material 3 的 `NavigationBar`（**不是** `BottomNavigationBar`）构建导航栏；图标取自 `_iconFromName(module.iconName)`，标签取自 `ModuleInfo.title`
-- 页面映射（`_buildPage`）：`timetable`→TimetableView、`courseList`→CourseListView、`exam`→ExamView、`homework`→HomeworkView、`message`→MessageView、`settings`→SettingsPage、`type == null`→插件模块页
-  - **Phase 1.5 之前**这些位置都是私有占位 `_ModulePlaceholder`，Phase 1.5 逐行替换为真实页面
-- 用 `IndexedStack` 保活各页面，切回标签时保留滚动位置与内部状态
+- 页面映射（`_buildPage(context, module)`）：
+  | ModuleType | 页面 |
+  |------------|------|
+  | `timetable` | `const TimetableView()` |
+  | `courseList` | `const CourseListView()` |
+  | `exam` | `const ExamView()` |
+  | `homework` | `const HomeworkView()` |
+  | `message` | `const MessageView()` |
+  | `settings` | `_pendingPage(...)` — **Phase 1.6** 替换为 `SettingsPage()` |
+  | `null`（插件模块） | `_pendingPage(...)` — **Phase 3** 实现 |
+- 用 `IndexedStack` 保活各页面，切回标签时保留滚动位置与内部状态（如课表页选中的周次）
 - **越界保护**：`visibleModules` 变短导致 `_currentIndex` 越界时**重置为 0**（回到课表）。本帧先用修正后的下标渲染，再把 `_currentIndex` 归一化推迟到 `addPostFrameCallback`，避免在 `build` 中 `setState`
-- `visibleModules` 为空时显示 `_NoModuleScaffold` 兜底页（课表/设置常驻，正常不会出现）
+- `visibleModules` 为空时用 `EmptyState` 兜底（课表/设置常驻，正常不会出现）
 - 样式全部经 `AppThemeExtension.of(context)` 读取，无硬编码颜色/尺寸
 
 私有辅助（同文件内）：
 - `const Map<String, IconData> _kIconByName` — 图标名 → `IconData` 映射表。覆盖 6 个内置模块图标（`calendar_month` / `book_outlined` / `assignment_outlined` / `edit_note` / `notifications_outlined` / `settings_outlined`）以及预留的插件常用图标（`grade_outlined` / `school_outlined` / `task_outlined` / `message_outlined`）
-- `IconData _iconFromName(String name)` — 查表；**查不到（含空字符串、插件未声明 `iconName`）时兜底 `Icons.extension`**
-- `FontWeight _fontWeightOf(int value)` — 把 `AppTheme.fontWeightTitle`（int）转成 `FontWeight`
+- `IconData _iconFromName(String name)` — 查表；**查不到（含空字符串、插件未声明 `iconName`）时兜底 `Icons.extension`**（Phase 1.7 抽到 `lib/widgets/`）
+- `Widget _pendingPage(BuildContext, ModuleInfo, String subtitle)` — 尚未实现的页面（设置 / 插件模块）的临时外壳，统一用 `EmptyState`，不再单写占位类
+
+### `timetable/timetable_view.dart` — TimetableView
+
+课表页（Phase 1.5 空态骨架，不接任何 Provider）。
+
+```dart
+const TimetableView({super.key, int totalWeeks = 20, int initialWeek = 1});
+```
+
+- `AppBar`：标题"课表"，右侧 `+` 按钮 → `SnackBar('添加课程（待实现）')`
+- 周次选择器：`ListView.builder`（horizontal，高 `kWeekSelectorHeight = 48`）+ `ChoiceChip`，1..`totalWeeks`
+  - 选中态用 `theme.primary` / `theme.onPrimary`，未选中用 `theme.surface` / `theme.onBackground`，圆角 `theme.chipRadius`
+  - `initialWeek` 会钳制到 `1..totalWeeks`；默认第 1 周（Phase 2 接入学期配置后传入真实"当前周"）
+  - 只改内部 state，不读业务数据
+- Body：`EmptyState(icon: Icons.calendar_today, title: '还没有课表数据', subtitle: '点击右上角 + 添加课程，或安装插件从教务系统导入', actionLabel: '去设置安装插件', onAction: → SnackBar('请前往设置 → 插件管理'))`
+- 常量：`kWeekSelectorHeight = 48`
+
+### `course_list/course_list_view.dart` — CourseListView
+
+`const CourseListView({super.key})` — AppBar"课程" + `EmptyState(Icons.book_outlined, '暂无课程')`。
+
+### `exam/exam_view.dart` — ExamView
+
+`const ExamView({super.key})` — AppBar"考试" + `EmptyState(Icons.assignment_outlined, '暂无考试安排', subtitle: '安装支持考试能力的插件后可导入')`。
+
+### `homework/homework_view.dart` — HomeworkView
+
+`const HomeworkView({super.key})` — AppBar"作业" + `EmptyState(Icons.edit_note, '暂无作业', subtitle: '安装学习通等插件后可查看')`。
+
+### `message/message_view.dart` — MessageView
+
+`const MessageView({super.key})` — AppBar"消息"，右侧"全部已读"按钮 → `SnackBar('已全部标记为已读')`；Body `EmptyState(Icons.notifications_none, '暂无消息')`。
+
+---
+
+## lib/widgets/
+
+### `empty_state.dart` — EmptyState
+
+所有模块页面共用的空态组件。
+
+```dart
+const EmptyState({
+  super.key,
+  required IconData icon,
+  required String title,
+  String? subtitle,
+  String? actionLabel,
+  VoidCallback? onAction,
+});
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `icon` | `IconData` | 空态图标，尺寸固定 `kEmptyStateIconSize = 80` |
+| `title` | `String` | 主文案（必填），用 `theme.titleSize` + `theme.titleFontWeight` + `theme.onBackground` |
+| `subtitle` | `String?` | 副文案，`null` 不显示；用 `theme.captionSize` + 低透明度正文色 |
+| `actionLabel` | `String?` | 按钮文字，`null` 不显示按钮 |
+| `onAction` | `VoidCallback?` | 按钮回调；与 `actionLabel` **同时提供**才显示按钮 |
+
+- 垂直居中（`Center` + `Column(mainAxisSize: min)`），内边距 `theme.cardPadding * 2`
+- 按钮为 `FilledButton`，背景 `theme.primary` / 前景 `theme.onPrimary` / 圆角 `theme.buttonRadius`
+- 常量：`kEmptyStateIconSize = 80`（`AppTheme` 无图标尺寸令牌，故为组件级常量）
+
+---
 
 ---
 

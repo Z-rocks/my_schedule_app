@@ -157,6 +157,23 @@ class AppTheme {
   /// 内置默认蓝主题。实现位于 `default_theme.dart`。
   static AppTheme defaultTheme() => defaults.defaultTheme();
 
+  /// 标题字重的类型化取值（由 [fontWeightTitle] 换算而来）。
+  ///
+  /// [fontWeightTitle] 用 int 是为了 JSON 序列化，UI 侧需要 `FontWeight`。
+  /// 在这里统一换算，避免各页面 / 组件各写一份（CONTEXT.md 3.2 要求字体
+  /// 也从主题读，不允许硬编码字重）。
+  FontWeight get titleFontWeight {
+    // FontWeight.values == [w100, w200, ..., w900]。
+    // 只接受 100 的整数倍（100..900）；非法值（0、150、999 等）回落 w400，
+    // 而不是被 ~/ 静默截断成别的字重。
+    if (fontWeightTitle % 100 != 0) return FontWeight.w400;
+    final int index = (fontWeightTitle ~/ 100) - 1;
+    if (index < 0 || index >= FontWeight.values.length) {
+      return FontWeight.w400;
+    }
+    return FontWeight.values[index];
+  }
+
   /// 被显式设置过的字段名（JSON 键名）只读视图，便于调试与校验。
   Set<String> get explicitFields => Set<String>.unmodifiable(_explicitFields);
 

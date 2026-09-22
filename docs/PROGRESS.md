@@ -108,11 +108,23 @@
 > 插件模块可带 iconName）后已删除脚本。
 
 ### 1.5 页面骨架（空态）
-- [ ] `lib/pages/timetable/timetable_view.dart`
-- [ ] `lib/pages/course_list/course_list_view.dart`
-- [ ] `lib/pages/exam/exam_view.dart`
-- [ ] `lib/pages/homework/homework_view.dart`
-- [ ] `lib/pages/message/message_view.dart`
+- [x] `lib/widgets/empty_state.dart` — EmptyState（6 个页面共用，由 1.5 提前实现）
+- [x] `lib/pages/timetable/timetable_view.dart`
+- [x] `lib/pages/course_list/course_list_view.dart`
+- [x] `lib/pages/exam/exam_view.dart`
+- [x] `lib/pages/homework/homework_view.dart`
+- [x] `lib/pages/message/message_view.dart`
+
+> 备注：Phase 1.5 由 AI 生成（prompt: `docs/prompts/05-pages.md`）。
+> `dart analyze lib` 通过。`home_page.dart` 的 `_ModulePlaceholder` 与
+> `_NoModuleScaffold` 两个私有占位类已**完全删除**，`_buildPage` 的 switch
+> 已改为返回真实页面；尚未实现的 `settings`（Phase 1.6）与插件模块（Phase 3）
+> 改用私有方法 `_pendingPage` + `EmptyState` 兜底，不再单写占位类。
+> `_iconFromName` 按约定保留在 `home_page.dart`（Phase 1.7 再抽到 `lib/widgets/`）。
+> 另用临时 `flutter test` 脚本验证了 16 组行为（真实页面渲染、空态文案/图标、
+> 两个 SnackBar、周次选择器 20 项/默认第 1 周/点击切换/滚动到第 20 周/
+> 切标签后保留、5 个上限挤出 message、样式全部取自 AppTheme、字重换算兜底）
+> 后已删除脚本。
 
 ### 1.6 设置页
 - [ ] `lib/pages/settings/settings_page.dart`
@@ -122,7 +134,7 @@
 - [ ] `lib/pages/settings/timetable_settings_page.dart`
 
 ### 1.7 通用组件
-- [ ] `lib/widgets/empty_state.dart`
+- [x] `lib/widgets/empty_state.dart`（已在 Phase 1.5 完成）
 - [ ] `lib/widgets/course_card.dart`（预留）
 - [ ] `lib/widgets/week_selector.dart`（预留）
 
@@ -220,4 +232,10 @@
 
 | 日期 | 问题 | 状态 |
 |------|------|------|
-| - | - | - |
+| 2026-09-21 | AppTheme 与 default_theme 存在循环 import，Phase 6 皮肤系统时考虑改为单向依赖 | 待处理 |
+| 2026-09-21 | 皮肤令牌 `divider` 在 AppTheme 中无对应字段，需要时补 | 待处理 |
+| 2026-09-21 | `AppTheme.explicitKeys` 因 Dart 私有命名参数限制只能公开，建议加 `@protected` | 待处理 |
+| 2026-09-22 | `ModuleType` 枚举不携带默认 iconName，保持不依赖 Flutter 的纯净性（现状接受） | 已决定 |
+| 2026-09-22 | `CONTEXT.md` 常量命名规范已从 `MAX_MODULES` 改为 `kMaxModules` | ✅ 已完成 |
+| 2026-09-22 | home_page._iconFromName 建议 Phase 1.7 抽到 lib/widgets/ 复用 | 待处理 |
+| 2026-09-22 | 导航栏配置页需给出"已达上限 5 个"的提示，并显示哪些模块被挤出 | 待处理 |

@@ -6,6 +6,12 @@ import '../models/module.dart';
 import '../providers/module_provider.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_extension.dart';
+import '../widgets/empty_state.dart';
+import 'course_list/course_list_view.dart';
+import 'exam/exam_view.dart';
+import 'homework/homework_view.dart';
+import 'message/message_view.dart';
+import 'timetable/timetable_view.dart';
 
 /// 主页外壳：底部导航栏的模块与顺序完全由 [ModuleProvider] 决定。
 ///
@@ -24,12 +30,20 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final AppTheme theme = AppThemeExtension.of(context);
     final ModuleProvider moduleProvider = context.watch<ModuleProvider>();
     final List<ModuleInfo> modules = moduleProvider.visibleModules;
 
     // 极端兜底：课表与设置是常驻模块，理论上 visibleModules 不会为空。
     if (modules.isEmpty) {
-      return const _NoModuleScaffold();
+      return Scaffold(
+        backgroundColor: theme.background,
+        body: const EmptyState(
+          icon: Icons.settings_outlined,
+          title: '没有可显示的模块',
+          subtitle: '请到设置中开启',
+        ),
+      );
     }
 
     // 越界保护：模块被关闭后 visibleModules 会变短，此时旧下标可能越界。
@@ -46,11 +60,12 @@ class _HomePageState extends State<HomePage> {
     }
 
     return Scaffold(
-      // 用 IndexedStack 保活各页面，切回标签时保留滚动位置与内部状态。
+      // 用 IndexedStack 保活各页面，切回标签时保留滚动位置与内部状态
+      // （例如课表页选中的周次）。
       body: IndexedStack(
         index: safeIndex,
         children: modules
-            .map((ModuleInfo module) => _buildPage(module))
+            .map((ModuleInfo module) => _buildPage(context, module))
             .toList(growable: false),
       ),
       bottomNavigationBar: NavigationBar(
@@ -71,26 +86,44 @@ class _HomePageState extends State<HomePage> {
 
   /// 模块 → 页面。
   ///
-  /// Phase 1.5 会把每个 `_ModulePlaceholder` 换成对应的真实页面
-  /// （见每个 case 后的注释），本方法的签名保持不变。
-  Widget _buildPage(ModuleInfo module) {
+  /// `settings` 与插件模块的页面分别属于 Phase 1.6 与 Phase 3，
+  /// 目前用 [_pendingPage] 给出空态外壳。
+  Widget _buildPage(BuildContext context, ModuleInfo module) {
     switch (module.type) {
       case ModuleType.timetable:
-        return _ModulePlaceholder(module: module); // Phase 1.5: TimetableView()
+        return const TimetableView();
       case ModuleType.courseList:
-        return _ModulePlaceholder(module: module); // Phase 1.5: CourseListView()
+        return const CourseListView();
       case ModuleType.exam:
-        return _ModulePlaceholder(module: module); // Phase 1.5: ExamView()
+        return const ExamView();
       case ModuleType.homework:
-        return _ModulePlaceholder(module: module); // Phase 1.5: HomeworkView()
+        return const HomeworkView();
       case ModuleType.message:
-        return _ModulePlaceholder(module: module); // Phase 1.5: MessageView()
+        return const MessageView();
       case ModuleType.settings:
-        return _ModulePlaceholder(module: module); // Phase 1.5: SettingsPage()
+        // Phase 1.6 会替换为 SettingsPage()。
+        return _pendingPage(context, module, '设置页待实现（Phase 1.6）');
       case null:
-        // 插件贡献的自定义模块（ModuleInfo.type == null）。
-        return _ModulePlaceholder(module: module);
+        // 插件贡献的自定义模块（ModuleInfo.type == null），Phase 3 实现。
+        return _pendingPage(context, module, '插件模块页面待实现（Phase 3）');
     }
+  }
+
+  /// 尚未实现的页面的临时外壳：统一用 [EmptyState] 呈现，不再单写占位类。
+  Widget _pendingPage(BuildContext context, ModuleInfo module, String subtitle) {
+    final AppTheme theme = AppThemeExtension.of(context);
+    return Scaffold(
+      backgroundColor: theme.background,
+      appBar: AppBar(
+        title: Text(module.title),
+        centerTitle: true,
+      ),
+      body: EmptyState(
+        icon: _iconFromName(module.iconName),
+        title: module.title,
+        subtitle: subtitle,
+      ),
+    );
   }
 }
 
@@ -99,6 +132,8 @@ class _HomePageState extends State<HomePage> {
 /// 模型层的 [ModuleInfo.iconName] 是字符串（模型不依赖 Flutter），
 /// 由本表在 UI 层转成 [IconData]。内置模块的图标名见
 /// `ModuleProvider._initialModules`；插件可在 `.js` 里用同样的名字声明图标。
+///
+/// Phase 1.7 会把本表与 [_iconFromName] 抽到 `lib/widgets/` 下复用。
 const Map<String, IconData> _kIconByName = <String, IconData>{
   // —— 内置模块 ——
   'calendar_month': Icons.calendar_month,
@@ -120,82 +155,3 @@ const Map<String, IconData> _kIconByName = <String, IconData>{
 /// [Icons.extension]——"扩展/插件"的通用图标。
 IconData _iconFromName(String name) =>
     _kIconByName[name] ?? Icons.extension;
-
-/// 把 [AppTheme.fontWeightTitle]（int，如 600）转成 [FontWeight]。
-FontWeight _fontWeightOf(int value) {
-  final int index = (value ~/ 100) - 1;
-  if (index < 0 || index >= FontWeight.values.length) return FontWeight.w400;
-  return FontWeight.values[index];
-}
-
-/// 模块页面的临时占位（Phase 1.5 由真实页面替换，届时删除本类）。
-class _ModulePlaceholder extends StatelessWidget {
-  const _ModulePlaceholder({required this.module});
-
-  final ModuleInfo module;
-
-  @override
-  Widget build(BuildContext context) {
-    // 样式一律从 AppTheme 读，不硬编码颜色 / 尺寸（CONTEXT.md 3.2）。
-    final AppTheme theme = AppThemeExtension.of(context);
-    final Color hintColor = theme.onBackground.withValues(alpha: 0.35);
-
-    return Scaffold(
-      backgroundColor: theme.background,
-      appBar: AppBar(
-        title: Text(module.title),
-        centerTitle: true,
-      ),
-      body: Center(
-        child: Padding(
-          padding: EdgeInsets.all(theme.cardPadding * 2),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: <Widget>[
-              Icon(_iconFromName(module.iconName), size: 80, color: hintColor),
-              SizedBox(height: theme.sectionGap),
-              Text(
-                module.title,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: theme.titleSize,
-                  fontWeight: _fontWeightOf(theme.fontWeightTitle),
-                  color: theme.onBackground,
-                ),
-              ),
-              SizedBox(height: theme.gridGap * 2),
-              Text(
-                '页面待实现（Phase 1.5）',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: theme.captionSize,
-                  color: hintColor,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 没有任何可见模块时的兜底页面（正常流程不会出现）。
-class _NoModuleScaffold extends StatelessWidget {
-  const _NoModuleScaffold();
-
-  @override
-  Widget build(BuildContext context) {
-    final AppTheme theme = AppThemeExtension.of(context);
-    return Scaffold(
-      backgroundColor: theme.background,
-      body: Center(
-        child: Text(
-          '没有可显示的模块\n请到设置中开启',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: theme.bodySize, color: theme.onBackground),
-        ),
-      ),
-    );
-  }
-}
