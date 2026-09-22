@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-21（1.1 模型 9 文件；1.2 主题 4 文件；1.3 状态管理 5 文件；1.4 入口 3 文件；1.5 页面 5 + 组件 1）
+- 最后更新：2026-09-21（1.1 模型 9；1.2 主题 4；1.3 状态 5；1.4 入口 3；1.5 页面 5 + 组件 1；1.6 设置 5 + 组件 1）
 
 ---
 
@@ -520,7 +520,7 @@ class HomePage extends StatefulWidget {
 ```
 
 行为：
-- 用 Material 3 的 `NavigationBar`（**不是** `BottomNavigationBar`）构建导航栏；图标取自 `_iconFromName(module.iconName)`，标签取自 `ModuleInfo.title`
+- 用 Material 3 的 `NavigationBar`（**不是** `BottomNavigationBar`）构建导航栏；图标取自 `iconFromName(module.iconName)`（见 `lib/widgets/module_icon.dart`），标签取自 `ModuleInfo.title`
 - 页面映射（`_buildPage(context, module)`）：
   | ModuleType | 页面 |
   |------------|------|
@@ -529,7 +529,7 @@ class HomePage extends StatefulWidget {
   | `exam` | `const ExamView()` |
   | `homework` | `const HomeworkView()` |
   | `message` | `const MessageView()` |
-  | `settings` | `_pendingPage(...)` — **Phase 1.6** 替换为 `SettingsPage()` |
+  | `settings` | `const SettingsPage()` |
   | `null`（插件模块） | `_pendingPage(...)` — **Phase 3** 实现 |
 - 用 `IndexedStack` 保活各页面，切回标签时保留滚动位置与内部状态（如课表页选中的周次）
 - **越界保护**：`visibleModules` 变短导致 `_currentIndex` 越界时**重置为 0**（回到课表）。本帧先用修正后的下标渲染，再把 `_currentIndex` 归一化推迟到 `addPostFrameCallback`，避免在 `build` 中 `setState`
@@ -537,9 +537,8 @@ class HomePage extends StatefulWidget {
 - 样式全部经 `AppThemeExtension.of(context)` 读取，无硬编码颜色/尺寸
 
 私有辅助（同文件内）：
-- `const Map<String, IconData> _kIconByName` — 图标名 → `IconData` 映射表。覆盖 6 个内置模块图标（`calendar_month` / `book_outlined` / `assignment_outlined` / `edit_note` / `notifications_outlined` / `settings_outlined`）以及预留的插件常用图标（`grade_outlined` / `school_outlined` / `task_outlined` / `message_outlined`）
-- `IconData _iconFromName(String name)` — 查表；**查不到（含空字符串、插件未声明 `iconName`）时兜底 `Icons.extension`**（Phase 1.7 抽到 `lib/widgets/`）
-- `Widget _pendingPage(BuildContext, ModuleInfo, String subtitle)` — 尚未实现的页面（设置 / 插件模块）的临时外壳，统一用 `EmptyState`，不再单写占位类
+- `Widget _pendingPage(BuildContext, ModuleInfo, String subtitle)` — 尚未实现的页面（插件模块）的临时外壳，用 `EmptyState`，不再单写占位类
+- 图标解析（原 `_kIconByName` / `_iconFromName`）已在 Phase 1.6 抽到 `lib/widgets/module_icon.dart`
 
 ### `timetable/timetable_view.dart` — TimetableView
 
@@ -573,6 +572,65 @@ const TimetableView({super.key, int totalWeeks = 20, int initialWeek = 1});
 
 `const MessageView({super.key})` — AppBar"消息"，右侧"全部已读"按钮 → `SnackBar('已全部标记为已读')`；Body `EmptyState(Icons.notifications_none, '暂无消息')`。
 
+### `settings/settings_page.dart` — SettingsPage
+
+设置主页。`const SettingsPage({super.key})` — 除"导航栏配置"外全部为占位（SnackBar 或占位页）。
+
+常量：`const String kAppVersion = 'v0.1.0'`（技术栈未含 `package_info_plus`，Phase 9 再改为运行时读取）
+
+Body 为 `ListView`，分 6 组，每组 = 小标题 + 一张 `Card`（`color: theme.surface`、`elevation: 0`、圆角 `theme.cardRadius`），组内为 `ListTile`：
+
+| 分组 | 条目 | 行为 |
+|------|------|------|
+| 账号 | 登录管理 `>` | `SnackBar('登录管理（待实现）')` |
+| 扩展 | 插件管理 `>` | push `PluginManagePage` |
+| 扩展 | 创意工坊 `>` | push `WorkshopPage` |
+| 外观 | 深色模式 | `SnackBar('深色模式（待实现）')` |
+| 外观 | 当前主题（右侧显示"默认蓝"） | `SnackBar('主题切换（待实现）')` |
+| 布局 | 导航栏配置 `>` | push `ModuleConfigPage` |
+| 布局 | 课表设置 `>` | push `TimetableSettingsPage` |
+| 数据 | 导出数据 / 导入数据 | `SnackBar('导出（待实现）')` / `'导入（待实现）'` |
+| 数据 | 清理缓存 | 确认框（取消/确定）→ 确定后 `SnackBar('已清理（待实现）')` |
+| 关于 | 版本号（右侧 `v0.1.0`） | **不可点击**（`onTap == null`） |
+| 关于 | 反馈 | `SnackBar('反馈（待实现）')` |
+
+跳转统一用 `Navigator.of(context).push(MaterialPageRoute<void>(...))`。`清理缓存` 的 `showDialog` 之后有 `context.mounted` 检查（异步间隙保护）。
+
+私有辅助（同文件内）：`_SettingsGroup`（小标题 + Card）、`_SettingsTile`（`showChevron` 控制 `>` 箭头，`trailingText` 显示只读值）。
+
+### `settings/module_config_page.dart` — ModuleConfigPage
+
+导航栏配置页。`const ModuleConfigPage({super.key})` — 用 `context.watch<ModuleProvider>()` 监听，勾选后本页与导航栏立即同步。
+
+- 顶部提示卡：`'最多显示 5 个模块，课表和设置不可关闭'` + `'当前已显示 N/5 个'`（达到上限时该行用 `theme.error` 着色）
+- `ListView.builder` 列出 `ModuleProvider.allModules`，每行 `ListTile`：
+  - `leading`：`iconFromName(module.iconName)`
+  - `title`：`module.title`
+  - `subtitle`：模块不可用时显示 `'需要插件提供该能力'`
+  - `trailing`：徽标 + `Switch`
+    - `alwaysOn`（课表/设置）→ 徽标 `'必需'`，`Switch(value: true, onChanged: null)` 禁用且打开
+    - `!available`（如未装插件时的作业）→ 徽标 `'未激活'`，`Switch(value: false, onChanged: null)` 禁用且关闭
+    - 其余 → `Switch(value: module.enabled, onChanged: toggle)`
+- **上限处理**（见下方说明）：先应用再校验，必要时回滚
+
+### `settings/plugin_manage_page.dart` — PluginManagePage
+
+`const PluginManagePage({super.key})` — AppBar"插件管理" + 右侧 `+` → `SnackBar('安装插件（待实现）')`；Body `EmptyState(Icons.extension, '还没有安装插件', subtitle: '插件可以从创意工坊下载，或从本地文件导入', actionLabel: '去创意工坊', onAction: push WorkshopPage)`。
+
+### `settings/workshop_page.dart` — WorkshopPage
+
+`const WorkshopPage({super.key})` — `DefaultTabController(length: 2)` + AppBar"创意工坊" + `TabBar`（皮肤 / 插件，配色取自主题）+ `TabBarView`：Tab1 `EmptyState(Icons.palette_outlined, '暂无皮肤', subtitle: '敬请期待')`，Tab2 `EmptyState(Icons.extension_outlined, '暂无插件', subtitle: '敬请期待')`。
+
+### `settings/timetable_settings_page.dart` — TimetableSettingsPage
+
+`const TimetableSettingsPage({super.key})` — 占位页：控件可操作（改内部 state），**不保存**，退出即丢失。
+
+常量：`kMinCellHeight = 40`、`kMaxCellHeight = 100`
+
+- `SwitchListTile '显示周末'`（默认 `true`）→ `SnackBar('（待实现）')`
+- `SwitchListTile '显示节次时间'`（默认 `true`）→ `SnackBar('（待实现）')`
+- `Slider '每节高度'`（40–100，默认 60，步进 10）→ `onChangeEnd` 弹 `SnackBar('（待实现）')`
+
 ---
 
 ## lib/widgets/
@@ -604,7 +662,12 @@ const EmptyState({
 - 按钮为 `FilledButton`，背景 `theme.primary` / 前景 `theme.onPrimary` / 圆角 `theme.buttonRadius`
 - 常量：`kEmptyStateIconSize = 80`（`AppTheme` 无图标尺寸令牌，故为组件级常量）
 
----
+### `module_icon.dart` — 模块图标解析
+
+由 `home_page.dart` 抽出（Phase 1.6，PROGRESS 阻塞表已记录该计划），供主页导航栏与设置页的导航栏配置共用。
+
+- `const Map<String, IconData> kModuleIconByName` — 图标名 → `IconData`。覆盖 6 个内置模块图标（`calendar_month` / `book_outlined` / `assignment_outlined` / `edit_note` / `notifications_outlined` / `settings_outlined`）与 4 个预留插件图标（`grade_outlined` / `school_outlined` / `task_outlined` / `message_outlined`）
+- `IconData iconFromName(String name)` — 查表；**查不到（含空串、插件未声明 `iconName`）兜底 `Icons.extension`**
 
 ---
 

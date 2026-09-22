@@ -127,14 +127,34 @@
 > 后已删除脚本。
 
 ### 1.6 设置页
-- [ ] `lib/pages/settings/settings_page.dart`
-- [ ] `lib/pages/settings/module_config_page.dart`
-- [ ] `lib/pages/settings/plugin_manage_page.dart`
-- [ ] `lib/pages/settings/workshop_page.dart`
-- [ ] `lib/pages/settings/timetable_settings_page.dart`
+- [x] `lib/pages/settings/settings_page.dart`
+- [x] `lib/pages/settings/module_config_page.dart`
+- [x] `lib/pages/settings/plugin_manage_page.dart`
+- [x] `lib/pages/settings/workshop_page.dart`
+- [x] `lib/pages/settings/timetable_settings_page.dart`
+- [x] `lib/widgets/module_icon.dart`（计划外：为配置页抽出图标解析，见下）
+
+> 备注：Phase 1.6 由 AI 生成（prompt: `docs/prompts/06-settings.md`）。
+> `dart analyze lib` 通过。`home_page.dart` 的 `settings` case 已替换为
+> `const SettingsPage()`（`_pendingPage` 保留给 Phase 3 的插件模块）。
+> 另用临时 `flutter test` 脚本验证了 15 组行为（设置页 6 分组 12 条目齐全、
+> 版本号不可点击、4 个跳转入口、清理缓存确认框的取消/确定分支、
+> 插件管理空态与"去创意工坊"、创意工坊双 Tab、课表设置开关与滑块、
+> 配置页必需/未激活开关禁用、toggle 真正改动 Provider、两个上限场景、样式取自 AppTheme）
+> 后已删除脚本。
+>
+> **上限提示的处理**（对应阻塞表 2026-09-22 那条）：
+> `visibleModules` 按设计**永远不会超过 5**（Provider 内部已截断），
+> 所以 prompt 里"切换后判断 `length > 5` 再回滚"是死代码。实际实现了两种情形：
+> ① 新模块**挤不进去** → 回滚并提示"最多显示 5 个模块，请先关闭其他模块"；
+> ② 新模块**顶掉了别的已显示模块** → 放行并提示被挤出的模块名
+> （如 `"消息" 已被移出导航栏`）。采用"先应用、再看结果、必要时回滚"，
+> 直接复用 Provider 里那套唯一的截断算法，避免在本页复制顺序/优先级规则。
+> 该阻塞项已可标记为完成。
 
 ### 1.7 通用组件
 - [x] `lib/widgets/empty_state.dart`（已在 Phase 1.5 完成）
+- [x] `lib/widgets/module_icon.dart`（已在 Phase 1.6 完成）
 - [ ] `lib/widgets/course_card.dart`（预留）
 - [ ] `lib/widgets/week_selector.dart`（预留）
 
@@ -237,5 +257,6 @@
 | 2026-09-21 | `AppTheme.explicitKeys` 因 Dart 私有命名参数限制只能公开，建议加 `@protected` | 待处理 |
 | 2026-09-22 | `ModuleType` 枚举不携带默认 iconName，保持不依赖 Flutter 的纯净性（现状接受） | 已决定 |
 | 2026-09-22 | `CONTEXT.md` 常量命名规范已从 `MAX_MODULES` 改为 `kMaxModules` | ✅ 已完成 |
-| 2026-09-22 | home_page._iconFromName 建议 Phase 1.7 抽到 lib/widgets/ 复用 | 待处理 |
-| 2026-09-22 | 导航栏配置页需给出"已达上限 5 个"的提示，并显示哪些模块被挤出 | 待处理 |
+| 2026-09-22 | home_page._iconFromName 建议 Phase 1.7 抽到 lib/widgets/ 复用 | ✅ 已完成（Phase 1.6） |
+| 2026-09-22 | 课表设置页滑块默认 60，而 AppTheme.timetableCellHeight 默认 64；Phase 2 接存储时需统一取值来源 | 待处理 |
+| 2026-09-22 | 导航栏配置页需给出"已达上限 5 个"的提示，并显示哪些模块被挤出 | ✅ 已完成（Phase 1.6） |

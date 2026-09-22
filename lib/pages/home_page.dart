@@ -7,10 +7,12 @@ import '../providers/module_provider.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_extension.dart';
 import '../widgets/empty_state.dart';
+import '../widgets/module_icon.dart';
 import 'course_list/course_list_view.dart';
 import 'exam/exam_view.dart';
 import 'homework/homework_view.dart';
 import 'message/message_view.dart';
+import 'settings/settings_page.dart';
 import 'timetable/timetable_view.dart';
 
 /// 主页外壳：底部导航栏的模块与顺序完全由 [ModuleProvider] 决定。
@@ -75,7 +77,7 @@ class _HomePageState extends State<HomePage> {
         destinations: modules
             .map(
               (ModuleInfo module) => NavigationDestination(
-                icon: Icon(_iconFromName(module.iconName)),
+                icon: Icon(iconFromName(module.iconName)),
                 label: module.title,
               ),
             )
@@ -101,8 +103,7 @@ class _HomePageState extends State<HomePage> {
       case ModuleType.message:
         return const MessageView();
       case ModuleType.settings:
-        // Phase 1.6 会替换为 SettingsPage()。
-        return _pendingPage(context, module, '设置页待实现（Phase 1.6）');
+        return const SettingsPage();
       case null:
         // 插件贡献的自定义模块（ModuleInfo.type == null），Phase 3 实现。
         return _pendingPage(context, module, '插件模块页面待实现（Phase 3）');
@@ -119,39 +120,10 @@ class _HomePageState extends State<HomePage> {
         centerTitle: true,
       ),
       body: EmptyState(
-        icon: _iconFromName(module.iconName),
+        icon: iconFromName(module.iconName),
         title: module.title,
         subtitle: subtitle,
       ),
     );
   }
 }
-
-/// Material 图标名 → [IconData] 映射。
-///
-/// 模型层的 [ModuleInfo.iconName] 是字符串（模型不依赖 Flutter），
-/// 由本表在 UI 层转成 [IconData]。内置模块的图标名见
-/// `ModuleProvider._initialModules`；插件可在 `.js` 里用同样的名字声明图标。
-///
-/// Phase 1.7 会把本表与 [_iconFromName] 抽到 `lib/widgets/` 下复用。
-const Map<String, IconData> _kIconByName = <String, IconData>{
-  // —— 内置模块 ——
-  'calendar_month': Icons.calendar_month,
-  'book_outlined': Icons.book_outlined,
-  'assignment_outlined': Icons.assignment_outlined,
-  'edit_note': Icons.edit_note,
-  'notifications_outlined': Icons.notifications_outlined,
-  'settings_outlined': Icons.settings_outlined,
-  // —— 预留：插件常用图标 ——
-  'grade_outlined': Icons.grade_outlined,
-  'school_outlined': Icons.school_outlined,
-  'task_outlined': Icons.task_outlined,
-  'message_outlined': Icons.message_outlined,
-};
-
-/// 把图标名转成 [IconData]。
-///
-/// 查不到（含空字符串、插件未声明 `iconName` 的情况）时兜底为
-/// [Icons.extension]——"扩展/插件"的通用图标。
-IconData _iconFromName(String name) =>
-    _kIconByName[name] ?? Icons.extension;
