@@ -4,7 +4,7 @@
 > 遇到阻塞，在旁边加 `⚠️` 并说明。
 > 本文件是"当前状态"的唯一真相来源。
 
-- 最后更新：2026-09-21
+- 最后更新：2026-09-22
 
 ---
 
@@ -23,7 +23,7 @@
 
 ---
 
-## Phase 1：内核骨架（进行中）
+## Phase 1：内核骨架 ✅
 
 ### 1.1 数据模型
 - [x] `lib/models/course.dart` — Course
@@ -155,15 +155,19 @@
 ### 1.7 通用组件
 - [x] `lib/widgets/empty_state.dart`（已在 Phase 1.5 完成）
 - [x] `lib/widgets/module_icon.dart`（已在 Phase 1.6 完成）
-- [ ] `lib/widgets/course_card.dart`（预留）
-- [ ] `lib/widgets/week_selector.dart`（预留）
+- [ ] `lib/widgets/course_card.dart`（预留，推迟到 Phase 5）
+- [ ] `lib/widgets/week_selector.dart`（预留，推迟到 Phase 2）
+
+> 备注：course_card.dart 与 week_selector.dart 推迟到 Phase 2/5（当前没有数据源可填充）。empty_state.dart 和 module_icon.dart 已在 Phase 1.5/1.6 提前完成。
 
 ### 1.8 验收标准
-- [ ] App 能运行，底部导航显示 4 个模块（课表/课程/考试/设置）
-- [ ] 所有页面显示空态，无崩溃
-- [ ] 设置 → 导航栏配置能勾选/取消模块
-- [ ] 导航栏改动实时生效
-- [ ] 设置 → 插件管理/创意工坊能进入占位页
+- [x] App 能运行，底部导航显示 4 个模块（课表/课程/考试/设置）
+- [x] 所有页面显示空态，无崩溃
+- [x] 设置 → 导航栏配置能勾选/取消模块
+- [x] 导航栏改动实时生效
+- [x] 设置 → 插件管理/创意工坊能进入占位页
+
+> 验收完成日期：2026-09-22。真机（Redmi K60）验收通过。
 
 ---
 
@@ -258,5 +262,5 @@
 | 2026-09-22 | `ModuleType` 枚举不携带默认 iconName，保持不依赖 Flutter 的纯净性（现状接受） | 已决定 |
 | 2026-09-22 | `CONTEXT.md` 常量命名规范已从 `MAX_MODULES` 改为 `kMaxModules` | ✅ 已完成 |
 | 2026-09-22 | home_page._iconFromName 建议 Phase 1.7 抽到 lib/widgets/ 复用 | ✅ 已完成（Phase 1.6） |
-| 2026-09-22 | 课表设置页滑块默认 60，而 AppTheme.timetableCellHeight 默认 64；Phase 2 接存储时需统一取值来源 | 待处理 |
+| 2026-09-22 | 课表设置页滑块默认 60，而 AppTheme.timetableCellHeight 默认 64；Phase 2 接存储时需统一取值来源 | ✅ 已完成（Phase 1.6.1：滑块初值改从 AppTheme 读取） |
 | 2026-09-22 | 导航栏配置页需给出"已达上限 5 个"的提示，并显示哪些模块被挤出 | ✅ 已完成（Phase 1.6） |

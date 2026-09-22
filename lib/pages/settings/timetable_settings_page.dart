@@ -23,7 +23,30 @@ class TimetableSettingsPage extends StatefulWidget {
 class _TimetableSettingsPageState extends State<TimetableSettingsPage> {
   bool _showWeekend = true;
   bool _showSessionTime = true;
-  double _cellHeight = 60;
+
+  /// 每节高度。
+  ///
+  /// 初值取自 [AppTheme.timetableCellHeight]（见 [didChangeDependencies]），
+  /// 这里先给一个范围下限占位——首次 build 之前就会被主题值覆盖。
+  double _cellHeight = kMinCellHeight;
+
+  /// 是否已经从主题读取过初值。
+  ///
+  /// [didChangeDependencies] 会在依赖变化时**重复**触发（例如切换皮肤导致
+  /// Theme 变化），用它保证主题值只在首次生效，之后一律以用户拖动为准。
+  bool _initialized = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+
+    // 不能放在 initState：那里拿不到 InheritedWidget（Theme 还没准备好）。
+    _cellHeight = AppThemeExtension.of(context)
+        .timetableCellHeight
+        .clamp(kMinCellHeight, kMaxCellHeight);
+  }
 
   void _showPending() {
     ScaffoldMessenger.of(context)

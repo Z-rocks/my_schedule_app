@@ -10,6 +10,9 @@ import 'workshop_page.dart';
 
 /// 应用版本号。
 ///
+/// 修改版本号时需同步 `pubspec.yaml` 的 `version` 字段（两处目前各自维护）。
+/// Phase 9 打包后改用 `package_info_plus` 运行时读取。
+///
 /// 这里用常量而不是 `package_info_plus`：项目技术栈（CONTEXT.md 第 2 节）
 /// 未声明该依赖，Phase 9 打包时再改为运行时读取。
 const String kAppVersion = 'v0.1.0';
