@@ -5,13 +5,22 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-22（1.1–1.6 内核骨架；2.1 存储层；2.1.5 模块配置与明暗偏好落盘）
+- 最后更新：2026-09-22（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析 + 网格）
 
 ---
 
 ## lib/models/
 
-### `time_place.dart` — TimePlace
+### `time_place.dart` — WeekType + TimePlace
+
+#### `enum WeekType`
+取值：`all`（每周）、`odd`（单周）、`even`（双周）。
+- `static WeekType fromName(Object? value)` — 安全解析字符串，无法识别返回 `WeekType.all`
+- `String get label` — 中文标签（`每周` / `单周` / `双周`）
+
+> 与 `TimePlace.weeks` 的分工：`weeks` 是**基础周次**（不做单双过滤），单双周由 `WeekType` 记录、由 `TimetableLogic.hasClassInWeek` 过滤，因此同一份周次数据只存一次。
+
+#### `class TimePlace`
 
 一次课程安排的时间与地点（一节课可有多个）。
 
@@ -21,18 +30,41 @@
 | `startSession` | `int` | 起始节次，1-12 |
 | `length` | `int` | 持续节数，至少为 1 |
 | `room` | `String` | 上课地点，可能为空字符串 |
-| `weeks` | `List<int>` | 解析后的周次列表，如 `[4, 6, 7, 8]` |
+| `weeks` | `List<int>` | **基础**周次列表（未按单双过滤），如 `[4, 6, 7, 8]` |
 | `rawWeeksText` | `String` | 原始周次文本，如 `"4,6-14周"` |
+| `weekType` | `WeekType` | 单双周，默认 `WeekType.all` |
 
-构造：`const TimePlace({required day, required startSession, required length, required room, required weeks, required rawWeeksText})`
+构造：`const TimePlace({required day, required startSession, required length, required room, required weeks, required rawWeeksText, WeekType weekType = WeekType.all})`
 
 方法：
 - `int get endSession` — 结束节次（含）
-- `bool isActiveInWeek(int week)` — 该安排是否在 `week` 周生效
+- `bool isActiveInWeek(int week)` — 该安排是否在 `week` 周生效（**只看基础周次，不叠加单双周**）
 - `bool conflictsWith(TimePlace other)` — 同日且节次重叠
-- `factory TimePlace.fromJson(Map<String, dynamic> json)`
-- `Map<String, dynamic> toJson()`
-- `TimePlace copyWith({int? day, int? startSession, int? length, String? room, List<int>? weeks, String? rawWeeksText})`
+- `factory TimePlace.fromJson(Map<String, dynamic> json)` — 缺失 `weekType` 或值非法时回落 `WeekType.all`（兼容旧数据）
+- `Map<String, dynamic> toJson()` — `weekType` 存 `'all' / 'odd' / 'even'`
+- `TimePlace copyWith({int? day, int? startSession, int? length, String? room, List<int>? weeks, String? rawWeeksText, WeekType? weekType})`
+
+---
+
+### `semester_config.dart` — SemesterConfig
+
+学期配置。**当前只支持单学期**，由 `SemesterProvider` 存在 `settings` Box 的 `kSemesterConfigKey` 下。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `name` | `String` | 学期名称，如 `"2026-2027学年第一学期"` |
+| `startDate` | `DateTime` | **第 1 周的周一** |
+| `totalWeeks` | `int` | 总周数，至少为 1 |
+| `description` | `String?` | 备注 |
+
+构造：`const SemesterConfig({required name, required startDate, required totalWeeks, String? description})`
+
+方法：
+- `DateTime get endDate` — 最后一周周日 = `startDate + (totalWeeks * 7 - 1)` 天。**派生值，不存 JSON**
+- `factory SemesterConfig.fromJson(Map<String, dynamic> json)` — 缺失/类型异常用兜底值，不崩
+- `static SemesterConfig? tryDecode(String? raw)` — 从存储字符串解析；坏 JSON / 非对象 / 缺 `startDate` / 缺或非法 `totalWeeks` 一律返回 `null`（供 Provider 判定"未设置学期"，避免用兜底值伪造出一个学期）
+- `Map<String, dynamic> toJson()` — **不含 `endDate`**；`startDate` 存 ISO8601 字符串
+- `SemesterConfig copyWith({..., bool clearDescription})`
 
 ---
 
@@ -479,7 +511,7 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 
 常量（Box 名，落盘后即契约，见 CONTEXT 4.2.1）：`kCoursesBoxName = 'courses'`、`kExamsBoxName = 'exams'`、`kHomeworksBoxName = 'homeworks'`、`kMessagesBoxName = 'messages'`、`kOverridesBoxName = 'overrides'`、`kSettingsBoxName = 'settings'`、`kPluginsBoxName = 'plugins'`、`kSkinsBoxName = 'skins'`
 
-常量（`settings` Box 内的键名，同样属于契约）：`kModuleEnabledStateKey = 'module_enabled_state'`（值为 JSON 对象 `{"<capabilityId>": bool}`）、`kThemeBrightnessKey = 'theme_brightness'`（值为 `light` / `dark`）
+常量（`settings` Box 内的键名，同样属于契约）：`kModuleEnabledStateKey = 'module_enabled_state'`（值为 JSON 对象 `{"<capabilityId>": bool}`）、`kThemeBrightnessKey = 'theme_brightness'`（值为 `light` / `dark`）、`kSemesterConfigKey = 'semester_config'`（值为 `SemesterConfig` 的 JSON 字符串；单学期故为单值键）
 
 - `static Future<void> init({String? path})` — 初始化 Hive 并依次打开 8 个 `Box<String>`。`path == null` 时走 `Hive.initFlutter()`（生产）；传 `path` 时走 `Hive.init(path)`（测试，免去 `path_provider` 平台依赖）。重复调用安全。初始化失败只 `debugPrint` 不抛
 - `static Future<void> close()` — 关闭 Hive 并清空缓存的 Box 引用（测试收尾 / App 退出）
@@ -489,7 +521,6 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 > 设计：所有 Box 统一 `Box<String>` 存 JSON 字符串，**不注册任何 `TypeAdapter`**（CONTEXT 禁止 `build_runner`），模型的 `toJson`/`fromJson` 是唯一序列化途径。
 
 ### `override_engine.dart` — OverrideEngine
-
 用户覆盖层的读写入口（纯静态类）。覆盖层与原始数据分离存储，两边都以**课程 ID** 为 key。
 
 - `static UserOverride? getOverride(String courseId)` — 无记录或解析失败返回 `null`
@@ -519,6 +550,21 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 - `Future<void> saveToStorage()` — 写入 `_brightness.name`
 - `static Brightness? decodeBrightness(String? raw)` — 无法识别返回 `null`（调用方保持默认）
 - `dispose()` 会一并 `dispose()` 内部引擎
+
+---
+
+### `semester_provider.dart` — SemesterProvider（`ChangeNotifier`）
+
+学期配置状态（单学期）。存在 `settings` Box 的 `kSemesterConfigKey` 下。不引用其他 Provider。
+
+- `SemesterConfig? get config` — `null` 表示还没设置学期
+- `bool get hasConfig` — `config != null`
+- `bool get isLoaded` — 是否已尝试从存储载入过（UI 可区分"没设置学期"与"尚未加载"）
+- `Future<void> loadFromStorage()` — 用 `SemesterConfig.tryDecode` 解析；坏 JSON / 非对象 / 缺关键字段一律按**"未设置"**处理（保持 `null`），而不是用兜底值伪造学期
+- `Future<void> save(SemesterConfig config)` — 内存与 `notifyListeners` **同步**完成（调用方无需 await 即可看到 UI 更新）；返回的 Future 对应落盘，`await` 它可确保已持久化，忽略则等价 fire-and-forget。落盘失败只记日志，不回滚内存
+- `Future<void> clear()` — 内存与存储都清空
+
+> 已知行为：`loadFromStorage` 即使读到与当前相同的配置也会通知一次（`SemesterConfig` 没有 `==`，未做比较）。启动时只调用一次，实际无影响。
 
 ---
 
@@ -554,6 +600,36 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 - `void markAllAsRead()` — 无未读时不通知
 - `int clearOldMessages({DateTime? now})` — 删除早于 `now - 30 天` 的消息，返回删除条数；`now` 供测试注入
 - `void removeMessage(String id)` / `void clear()`
+
+---
+
+## lib/services/
+
+### `timetable_logic.dart` — TimetableLogic
+
+课表逻辑的**纯函数**工具（全部 `static`，无状态、不依赖 Hive / Provider），可独立测试，也可在 Phase 3 插件运行时复用。
+
+常量：`kDaysPerWeek = 7`、`kMaxSessions = 12`、`kMaxWeekNumber = 60`（单个周次区间允许展开的上限，防 `"1-999999"` 撑爆内存）
+
+- `static List<int> parseWeeks(String rawText)` — 解析周次文本为**基础周次**（升序去重）
+  - 支持 `"4,6-14周"` → `[4,6..14]`、`"第9周"` → `[9]`、`"1-16周"` → `[1..16]`、`""`/乱码 → `[]`
+  - 容忍中英文标点（`，`/`、`/`－`/`~`）、空白、`第`/`周`/`星期` 前缀、`(单)`/`（双）` 括号标记
+  - 容错：逐片段解析，非法片段跳过；反向区间（`5-1`）、多段连字符（`1-2-3`）、`0`/负数、超过 `kMaxWeekNumber` 的部分全部丢弃；**任何输入都不抛异常**
+  - **不做单双周过滤**（过滤在 `hasClassInWeek`）
+- `static WeekType parseWeekType(String rawText)` — 用**关键词**匹配（教务写法变体多、带全半角括号，关键词比正则稳）：同时含"单"和"双"（如"单双周"）→ `all`；只含"单" → `odd`；只含"双" → `even`；都没有 → `all`
+- `static int currentWeek(SemesterConfig config, {DateTime? now})` — 当前第几周
+  - 只取年月日比较（避免时分秒造成 off-by-one）
+  - `now < startDate` → `1`；超出 `totalWeeks` → `totalWeeks`；`totalWeeks < 1` → `1`
+- `static bool hasClassInWeek(TimePlace tp, int week)` — 某周是否有该安排的课
+  - `week` 不在 `tp.weeks` → `false`；`weekType == odd` 且偶数周 → `false`；`weekType == even` 且奇数周 → `false`；其余 → `true`
+- `static List<List<Course?>> buildGrid(List<Course> courses, int week)` — 构建网格 `grid[day][session] = Course?`
+  - 尺寸 `(kDaysPerWeek+1) × (kMaxSessions+1)`，索引 `0` 为占位，`day` 1-7 / `session` 1-12 有效（调用方可直接用"星期几/第几节"当下标）
+  - **跨节**：`startSession` 起连续 `length` 格都填同一门课；越界的 `day`/`session` 直接忽略
+  - 取 `Course.displayTimePlaces`（用户改过则用覆盖层）；**跳过** `userOverride.hidden == true` 的课程
+  - 同一格被多门课占用时保留**先出现**的那门（按 `courses` 顺序）
+- `static Course? courseAt(List<List<Course?>> grid, int day, int session)` — 越界返回 `null`
+- `static int filledCellCount(List<List<Course?>> grid)` — 有课的格子数（判断课表是否为空）
+- `static String formatWeeks(List<int> weeks)` — 压成展示文本，`[1,2,3,5]` → `"1-3,5"`
 
 ---
 
@@ -727,9 +803,9 @@ const EmptyState({
 
 ### `main.dart` — 入口
 
-- `Future<void> main()` — `WidgetsFlutterBinding.ensureInitialized()` → `await StorageService.init()` → 依次建 `CourseProvider` / `ModuleProvider` / `ThemeProvider` 并各自 `await loadFromStorage()` → `runApp(buildApp(...))`。**先读数据再起 UI**，避免首帧闪一下默认值（如导航栏先显示默认 4 个模块再跳成用户配置）
-- `Widget buildApp({CourseProvider? courseProvider, ModuleProvider? moduleProvider, ThemeProvider? themeProvider})` — 构建完整 App（Provider 树 + `MyApp`）。抽成函数是为了让 widget 测试直接 `pumpWidget(buildApp())`，验证的就是 `main()` 真正使用的那棵树
-  - `courseProvider` / `themeProvider` 传入时用 `ChangeNotifierProvider.value`（实例归调用方所有，不随树销毁而 dispose）；不传时内部 `create` 空实例（测试 / 预览用，不访问 Hive）
+- `Future<void> main()` — `WidgetsFlutterBinding.ensureInitialized()` → `await StorageService.init()` → 依次建 `CourseProvider` / `ModuleProvider` / `SemesterProvider` / `ThemeProvider` 并各自 `await loadFromStorage()` → `runApp(buildApp(...))`。**先读数据再起 UI**，避免首帧闪一下默认值（如导航栏先显示默认 4 个模块再跳成用户配置）
+- `Widget buildApp({CourseProvider? courseProvider, ModuleProvider? moduleProvider, SemesterProvider? semesterProvider, ThemeProvider? themeProvider})` — 构建完整 App（Provider 树 + `MyApp`）。抽成函数是为了让 widget 测试直接 `pumpWidget(buildApp())`，验证的就是 `main()` 真正使用的那棵树
+  - `courseProvider` / `semesterProvider` / `themeProvider` 传入时用 `ChangeNotifierProvider.value`（实例归调用方所有，不随树销毁而 dispose）；不传时内部 `create` 空实例（测试 / 预览用，不访问 Hive）
   - `moduleProvider` 由 `ChangeNotifierProxyProvider` 创建（该 Provider 无 `.value` 变体），注入的实例会被树接管生命周期；**不要**把同一个 `ModuleProvider` 实例同时传给两棵树（先卸载的那棵会 dispose 它）
 
 Provider 顺序（即依赖顺序，被依赖者必须在前）：

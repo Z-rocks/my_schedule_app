@@ -7,6 +7,7 @@ import 'providers/course_provider.dart';
 import 'providers/message_provider.dart';
 import 'providers/module_provider.dart';
 import 'providers/plugin_provider.dart';
+import 'providers/semester_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/storage_service.dart';
 
@@ -25,12 +26,16 @@ Future<void> main() async {
   final ModuleProvider moduleProvider = ModuleProvider();
   await moduleProvider.loadFromStorage();
 
+  final SemesterProvider semesterProvider = SemesterProvider();
+  await semesterProvider.loadFromStorage();
+
   final ThemeProvider themeProvider = ThemeProvider();
   await themeProvider.loadFromStorage();
 
   runApp(buildApp(
     courseProvider: courseProvider,
     moduleProvider: moduleProvider,
+    semesterProvider: semesterProvider,
     themeProvider: themeProvider,
   ));
 }
@@ -52,6 +57,7 @@ Future<void> main() async {
 Widget buildApp({
   CourseProvider? courseProvider,
   ModuleProvider? moduleProvider,
+  SemesterProvider? semesterProvider,
   ThemeProvider? themeProvider,
 }) {
   return MultiProvider(
@@ -106,6 +112,13 @@ Widget buildApp({
       ChangeNotifierProvider<MessageProvider>(
         create: (BuildContext context) => MessageProvider(),
       ),
+      // 6. 学期（无依赖）
+      if (semesterProvider != null)
+        ChangeNotifierProvider<SemesterProvider>.value(value: semesterProvider)
+      else
+        ChangeNotifierProvider<SemesterProvider>(
+          create: (BuildContext context) => SemesterProvider(),
+        ),
     ],
     child: const MyApp(),
   );

@@ -176,11 +176,49 @@
 - [x] Hive 初始化
 - [x] `lib/services/storage_service.dart`
 - [x] `lib/services/override_engine.dart`
-- [ ] `lib/services/timetable_logic.dart`（周次解析、网格构建）
+- [x] `lib/services/timetable_logic.dart`（周次解析、网格构建）— Phase 2.2a
 - [x] CourseProvider 接入 Hive
 - [ ] 手工塞测试数据，课表能渲染
 
-> 备注：Phase 2.1 由 AI 生成（prompt: Phase 2.1）。> `dart analyze lib` 通过。用 `Box<String>` + 手写 JSON，**未**引入 `TypeAdapter`
+> **Phase 2.2a**（学期配置 + 周次解析 + 数据模型扩展）：
+> `dart analyze lib` 通过，未新增依赖。本次为 **2.2 的第一部分，不做 UI**。
+>
+> 改动：
+> - `lib/models/time_place.dart`：新增 `WeekType` 枚举（`all`/`odd`/`even`）
+>   与 `TimePlace.weekType` 字段（JSON 键 `weekType`，存 `'all'/'odd'/'even'`）
+> - 新建 `lib/models/semester_config.dart`：`name` / `startDate` / `totalWeeks` /
+>   `description`，`endDate` 为派生 getter（不落盘），另有 `tryDecode` 用于存储层
+> - 新建 `lib/services/timetable_logic.dart`：纯函数 `parseWeeks` /
+>   `parseWeekType` / `currentWeek` / `hasClassInWeek` / `buildGrid` /
+>   `courseAt` / `filledCellCount` / `formatWeeks`
+> - 新建 `lib/providers/semester_provider.dart`：单学期配置，存 `settings` Box
+>   的 `semester_config`（常量 `kSemesterConfigKey` 已加入 `StorageService`）
+> - `lib/main.dart`：`SemesterProvider` 与其他 Provider 一起预加载
+>
+> **schema 说明**：`TimePlace` 新增 `weekType` 属 CONTEXT 4.2.1 的冻结例外——
+> 当前无任何已落盘课程（编辑入口在 Phase 5），故无需迁移逻辑；
+> 旧数据缺 `weekType` 键时回落 `WeekType.all`（已测试）。
+>
+> **规格矛盾（已按自洽方案实现）**：prompt 的 `parseWeeks` 文档示例写
+> `"4,6-14周(单)" → [5,7,9,11,13,15]`，但按"解析基础周次再取奇数"应为
+> `[7,9,11,13]`，而 `[5,7,...,15]` 对应的是"1-16 的奇数"。同时
+> `hasClassInWeek` 的规格明确把单双周过滤放在它内部。故实现为：
+> `parseWeeks` 只出**基础周次**（不过滤）、`parseWeekType` 单独识别、
+> `hasClassInWeek` 负责过滤——三者职责不重叠，周次数据只存一份。
+>
+> 验证：临时 `flutter test` 脚本 52 组全部通过（涉及 Hive 的用普通 `test()`），
+> 覆盖 parseWeeks 的 4 种 prompt 格式 + 乱码 + 标点/空白 + 反向区间 +
+> 超大区间截断 + 升序去重、parseWeekType 单/双/无标记/单双周、
+> currentWeek 早于/首日/第7天/跨周/超出/时分秒/非法 totalWeeks、
+> hasClassInWeek 三种 weekType、buildGrid 空列表/单课/跨节/单周过滤/
+> 不在本周/隐藏课程/越界 day-session/同格冲突/displayTimePlaces 覆盖/
+> 一课多安排/courseAt 越界、SemesterConfig 的 endDate 派生与 toJson 不含
+> endDate 与往返与 tryDecode 的 9 种拒绝情形、SemesterProvider 的
+> save→重建→load 一致/不 await 也立即更新内存/clear/坏 JSON/缺关键字段/
+> 未初始化存储/通知行为/与其他键互不干扰、以及"学期 + 网格"端到端。脚本已删除。
+
+> 备注：Phase 2.1 由 AI 生成（prompt: Phase 2.1）。
+> `dart analyze lib` 通过。用 `Box<String>` + 手写 JSON，**未**引入 `TypeAdapter`
 > 或 `build_runner`，未新增依赖。
 > 另用临时 `flutter test` 脚本（真实 Hive + 临时目录）验证了 20 组行为：
 > 8 个 Box 名称与可用性、重复 init、覆盖层 save/get/remove/getAll、
@@ -299,5 +337,8 @@
 | 2026-09-22 | 课表设置页滑块默认 60，而 AppTheme.timetableCellHeight 默认 64；Phase 2 接存储时需统一取值来源 | ✅ 已完成（Phase 1.6.1：滑块初值改从 AppTheme 读取） |
 | 2026-09-22 | `CourseProvider.deleteCourse` 已由同步改为异步（写 Hive）；Phase 5 编辑页调用时需 `await` | 待处理 |
 | 2026-09-22 | 课程/考试/作业/消息 Provider 目前只有 CourseProvider 接了 Hive，其余待 Phase 2.2 接入 | 待处理 |
-| 2026-09-22 | `settings` Box 的键名（`module_enabled_state` / `theme_brightness`）已写入 API.md，属契约；改动需写迁移逻辑 | 已决定 |
+| 2026-09-22 | `settings` Box 的键名（`module_enabled_state` / `theme_brightness` / `semester_config`）已写入 API.md，属契约；改动需写迁移逻辑 | 已决定 |
+| 2026-09-22 | `TimePlace` 新增 `weekType` 字段（Phase 2.2a），因当时无落盘课程故未写迁移；此后改 schema 必须写迁移 | 已决定 |
+| 2026-09-22 | `SemesterProvider.loadFromStorage` 读到相同配置也会通知一次（`SemesterConfig` 无 `==`）；启动只调一次，暂不优化 | 待处理 |
 | 2026-09-22 | 导航栏配置页需给出"已达上限 5 个"的提示，并显示哪些模块被挤出 | ✅ 已完成（Phase 1.6） |
+| 2026-09-22 | ThemeProvider.currentSkinId 暂未落盘，Phase 6 创意工坊时补 | 待处理 |

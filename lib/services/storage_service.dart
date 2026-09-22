@@ -22,6 +22,11 @@ const String kModuleEnabledStateKey = 'module_enabled_state';
 /// 明暗模式偏好，值为 `"light"` 或 `"dark"`。
 const String kThemeBrightnessKey = 'theme_brightness';
 
+/// 学期配置，值为 `SemesterConfig` 的 JSON 字符串。
+///
+/// 目前只支持单学期，因此是一个"单值键"而不是列表。
+const String kSemesterConfigKey = 'semester_config';
+
 /// Hive 存储服务。
 ///
 /// 职责：初始化 Hive、打开全部 Box、对外提供只读的 Box 引用。

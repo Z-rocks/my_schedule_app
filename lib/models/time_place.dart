@@ -1,5 +1,44 @@
 // 时间地点模型：描述一次课程安排的上课时间、地点与生效周次
 
+/// 单双周类型。
+///
+/// 与 [TimePlace.weeks] 配合使用：[weeks] 是**基础周次**（不做单双过滤），
+/// 单双周的过滤由 `TimetableLogic.hasClassInWeek` 负责，
+/// 这样同一个 [TimePlace] 只保存一份周次数据。
+enum WeekType {
+  /// 每周都上。
+  all,
+
+  /// 单周（奇数周）。
+  odd,
+
+  /// 双周（偶数周）。
+  even;
+
+  /// 从 JSON 中的字符串安全解析，无法识别时返回 [WeekType.all]。
+  static WeekType fromName(Object? value) {
+    if (value is WeekType) return value;
+    if (value is! String) return WeekType.all;
+    final String key = value.trim().toLowerCase();
+    for (final WeekType type in WeekType.values) {
+      if (type.name == key) return type;
+    }
+    return WeekType.all;
+  }
+
+  /// 中文展示标签。
+  String get label {
+    switch (this) {
+      case WeekType.all:
+        return '每周';
+      case WeekType.odd:
+        return '单周';
+      case WeekType.even:
+        return '双周';
+    }
+  }
+}
+
 /// 一次课程安排的时间与地点。
 ///
 /// 一节课可能有多个 [TimePlace]（例如单双周在不同教室、
@@ -17,11 +56,14 @@ class TimePlace {
   /// 上课地点（教室），可能为空字符串。
   final String room;
 
-  /// 解析后的周次列表，例如 `[4, 6, 7, 8]`。
+  /// 基础周次列表（未按单双周过滤），例如 `[4, 6, 7, 8]`。
   final List<int> weeks;
 
   /// 原始周次文本，如 `"4,6-14周"`，用于展示与二次解析。
   final String rawWeeksText;
+
+  /// 单双周类型，默认 [WeekType.all]（每周）。
+  final WeekType weekType;
 
   const TimePlace({
     required this.day,
@@ -30,12 +72,16 @@ class TimePlace {
     required this.room,
     required this.weeks,
     required this.rawWeeksText,
+    this.weekType = WeekType.all,
   });
 
   /// 结束节次（含）。
   int get endSession => startSession + length - 1;
 
   /// 该安排是否在 [week] 周生效。
+  ///
+  /// **只看基础周次，不考虑单双周**——需要完整判断请用
+  /// `TimetableLogic.hasClassInWeek`。
   bool isActiveInWeek(int week) => weeks.contains(week);
 
   /// 该安排是否与另一个安排在同一周、同一天且节次重叠。
@@ -53,6 +99,7 @@ class TimePlace {
       room: _asString(json['room']),
       weeks: _asIntList(json['weeks']),
       rawWeeksText: _asString(json['rawWeeksText']),
+      weekType: WeekType.fromName(json['weekType']),
     );
   }
 
@@ -65,6 +112,7 @@ class TimePlace {
       'room': room,
       'weeks': weeks,
       'rawWeeksText': rawWeeksText,
+      'weekType': weekType.name,
     };
   }
 
@@ -75,6 +123,7 @@ class TimePlace {
     String? room,
     List<int>? weeks,
     String? rawWeeksText,
+    WeekType? weekType,
   }) {
     return TimePlace(
       day: day ?? this.day,
@@ -83,13 +132,15 @@ class TimePlace {
       room: room ?? this.room,
       weeks: weeks ?? this.weeks,
       rawWeeksText: rawWeeksText ?? this.rawWeeksText,
+      weekType: weekType ?? this.weekType,
     );
   }
 
   @override
   String toString() =>
       'TimePlace(day: $day, startSession: $startSession, length: $length, '
-      'room: $room, weeks: $weeks, rawWeeksText: $rawWeeksText)';
+      'room: $room, weeks: $weeks, rawWeeksText: $rawWeeksText, '
+      'weekType: ${weekType.name})';
 
   @override
   bool operator ==(Object other) {
@@ -100,7 +151,8 @@ class TimePlace {
         other.length == length &&
         other.room == room &&
         _listEquals(other.weeks, weeks) &&
-        other.rawWeeksText == rawWeeksText;
+        other.rawWeeksText == rawWeeksText &&
+        other.weekType == weekType;
   }
 
   @override
@@ -111,6 +163,7 @@ class TimePlace {
         room,
         Object.hashAll(weeks),
         rawWeeksText,
+        weekType,
       );
 }
 
