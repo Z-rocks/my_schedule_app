@@ -124,16 +124,21 @@ class ModuleInfo {
   });
 
   /// 用 [ModuleType] 快速构造一个内置模块，默认值取自枚举。
+  ///
+  /// [iconName] 是 Material 图标名（如 `'calendar_month'`），
+  /// 由 UI 层映射为具体 `IconData`（模型层不依赖 Flutter）。
   factory ModuleInfo.fromType(
     ModuleType type, {
     bool? enabled,
     bool available = true,
     int order = 0,
+    String iconName = '',
   }) {
     return ModuleInfo(
       capabilityId: type.name,
       type: type,
       title: type.defaultTitle,
+      iconName: iconName,
       enabled: enabled ?? type.isDefaultEnabled,
       available: available,
       order: order,

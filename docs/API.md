@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-21（Phase 1.1 模型 9 文件；1.2 主题 4 文件；1.3 状态管理 5 文件）
+- 最后更新：2026-09-21（1.1 模型 9 文件；1.2 主题 4 文件；1.3 状态管理 5 文件；1.4 入口 3 文件）
 
 ---
 
@@ -229,7 +229,7 @@
 
 构造：`const ModuleInfo({required capabilityId, ModuleType? type, required title, String iconName = '', bool enabled = false, bool available = true, int order = 0, bool isBuiltIn = true, String sourcePluginId = '', bool alwaysOn = false})`
 
-工厂：`factory ModuleInfo.fromType(ModuleType type, {bool? enabled, bool available = true, int order = 0})` — 默认值取自枚举
+工厂：`factory ModuleInfo.fromType(ModuleType type, {bool? enabled, bool available = true, int order = 0, String iconName = ''})` — 默认值取自枚举，`iconName` 需显式传入（模型层不依赖 Flutter）
 
 方法：
 - `bool get isVisible` — `available && enabled`
@@ -412,14 +412,16 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 
 初始状态：
 
-| type | alwaysOn | 初始 available | 初始 enabled |
-|------|:--------:|:--------------:|:------------:|
-| timetable | ✅ | true | true |
-| courseList | ❌ | true | true |
-| exam | ❌ | true | true |
-| homework | ❌ | **false**（必须插件） | false |
-| message | ❌ | true | **false**（默认关闭） |
-| settings | ✅ | true | true |
+| type | title | iconName | alwaysOn | 初始 available | 初始 enabled |
+|------|-------|----------|:--------:|:--------------:|:------------:|
+| timetable | 课表 | `calendar_month` | ✅ | true | true |
+| courseList | 课程 | `book_outlined` | ❌ | true | true |
+| exam | 考试 | `assignment_outlined` | ❌ | true | true |
+| homework | 作业 | `edit_note` | ❌ | **false**（必须插件） | false |
+| message | 消息 | `notifications_outlined` | ❌ | true | **false**（默认关闭） |
+| settings | 设置 | `settings_outlined` | ❌ | true | true |
+
+`iconName` 是 Material 图标名（字符串），由 UI 层 `home_page.dart` 的 `_iconFromName` 转成 `IconData`——**图标完全数据驱动**，改图标或加模块不需要动 UI 代码。
 
 全新安装的 `visibleModules` = **课表 → 课程 → 考试 → 设置**（4 个）。
 
@@ -504,7 +506,68 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 
 ## lib/pages/
 
-（待填充）
+### `home_page.dart` — HomePage
+
+主页外壳：底部导航栏的模块与顺序完全由 `ModuleProvider.visibleModules` 决定，用户在"导航栏配置"里改动后本页立即重建。
+
+```dart
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+```
+
+行为：
+- 用 Material 3 的 `NavigationBar`（**不是** `BottomNavigationBar`）构建导航栏；图标取自 `_iconFromName(module.iconName)`，标签取自 `ModuleInfo.title`
+- 页面映射（`_buildPage`）：`timetable`→TimetableView、`courseList`→CourseListView、`exam`→ExamView、`homework`→HomeworkView、`message`→MessageView、`settings`→SettingsPage、`type == null`→插件模块页
+  - **Phase 1.5 之前**这些位置都是私有占位 `_ModulePlaceholder`，Phase 1.5 逐行替换为真实页面
+- 用 `IndexedStack` 保活各页面，切回标签时保留滚动位置与内部状态
+- **越界保护**：`visibleModules` 变短导致 `_currentIndex` 越界时**重置为 0**（回到课表）。本帧先用修正后的下标渲染，再把 `_currentIndex` 归一化推迟到 `addPostFrameCallback`，避免在 `build` 中 `setState`
+- `visibleModules` 为空时显示 `_NoModuleScaffold` 兜底页（课表/设置常驻，正常不会出现）
+- 样式全部经 `AppThemeExtension.of(context)` 读取，无硬编码颜色/尺寸
+
+私有辅助（同文件内）：
+- `const Map<String, IconData> _kIconByName` — 图标名 → `IconData` 映射表。覆盖 6 个内置模块图标（`calendar_month` / `book_outlined` / `assignment_outlined` / `edit_note` / `notifications_outlined` / `settings_outlined`）以及预留的插件常用图标（`grade_outlined` / `school_outlined` / `task_outlined` / `message_outlined`）
+- `IconData _iconFromName(String name)` — 查表；**查不到（含空字符串、插件未声明 `iconName`）时兜底 `Icons.extension`**
+- `FontWeight _fontWeightOf(int value)` — 把 `AppTheme.fontWeightTitle`（int）转成 `FontWeight`
+
+---
+
+## lib/ 根
+
+### `main.dart` — 入口
+
+- `void main()` — `runApp(buildApp())`
+- `Widget buildApp()` — 构建完整 App（Provider 树 + `MyApp`）。抽成函数是为了让 widget 测试直接 `pumpWidget(buildApp())`，验证的就是 `main()` 真正使用的那棵树
+
+Provider 顺序（即依赖顺序，被依赖者必须在前）：
+
+| # | Provider | 依赖 |
+|---|----------|------|
+| 1 | `ChangeNotifierProvider<ThemeProvider>` | 无 |
+| 2 | `ChangeNotifierProvider<PluginProvider>` | 无 |
+| 3 | `ChangeNotifierProxyProvider<PluginProvider, ModuleProvider>` | PluginProvider |
+| 4 | `ChangeNotifierProvider<CourseProvider>` | 无 |
+| 5 | `ChangeNotifierProvider<MessageProvider>` | 无 |
+
+> 注：prompt 把 `ModuleProvider` 列在第 2 位、`PluginProvider` 列在最后，但 `ChangeNotifierProxyProvider<PluginProvider, ModuleProvider>` 必须能读到 `PluginProvider`，故两者顺序对调。
+
+proxy 的 `update` 回调每次 `PluginProvider` 通知时调用 `ModuleProvider.updateCapabilities(pluginProvider.allCapabilities)`；首次 build 时 `moduleProvider` 为 `null` 需自建。由于 `updateCapabilities` 只在可用性真正变化时才通知，默认状态下不会在 build 阶段触发 `notifyListeners`。
+
+### `app.dart` — MyApp
+
+```dart
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+  @override
+  Widget build(BuildContext context);
+}
+```
+
+- 必须位于 `MultiProvider` **之下**（通过 `context.watch<ThemeProvider>()` 读主题）
+- `MaterialApp`：`title: '我的课表'`、`debugShowCheckedModeBanner: false`、`home: const HomePage()`
+- `theme`：`ColorScheme.fromSeed(seedColor: theme.primary)`、`useMaterial3: true`、`fontFamily`（非空时）、`extensions: [AppThemeExtension(theme: theme)]`
 
 ---
 

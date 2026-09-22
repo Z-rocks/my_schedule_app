@@ -80,9 +80,32 @@
 > 与 Phase 1.8 验收标准一致。
 
 ### 1.4 App 入口
-- [ ] `lib/main.dart` — 入口 + MultiProvider
-- [ ] `lib/app.dart` — MaterialApp + ThemeExtension
-- [ ] `lib/pages/home_page.dart` — 动态导航栏
+- [x] `lib/main.dart` — 入口 + MultiProvider
+- [x] `lib/app.dart` — MaterialApp + ThemeExtension
+- [x] `lib/pages/home_page.dart` — 动态导航栏
+
+> 备注：Phase 1.4 由 AI 生成（prompt: `docs/prompts/04-app-entry.md`）。
+> Phase 0 的静态 4-Tab `main.dart` 已整体替换。`dart analyze lib` 通过。
+> 另用临时 `flutter test` 脚本验证了 9 组行为（默认导航栏 = 课表/课程/考试/设置、
+> 点击切换、PluginProvider→ModuleProvider 的 proxy 联动不产生 build 期通知异常、
+> index 越界重置为 0、未越界时保持、主题经 AppThemeExtension 注入并随皮肤更新、
+> 占位页样式取自 AppTheme、空模块兜底页、插件模块 type==null 也能显示）后已删除脚本。
+> Phase 1.5 的 6 个真实页面尚未生成，`home_page.dart` 内用私有 `_ModulePlaceholder`
+> 顶替，Phase 1.5 时按各 case 后的注释逐行替换并删除该私有类。
+> 注意 `PluginProvider` 在 `MultiProvider` 中排在 `ModuleProvider` 之前
+> （ProxyProvider 需能读到它），与 prompt 列表顺序不同。
+
+> **Phase 1.4.1 修正**（review 后）：导航栏图标改为**完全数据驱动**。
+> `ModuleProvider._initialModules` 给 6 个内置模块补上了 `iconName`
+> （`calendar_month` / `book_outlined` / `assignment_outlined` / `edit_note` /
+> `notifications_outlined` / `settings_outlined`）；`ModuleInfo.fromType`
+> 新增可选 `iconName` 参数；`home_page.dart` 删除了 `switch (module.type)`
+> 图标映射，统一走 `_iconFromName(module.iconName)`，查不到时兜底
+> `Icons.extension`。此后改图标或新增模块不需要动 UI 代码。
+> 另用临时 `flutter test` 脚本验证了 6 组行为（6 个内置 iconName 非空且正确、
+> 默认 4 项图标解析正确、6 个模块全开时无一回退到兜底图标、
+> `fromType`/`fromJson`/`toJson`/`copyWith` 的 iconName 往返与向后兼容、
+> 插件模块可带 iconName）后已删除脚本。
 
 ### 1.5 页面骨架（空态）
 - [ ] `lib/pages/timetable/timetable_view.dart`

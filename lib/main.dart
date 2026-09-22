@@ -1,88 +1,69 @@
+// App 入口：装配 Provider 树（含 PluginProvider → ModuleProvider 的能力联动）
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import 'app.dart';
+import 'providers/course_provider.dart';
+import 'providers/message_provider.dart';
+import 'providers/module_provider.dart';
+import 'providers/plugin_provider.dart';
+import 'providers/theme_provider.dart';
 
 void main() {
-  runApp(const MyScheduleApp());
+  runApp(buildApp());
 }
 
-class MyScheduleApp extends StatelessWidget {
-  const MyScheduleApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '我的课表',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1E88E5)),
-        useMaterial3: true,
+/// 构建完整的 App（Provider 树 + 根组件）。
+///
+/// 抽成函数是为了让 widget 测试能直接 `pumpWidget(buildApp())`，
+/// 验证的即是 `main()` 真正使用的这棵 Provider 树，而不是测试里另写一份。
+Widget buildApp() {
+  return MultiProvider(
+    // Provider 顺序即依赖顺序：被依赖者必须排在依赖者之前。
+    // `ChangeNotifierProxyProvider<PluginProvider, ModuleProvider>`
+    // 依赖 PluginProvider，所以 PluginProvider 必须先声明。
+    providers: [
+      // 1. 主题（无依赖）
+      ChangeNotifierProvider<ThemeProvider>(
+        create: (BuildContext context) => ThemeProvider(),
       ),
-      home: const HomePage(),
-    );
-  }
-}
-
-class HomePage extends StatefulWidget {
-  const HomePage({super.key});
-
-  @override
-  State<HomePage> createState() => _HomePageState();
-}
-
-class _HomePageState extends State<HomePage> {
-  int _currentIndex = 0;
-
-  static const _pages = [
-    _PlaceholderPage(title: '课表', icon: Icons.calendar_month),
-    _PlaceholderPage(title: '课程列表', icon: Icons.book_outlined),
-    _PlaceholderPage(title: '考试安排', icon: Icons.assignment_outlined),
-    _PlaceholderPage(title: '设置', icon: Icons.settings_outlined),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: _pages[_currentIndex],
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (i) => setState(() => _currentIndex = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.calendar_month), label: '课表'),
-          NavigationDestination(icon: Icon(Icons.book_outlined), label: '课程'),
-          NavigationDestination(icon: Icon(Icons.assignment_outlined), label: '考试'),
-          NavigationDestination(icon: Icon(Icons.settings_outlined), label: '设置'),
-        ],
+      // 2. 插件（无依赖，但被 ModuleProvider 依赖）
+      ChangeNotifierProvider<PluginProvider>(
+        create: (BuildContext context) => PluginProvider(),
       ),
-    );
-  }
-}
+      // 3. 模块（依赖 PluginProvider 的能力集合）
+      ChangeNotifierProxyProvider<PluginProvider, ModuleProvider>(
+        create: (BuildContext context) => ModuleProvider(),
+        update: (
+          BuildContext context,
+          PluginProvider pluginProvider,
+          ModuleProvider? moduleProvider,
+        ) {
+          // 首次 build 时 moduleProvider 为 null，需要自建；
+          // 后续 PluginProvider 通知时会带着已有实例再次进入这里。
+          final ModuleProvider provider = moduleProvider ?? ModuleProvider();
 
-class _PlaceholderPage extends StatelessWidget {
-  final String title;
-  final IconData icon;
-
-  const _PlaceholderPage({required this.title, required this.icon});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(title),
-        centerTitle: true,
+          // 把插件声明的能力推给模块层，决定 homework 的可用性。
+          //
+          // 这里**不会**在 build 阶段触发 notifyListeners：
+          // ModuleProvider.updateCapabilities 只在模块可用性真正变化时才通知，
+          // 而「能力集合没变」是绝大多数重建的实际情况（包括首次 build）。
+          // 即使真的变化（用户刚启用了插件），该通知发生在
+          // PluginProvider.notifyListeners 引发的重建过程中，
+          // Provider 会把它合并进本次重建，不会形成循环。
+          provider.updateCapabilities(pluginProvider.allCapabilities);
+          return provider;
+        },
       ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 80, color: Colors.grey.shade400),
-            const SizedBox(height: 16),
-            Text(
-              '$title 页面\n（待实现）',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
-            ),
-          ],
-        ),
+      // 4. 课程（无依赖）
+      ChangeNotifierProvider<CourseProvider>(
+        create: (BuildContext context) => CourseProvider(),
       ),
-    );
-  }
+      // 5. 消息（无依赖）
+      ChangeNotifierProvider<MessageProvider>(
+        create: (BuildContext context) => MessageProvider(),
+      ),
+    ],
+    child: const MyApp(),
+  );
 }

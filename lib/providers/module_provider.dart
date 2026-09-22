@@ -31,16 +31,25 @@ class ModuleProvider extends ChangeNotifier {
   /// - 初始 enabled：timetable / courseList / exam / settings 为 `true`，
   ///   homework / message 为 `false`（与 [ModuleType.isDefaultEnabled] 一致）
   ///
-  /// 这里**显式**写出 `enabled` 而不依赖 [ModuleType.isDefaultEnabled]，
-  /// 一是让初始表一目了然，二是避免以后改枚举默认值时静默改变导航栏。
+  /// [ModuleInfo.iconName] 是 Material 图标名，UI 层（`home_page.dart` 的
+  /// `_iconFromName`）把它转成 `IconData`。图标因此完全由数据驱动，
+  /// 新增模块或改图标不需要动 UI 代码。
+  ///
+  /// 这里**显式**写出 `enabled` 与 `iconName` 而不依赖枚举默认值，
+  /// 一是让初始表一目了然，二是避免以后改枚举时静默改变导航栏。
   static final List<ModuleInfo> _initialModules = <ModuleInfo>[
-    ModuleInfo.fromType(ModuleType.timetable, enabled: true, order: 0),
-    ModuleInfo.fromType(ModuleType.courseList, enabled: true, order: 1),
-    ModuleInfo.fromType(ModuleType.exam, enabled: true, order: 2),
-    ModuleInfo.fromType(
-        ModuleType.homework, enabled: false, available: false, order: 3),
-    ModuleInfo.fromType(ModuleType.message, enabled: false, order: 4),
-    ModuleInfo.fromType(ModuleType.settings, enabled: true, order: 5),
+    ModuleInfo.fromType(ModuleType.timetable,
+        enabled: true, order: 0, iconName: 'calendar_month'),
+    ModuleInfo.fromType(ModuleType.courseList,
+        enabled: true, order: 1, iconName: 'book_outlined'),
+    ModuleInfo.fromType(ModuleType.exam,
+        enabled: true, order: 2, iconName: 'assignment_outlined'),
+    ModuleInfo.fromType(ModuleType.homework,
+        enabled: false, available: false, order: 3, iconName: 'edit_note'),
+    ModuleInfo.fromType(ModuleType.message,
+        enabled: false, order: 4, iconName: 'notifications_outlined'),
+    ModuleInfo.fromType(ModuleType.settings,
+        enabled: true, order: 5, iconName: 'settings_outlined'),
   ];
 
   final List<ModuleInfo> _modules = List<ModuleInfo>.of(_initialModules);
