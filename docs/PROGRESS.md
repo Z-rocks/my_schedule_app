@@ -214,6 +214,41 @@
 > **待办**：`main.dart` 的临时测试数据必须在 Phase 2.2c 删除（已用 TODO 标记）。
 > —— 已在 **Phase 2.2b.1 提前删除**（见下）。
 
+> **Phase 2.2c.1**（学期配置页）：`dart analyze lib` 通过，未新增依赖。
+>
+> 用户第一需求是**能编辑学期开始日期**，本页满足；添加课程页留给 2.2c.2。
+>
+> 改动：
+> - 新建 `lib/pages/settings/semester_config_page.dart`（`SemesterConfigPage`）：
+>   `Form` + `TextFormField`（学期名称，validator 非空 + 最多 30 字）、
+>   开始日期（可点击 → `showDatePicker`，范围过去 5 年~未来 5 年，无配置时默认"本周一"）、
+>   总周数（`Slider` 10–30，右侧显示 `N 周`）、结束日期（只读，派生显示）、
+>   备注（`maxLines: 3`）、预览（尚未开始 / 当前第 N 周 / 学期已结束）、
+>   底部"取消 / 保存"；AppBar 右侧"重置"（仅已有配置时显示，带确认框）
+> - 导出纯函数便于测试：`dateOnly` / `mondayOfWeek` / `formatChineseDate` /
+>   `formatChineseDateWithWeekday`；常量 `kMinTotalWeeks`(10) / `kMaxTotalWeeks`(30) /
+>   `kMaxSemesterNameLength`(30)
+> - `timetable_settings_page.dart`：学期配置入口从 SnackBar 改为 push 真实页面
+> - `timetable_view.dart`：空态"去配置学期"按钮改为 push 真实页面；
+>   周次面板底部新增 `TextButton.icon('编辑学期')`，面板返回
+>   `_WeekPickerResult.editSemester` 时打开配置页（选周仍返回 `int`）
+> - `StorageService.kSemesterConfigKey` 注释补充：由哪个页面编辑、解析要走 `tryDecode`
+>
+> 验证：临时 `flutter test` 脚本 **28 组全部通过**，脚本已删除。覆盖：
+> `mondayOfWeek`（含周日、带时分秒）/ `dateOnly` / 两种中文日期格式、
+> 结束日期派生（2026-09-07 + 20 周 → 2027-01-24，差值 139 天）、
+> 页面字段齐全、无配置时默认本周一与 20 周、有配置时回填 + 显示重置、
+> 超出 10–30 的历史周数被收进范围、名称 `maxLength` = 30、
+> 表单验证（空 / 纯空白被拦、填了名称后保存成功并 `pop(true)` + SnackBar）、
+> 点击开始日期弹出 `DatePickerDialog`、结束日期只读不弹、
+> 滑杆拖到 30/10 周时结束日期同步、预览三种状态（进行中第 3 周 / 已结束 / 尚未开始）、
+> 重置确认框（取消不清除、确定清除并返回）、取消按钮 `pop(false)` 且不改数据、
+> **三处入口都能跳转**、面板选周仍有效、保存后课表页从"没有配置学期"切到"还没有课程"。
+>
+> **测试注意**：表单页较长，默认 800×600 视口下底部"保存/取消"在屏幕外点不到，
+> 需用高视口（500×1600）；另外页面底部与确认框都有"取消"，`find.text('取消')` 有歧义，
+> 需 `find.descendant(of: find.byType(AlertDialog), …)` 限定。
+
 > **Phase 2.2b.4**（真机反馈"卡片信息太挤"）：`dart analyze lib` 通过，未新增依赖。
 >
 > 问题：窄列宽（约 46px）下同时显示教室与 `@校区`，两个都被截断成
@@ -486,8 +521,10 @@
 | 2026-09-22 | 卡片字号分档依赖 `timetableCellHeight`；若用户在课表设置里改每节高度，字号会自动跟随（该设置持久化后需回归验证） | ✅ 已作废（Phase 2.2b.3 改为固定字号，不再分档） |
 | 2026-09-22 | `TimePlace` 只有 `room` 一个字段（常含"校区 + 教室"），卡片靠 `splitCampusAndRoom` 按空白取教室；Phase 4 定下插件契约后应加独立 `campus` 字段（需迁移） | 待处理 |
 | 2026-09-22 | 卡片已不显示校区（Phase 2.2b.4），校区信息目前只在详情弹层的教室串里；若将来要分开展示需用 `splitCampusAndRoom().campus` | 已决定 |
+| 2026-09-22 | 学期配置页的总周数滑杆范围固定 10–30；若插件/历史数据给出该范围外的周数，进页面后会被收进区间（保存即改动原值） | 待处理 |
+| 2026-09-22 | 学期配置页只在"已有配置"时显示"重置"；清除后没有再次进入的入口提示（需重新从空态/设置页进入） | 待处理 |
 | 2026-09-22 | 窄屏（360dp）下每列约 46px，教室用 `maxLines: 2` + 裁切；很长的教室名（如 `教学楼A HE-405`）第 2 行仍可能被裁掉尾部 | 待处理 |
 | 2026-09-22 | `kDefaultSectionTimes` 硬编码 12 个节次时间，Phase 4 插件接入后需改为从插件数据读取 | 待处理 |
-| 2026-09-22 | 课表网格的星期表头不显示日期（如"周一 9/7"），后续可结合学期起始日补上 | 待处理 |
+| 2026-09-22 | 课表网格的星期表头不显示日期 | ✅ 已完成（Phase 2.2b.3：表头显示"一 11"并在时间列显示月份） |
 | 2026-09-22 | 导航栏配置页需给出"已达上限 5 个"的提示，并显示哪些模块被挤出 | ✅ 已完成（Phase 1.6） |
 | 2026-09-22 | ThemeProvider.currentSkinId 暂未落盘，Phase 6 创意工坊时补 | 待处理 |

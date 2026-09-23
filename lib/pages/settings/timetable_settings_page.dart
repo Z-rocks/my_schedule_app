@@ -6,6 +6,7 @@ import '../../providers/semester_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
+import 'semester_config_page.dart';
 
 /// 每节高度的可调范围（逻辑像素）。
 const double kMinCellHeight = 40;
@@ -69,7 +70,7 @@ class _TimetableSettingsPageState extends State<TimetableSettingsPage> {
       body: ListView(
         padding: EdgeInsets.symmetric(vertical: theme.sectionGap),
         children: <Widget>[
-          // 学期配置入口（Phase 2.2c 做真实页面）
+          // 学期配置入口
           ListTile(
             title: Text(
               '学期配置',
@@ -89,8 +90,10 @@ class _TimetableSettingsPageState extends State<TimetableSettingsPage> {
               Icons.chevron_right,
               color: theme.onBackground.withValues(alpha: 0.4),
             ),
-            onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('学期配置页待实现（Phase 2.2c）')),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<bool>(
+                builder: (BuildContext _) => const SemesterConfigPage(),
+              ),
             ),
           ),
           // 左右滑动切换周次（Phase 2.2b.1）

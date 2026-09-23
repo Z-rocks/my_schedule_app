@@ -12,6 +12,7 @@ import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/timetable_grid.dart';
+import '../settings/semester_config_page.dart';
 import 'course_detail_sheet.dart';
 
 /// 顶部日期栏的高度。
@@ -154,18 +155,34 @@ class _TimetableViewState extends State<TimetableView> {
     );
   }
 
-  /// 弹出周次选择面板；选中后跳到该周。
+  /// 打开学期配置页（三处入口共用）。
+  Future<void> _openSemesterConfig() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<bool>(
+        builder: (BuildContext _) => const SemesterConfigPage(),
+      ),
+    );
+  }
+
+  /// 弹出周次选择面板；选中周次则跳周，选"编辑学期"则打开学期配置页。
   Future<void> _showWeekPicker(SemesterConfig config) async {
     final int totalWeeks = config.totalWeeks < 1 ? 1 : config.totalWeeks;
-    final int? picked = await showModalBottomSheet<int>(
+    final Object? result = await showModalBottomSheet<Object>(
       context: context,
       builder: (BuildContext sheetContext) => _WeekPickerSheet(
         totalWeeks: totalWeeks,
         currentWeek: _week.clamp(1, totalWeeks),
       ),
     );
-    if (picked == null || !mounted) return;
-    _setWeek(picked, totalWeeks: totalWeeks);
+    if (result == null || !mounted) return;
+
+    if (result is int) {
+      _setWeek(result, totalWeeks: totalWeeks);
+      return;
+    }
+    if (result == _WeekPickerResult.editSemester) {
+      await _openSemesterConfig();
+    }
   }
 
   @override
@@ -291,7 +308,7 @@ class _TimetableViewState extends State<TimetableView> {
         title: '还没有配置学期',
         subtitle: '配置学期后才能看到课表',
         actionLabel: '去配置学期',
-        onAction: () => _showSnack('学期配置页待实现（Phase 2.2c）'),
+        onAction: _openSemesterConfig,
       );
     }
 
@@ -345,7 +362,12 @@ class _TimetableViewState extends State<TimetableView> {
   }
 }
 
-/// 周次选择面板：1..totalWeeks 的 chips，点选后返回该周次。
+/// 周次面板的返回结果：面板可以返回一个周次（`int`），
+/// 也可以返回本枚举表示"用户点了编辑学期"。
+enum _WeekPickerResult { editSemester }
+
+/// 周次选择面板：1..totalWeeks 的 chips，点选后返回该周次；
+/// 底部另有"编辑学期"入口，返回 [_WeekPickerResult.editSemester]。
 class _WeekPickerSheet extends StatelessWidget {
   const _WeekPickerSheet({required this.totalWeeks, required this.currentWeek});
 
@@ -415,6 +437,24 @@ class _WeekPickerSheet extends StatelessWidget {
                         ),
                       ),
                   ],
+                ),
+                SizedBox(height: theme.sectionGap),
+                // 学期配置入口（改学期起止/总周数）
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: () => Navigator.of(context)
+                        .pop(_WeekPickerResult.editSemester),
+                    icon: Icon(Icons.edit_calendar_outlined,
+                        size: theme.bodySize),
+                    label: Text(
+                      '编辑学期',
+                      style: TextStyle(fontSize: theme.bodySize),
+                    ),
+                    style: TextButton.styleFrom(
+                      foregroundColor: theme.primary,
+                    ),
+                  ),
                 ),
               ],
             ),

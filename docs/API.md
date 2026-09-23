@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-22（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室）
+- 最后更新：2026-09-22（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页）
 
 ---
 
@@ -726,7 +726,7 @@ const TimetableView({super.key, int totalWeeks = 20, int initialWeek = 1});
 
 | 条件 | 展示 |
 |------|------|
-| `!semester.hasConfig` | `EmptyState(Icons.calendar_today, '还没有配置学期', '配置学期后才能看到课表', '去配置学期')` → SnackBar `学期配置页待实现（Phase 2.2c）`。**不显示周次选择器**（没有学期时周次无意义） |
+| `!semester.hasConfig` | `EmptyState(Icons.calendar_today, '还没有配置学期', '配置学期后才能看到课表', '去配置学期')` → **Phase 2.2c.1 起 `Navigator.push(SemesterConfigPage)`**（原为 SnackBar 占位）。**不显示周次选择器**（没有学期时周次无意义） |
 | 有学期但 `visibleCourses` 为空 | `EmptyState(Icons.add_circle_outline, '还没有课程', '点击下方按钮添加第一门课', '添加课程')` → SnackBar `添加课程页待实现（Phase 2.2c）` |
 | 有数据 + `gestureSwitchWeek == true` | `PageView.builder(itemCount: totalWeeks)`，每页一周；`initialPage = _week - 1` |
 | 有数据 + `gestureSwitchWeek == false` | 单个 `TimetableGrid`（只能通过顶部周次面板切周） |
@@ -759,7 +759,8 @@ SizedBox(
 - `formatDateYmd(DateTime)` → `yyyy/M/d`（如 `2026/9/23`），不补零、不依赖 `intl` 初始化
 - `weekStartDateOf(SemesterConfig, week)` → `startDate + (week - 1) * 7` 天（该周周一），传给 `TimetableGrid.weekStartDate`
 - **"学期已结束"** 判定（`_isSemesterEnded`）：`currentWeek(config) == totalWeeks` **且** 今天（只比年月日）晚于 `config.endDate`
-- 点击"第 N 周" → `showModalBottomSheet` 弹出 `_WeekPickerSheet`：标题"选择周次" + `Wrap` 的 `ChoiceChip`（1..totalWeeks，当前周选中）；选中后 `pop(week)` 并 `_setWeek(...)`
+- 点击"第 N 周" → `showModalBottomSheet` 弹出 `_WeekPickerSheet`：标题"选择周次" + `Wrap` 的 `ChoiceChip`（1..totalWeeks，当前周选中）+ 右下角 `TextButton.icon('编辑学期')`
+  - 面板返回 `int` → 跳到该周；返回 `_WeekPickerResult.editSemester` → `Navigator.push(SemesterConfigPage)`（Phase 2.2c.1）
 - 右上角 `+` → SnackBar `添加课程页待实现（Phase 2.2c）`
 
 常量：`kTopBarHeight = 48`、`kDefaultSectionTimes`（12 个节次的起止时间，**硬编码**；Phase 4 插件接入后改为从插件的 `sectionTime` 数据读取——各校作息不同，不能长期写死在客户端）
@@ -788,12 +789,41 @@ Future<void> showCourseDetailSheet(BuildContext context, Course course);
 - "备注"区块：仅在 `userOverride.note` 非空时显示
 - 底部按钮：`编辑`（→ SnackBar `编辑功能待实现（Phase 5）`）、`关闭`（→ `Navigator.pop`）
 
+### `settings/semester_config_page.dart` — SemesterConfigPage
+
+学期配置页（Phase 2.2c.1）。`const SemesterConfigPage({super.key})` —— 编辑唯一的学期配置。
+
+**三处入口**：设置 → 课表设置 → "学期配置"；课表页无学期时的"去配置学期"按钮；课表页顶部"第 N 周"面板里的"编辑学期"。
+
+- `AppBar`：标题"学期配置"；**已有配置时**右侧显示"重置"（`theme.error` 色）
+- Body = `Form`（`_formKey`）内的 `ListView`：
+
+| 字段 | 控件 | 说明 |
+|------|------|------|
+| 学期名称 | `TextFormField` | label"学期名称"、hint"如：2026-2027学年第一学期"、`maxLength: 30`；**validator**：空（含纯空白）→"请输入学期名称"，超 30 字 → 提示 |
+| 开始日期（第 1 周周一） | 可点击行（`_TapField`） | 显示 `2026年9月7日（周一）`；点击 → `showDatePicker` |
+| 总周数 | `Slider` | 范围 `kMinTotalWeeks(10)`–`kMaxTotalWeeks(30)`，`divisions` = 20，右侧显示 `N 周` |
+| 结束日期 | 只读行（`onTap: null`） | 派生：`startDate + (totalWeeks * 7 - 1)` 天，显示 `2027年1月24日` |
+| 备注（可选） | `TextFormField` | `maxLines: 3` |
+| 预览 | `_PreviewCard` | 见下 |
+| 底部 | `OutlinedButton 取消` + `FilledButton 保存` | 取消 → `pop(false)` |
+
+- 初值（`initState` 里 `context.read<SemesterProvider>().config`）：名称/备注回填；开始日期取已有值，**没有配置时默认"本周一"**；总周数取已有值并 `clamp(10, 30)`（滑杆范围外会被收进区间）
+- 日期选择器：`showDatePicker(initialDate: _startDate, firstDate: now.year-5, lastDate: now.year+5/12/31, helpText: '选择第 1 周的周一')`；选中后 `dateOnly()` 归一化
+- **预览文案**（`_previewText`）：今天 < 开始日 → `学期尚未开始（…起）`；今天 > 结束日 → `学期已结束`；否则 → `当前是第 N 周`（`TimetableLogic.currentWeek`）
+- **保存**：`validate()` 通过 → `SemesterProvider.save(...)` → `pop(true)` + SnackBar `学期配置已保存`（messenger/navigator 在 await 前捕获，避免跨异步间隙用 context）
+- **重置**：确认框"确定要清除学期配置吗？" → 确认则 `SemesterProvider.clear()` → `pop(true)`
+
+纯函数（同文件导出，便于测试）：`dateOnly(DateTime)`、`mondayOfWeek(DateTime)`、`formatChineseDate(DateTime)`（`2026年9月7日`）、`formatChineseDateWithWeekday(DateTime)`（`2026年9月7日（周一）`）
+
+常量：`kMinTotalWeeks = 10`、`kMaxTotalWeeks = 30`、`kMaxSemesterNameLength = 30`
+
 ### `settings/timetable_settings_page.dart` — TimetableSettingsPage（更新）
 
 Phase 2.2b 在"显示周末"开关**上方**新增一行 `ListTile`：
 
 - 标题"学期配置"，副标题 = `SemesterProvider.config?.name ?? '未配置'`（`context.watch` 实时更新）
-- 点击 → SnackBar `学期配置页待实现（Phase 2.2c）`
+- 点击 → **Phase 2.2c.1 起改为 `Navigator.push(SemesterConfigPage)`**（原为 SnackBar 占位）
 
 Phase 2.2b.1 又在"显示周末"上方新增 `SwitchListTile`：
 

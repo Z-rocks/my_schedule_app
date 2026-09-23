@@ -25,6 +25,9 @@ const String kThemeBrightnessKey = 'theme_brightness';
 /// 学期配置，值为 `SemesterConfig` 的 JSON 字符串。
 ///
 /// 目前只支持单学期，因此是一个"单值键"而不是列表。
+/// 由 `SemesterConfigPage`（学期配置页）编辑、`SemesterProvider` 读写。
+/// 解析请走 `SemesterConfig.tryDecode`——它会拒绝缺 `startDate` / `totalWeeks`
+/// 的数据，避免用兜底值伪造出一个学期。
 const String kSemesterConfigKey = 'semester_config';
 
 /// 是否允许在课表页左右滑动切换周次，值为 JSON `true` / `false`。
