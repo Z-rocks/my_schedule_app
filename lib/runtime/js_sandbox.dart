@@ -257,6 +257,11 @@ class JsSandbox {
   /// 沙箱是否仍可用（创建成功且未因超时被销毁）。
   bool get isUsable => _usable && !_disposed;
 
+  /// 不可用原因（创建失败 / 超时后销毁 / 已 dispose）；可用时为 `null`。
+  ///
+  /// 供上层（如 `PluginRuntime`）把"插件不可用"的具体原因透传给用户。
+  String? get unavailableReason => _usable ? null : _unavailableReason;
+
   /// 创建一个沙箱。
   ///
   /// 任何创建失败（子 isolate 起不来、QuickJS 初始化抛异常、超时无应答）

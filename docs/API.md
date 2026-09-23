@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-23（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底）
+- 最后更新：2026-09-23（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架）
 
 ---
 
@@ -1023,6 +1023,7 @@ const EmptyState({
   - `onLog` 接收插件经 `sendMessage('log', ...)` 打出的日志，在**父** isolate 上回调（可安全更新 UI）
   - `simulateCreateFailure` 仅测试用（验证降级路径）
 - `bool get isUsable` — 创建成功且未因超时/`dispose` 失效
+- `String? get unavailableReason` — 不可用原因（创建失败 / 超时后销毁 / 已 dispose）；可用时为 `null`。**Phase 3.2b.1 新增**，供 `PluginRuntime` 把"插件不可用"的具体原因透传给用户
 - `Future<JsSandboxResult> execute(String script, {Duration timeout = kDefaultJsTimeout})` — 在沙箱里执行 JS。`timeout` 是**墙钟**上限；超时即 kill 子 isolate 并返回 `timeout` 状态
 - `Future<void> dispose()` — kill 子 isolate 并关闭端口。**幂等**
 
@@ -1032,6 +1033,149 @@ const EmptyState({
 - 子 isolate 用长驻 `ReceivePort` 接收求值请求，**沙箱可复用**，不必每次重建 isolate
 
 > 本阶段**不做**（留给后续）：权限控制、插件文件加载、`ctx.http` / `ctx.storage` 等跨 isolate 的服务注入、Promise 支持（库的 Promise 路径走 `callFunction`，而 QuickJS 后端该方法是 `UnimplementedError`）。
+
+---
+
+### 插件文件格式（Phase 3.2b.1 定义，最小版）
+
+一个插件由**一个必需文件 + 一个可选文件**组成（同目录、同主名）：
+
+```
+demo.js               必需。插件脚本。
+demo.manifest.json    可选。元数据。
+```
+
+**`<name>.js`（必需）** —— 必须定义全局对象 `__plugin`（常量 `kPluginGlobalName`），
+其属性中的**函数**即入口函数：
+
+```js
+var __plugin = {
+  id: 'demo-course-plugin',        // 必需（或用 manifest 文件提供）
+  name: '演示课程插件',
+  version: '1.0.0',
+  capabilities: ['exam'],
+  fetchCourses: function (args) {  // 入口函数，收到一个普通对象
+    return { courses: [] };        // 返回值会被 JSON 序列化回 Dart
+  }
+};
+```
+
+**`<name>.manifest.json`（可选）** —— 缺省时元数据从 `__plugin` 的
+`id`/`name`/`version`/`author`/`description`/`school`/`capabilities` 推导；
+**manifest 文件存在时优先**。键名一律小驼峰（CONTEXT 4.2.1）：
+
+```json
+{
+  "id": "demo-course-plugin",
+  "name": "演示课程插件",
+  "version": "1.0.0",
+  "author": "",
+  "description": "",
+  "school": "",
+  "capabilities": ["exam", "homework"]
+}
+```
+
+**加载校验规则**（任一不满足即降级，见下方映射表）：脚本能求值成功（语法合法）→
+`__plugin` 存在且为对象 → 至少有一个函数属性 → `id` 非空（manifest 或 `__plugin.id`）。
+
+**数据交换约定**（沿用 3.2a 约束）：入参经 `JSON.parse` 进入 JS、返回值经
+JS 侧 `JSON.stringify` 出来、Dart 侧 `jsonDecode` 解析；**不使用 `convertValue`**。
+
+**插件文件从哪来**：Phase 3.2b.1 **只支持调用方给路径或直接给源码**，
+不接 UI、不做安装流程。真机验证用的是 `Directory.systemTemp` 临时目录。
+> 后续若要做"从文件安装插件"，需要 `path_provider` 取应用私有目录
+> （CONTEXT 技术栈里**没有**声明该依赖，引入前需先改 CONTEXT），
+> 或改用 assets 打包内置插件（需改 `pubspec.yaml` 的 assets 段）。两者都留待后续阶段决定。
+
+### `plugin_manifest.dart` — PluginManifest
+
+插件 manifest 模型（插件文件格式的**可选**元数据部分）。**不包含 UI 信息**
+（导航栏模块等属 `PluginMeta` / `ModuleInfo` 职责）。
+
+常量：`kPluginManifestSuffix = '.manifest.json'`
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | `String` | 插件唯一 ID，**必须非空**（由加载器校验） |
+| `name` | `String` | 显示名 |
+| `version` | `String` | 版本号，默认 `'0.0.0'` |
+| `author` / `description` / `school` | `String` | 作者 / 说明 / 适用学校 |
+| `capabilities` | `List<String>` | 能力 ID 列表，默认空 |
+
+构造：`const PluginManifest({required id, required name, String version = '0.0.0', String author = '', String description = '', String school = '', List<String> capabilities = const []})`
+
+方法：
+- `bool get hasValidId` — `id` 非空且非纯空白
+- `bool get hasCapabilities`
+- `factory PluginManifest.fromJson(Map<String, dynamic> json)` — 缺失用兜底值、类型不符忽略该项，**不抛异常**（数字/布尔会被转成字符串）
+- `Map<String, dynamic> toJson()` — 键名与 `fromJson` 一一对应
+- `static PluginManifest? tryDecode(String? raw)` — 空值 / 坏 JSON / 非对象 / **缺 `id` 或 `id` 为空白**一律返回 `null`（供加载器判定"manifest 不可用"，不伪造）
+
+### `plugin_handle.dart` — PluginHandle
+
+一个已加载插件的句柄。**不可变值对象 + 持有独占 `JsSandbox`**。
+
+常量：`kPluginGlobalName = '__plugin'`
+
+顶层函数：`String buildPluginEntryCallScript(String entryFunction, Map<String, dynamic>? args)` —
+构造"调用插件入口函数"的 JS 脚本。
+- 函数名与参数都用 `jsonEncode` 转成 **JSON 字符串字面量**再嵌入（JSON 转义是 JS 字符串字面义的子集，故 `jsonEncode` 两次得到的 `"{\"a\":1}"` 就是合法 JS 字面量），免去手写转义
+- 入口函数不存在时 `throw`，由沙箱捕获成 `error`
+- `JSON.stringify(undefined)` 返回 `undefined` 而非字符串，故显式归一为 `'null'`
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `status` | `JsSandboxStatus` | 加载/运行状态，**复用沙箱四态** |
+| `manifest` | `PluginManifest?` | 元数据；降级过早（文件都读不到）时为 `null` |
+| `source` | `String` | 插件 JS 源码（读不到时为空串） |
+| `entries` | `List<String>` | 发现的入口函数名列表 |
+| `sourcePath` | `String?` | 插件文件路径；从 `jsSource` 加载时为 `null` |
+| `reason` | `String?` | 降级原因（仅加载失败时有值） |
+
+构造：`const PluginHandle({required status, manifest, source, entries, sourcePath, reason, JsSandbox? sandbox})`
+（`sandbox` 存进私有字段；正常由 `PluginRuntime` 创建，业务代码不要自己构造）
+
+方法：
+- `bool get isUsable` — **动态判定**：`status == success` **且**底层沙箱仍存活。因此插件某次执行超时（沙箱被 kill）后会自动变 `false`，无需改字段——这也是本类能保持完全不可变的原因
+- `bool get isLoaded` — 只看加载结果（不含沙箱后续存活状态）
+- `Future<JsSandboxResult> execute(String entryFunction, {Map<String, dynamic>? args, Duration timeout = kDefaultJsTimeout})` — 调用入口函数，返回沙箱四态，**不抛异常**
+- `Future<void> dispose()` — 销毁独占沙箱，幂等
+
+> **为什么每插件一个沙箱**：`__plugin` 是全局变量，共用沙箱会让两个插件互相覆盖；
+> 独占沙箱还能做到"某个插件死循环只打死它自己的 isolate"，与 3.2a 的隔离设计一致。
+
+### `plugin_runtime.dart` — PluginRuntime
+
+插件运行时骨架：把「插件文件」变成「可执行的 JS」。**不做** `ctx.http` / `ctx.storage`
+注入（留给 3.2b.2 / 3.2b.3），**不接 UI**。
+
+构造：`PluginRuntime({Duration loadTimeout = kDefaultJsTimeout, Duration executeTimeout = kDefaultJsTimeout, void Function(String message)? onLog, @visibleForTesting bool simulateSandboxFailure = false})`
+
+- `Future<PluginHandle> loadPlugin({String? path, String? jsSource, String? manifestPath})` — 加载插件。
+  - 源码来源优先级：`jsSource` → `path` 读文件 → 都没有则降级
+  - `manifestPath` 不传时，默认在 `path` 同目录找同主名的 `.manifest.json`
+  - 流程：取源码 → 起沙箱 → 顶层求值 → 校验 `__plugin` → 收集入口函数 → 取/推导 manifest
+  - **任何失败都返回降级 handle**（`isUsable == false` + `reason`），**绝不抛异常**
+  - 失败后会立即销毁已建立的沙箱，避免 isolate 泄漏
+- `Future<JsSandboxResult> execute(PluginHandle handle, String entryFunction, {Map<String, dynamic>? args, Duration? timeout})` — 调用入口函数，委托给 `PluginHandle.execute`
+- `int get handleCount` — 已创建的 handle 数（含降级失败的）
+- `Future<void> dispose()` — 销毁所有插件沙箱，幂等
+- `void unawaitedDispose(JsSandbox sandbox)`（同文件顶层函数）— 不等待地销毁沙箱，供降级路径使用
+
+**四条错误路径的降级映射**：
+
+| 情况 | `status` | `reason` 含 |
+|------|----------|-------------|
+| 文件不存在 / 不可读 / 为空 / 两个来源都不给 | `unavailable` | `插件文件不存在或不可读` / `插件文件为空` / `必须提供 path 或 jsSource` |
+| 非法 JS（语法错误 / 运行时抛错） | `error` | `插件脚本加载失败` |
+| 缺 `__plugin` / 无函数属性 / 缺 id / manifest 坏 | `error` | `未定义全局` / `入口函数` / `缺少 id` / `manifest 解析失败` |
+| 顶层死循环（加载时） | `timeout` | `插件脚本加载超时（顶层可能死循环）` |
+| 入口函数死循环（执行时） | `timeout` | 沙箱返回的 `执行超时（Nms）` |
+| 沙箱创建失败 / 已销毁 | `unavailable` | `JS 沙箱不可用：<原因>` |
+
+> 插件执行超时后该插件的沙箱被 kill，`handle.isUsable` 随之变 `false`，
+> 后续调用返回 `unavailable`；要恢复需重新 `loadPlugin`。
 
 ---
 
