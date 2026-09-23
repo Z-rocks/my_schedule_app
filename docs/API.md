@@ -802,13 +802,13 @@ Future<void> showCourseDetailSheet(BuildContext context, Course course);
 |------|------|------|
 | 学期名称 | `TextFormField` | label"学期名称"、hint"如：2026-2027学年第一学期"、`maxLength: 30`；**validator**：空（含纯空白）→"请输入学期名称"，超 30 字 → 提示 |
 | 开始日期（第 1 周周一） | 可点击行（`_TapField`） | 显示 `2026年9月7日（周一）`；点击 → `showDatePicker` |
-| 总周数 | `Slider` | 范围 `kMinTotalWeeks(10)`–`kMaxTotalWeeks(30)`，`divisions` = 20，右侧显示 `N 周` |
+| 总周数 | `Slider` | 范围 `kMinTotalWeeks(4)`–`kMaxTotalWeeks(30)`，`divisions` = 26，右侧显示 `N 周` |
 | 结束日期 | 只读行（`onTap: null`） | 派生：`startDate + (totalWeeks * 7 - 1)` 天，显示 `2027年1月24日` |
 | 备注（可选） | `TextFormField` | `maxLines: 3` |
 | 预览 | `_PreviewCard` | 见下 |
 | 底部 | `OutlinedButton 取消` + `FilledButton 保存` | 取消 → `pop(false)` |
 
-- 初值（`initState` 里 `context.read<SemesterProvider>().config`）：名称/备注回填；开始日期取已有值，**没有配置时默认"本周一"**；总周数取已有值并 `clamp(10, 30)`（滑杆范围外会被收进区间）
+- 初值（`initState` 里 `context.read<SemesterProvider>().config`）：名称/备注回填；开始日期取已有值，**没有配置时默认"本周一"**；总周数取已有值并 `clamp(4, 30)`（滑杆范围外会被收进区间；下限 4 是为了支持军训 / 小学期等短学期）
 - 日期选择器：`showDatePicker(initialDate: _startDate, firstDate: now.year-5, lastDate: now.year+5/12/31, helpText: '选择第 1 周的周一')`；选中后 `dateOnly()` 归一化
 - **预览文案**（`_previewText`）：今天 < 开始日 → `学期尚未开始（…起）`；今天 > 结束日 → `学期已结束`；否则 → `当前是第 N 周`（`TimetableLogic.currentWeek`）
 - **保存**：`validate()` 通过 → `SemesterProvider.save(...)` → `pop(true)` + SnackBar `学期配置已保存`（messenger/navigator 在 await 前捕获，避免跨异步间隙用 context）
@@ -816,7 +816,7 @@ Future<void> showCourseDetailSheet(BuildContext context, Course course);
 
 纯函数（同文件导出，便于测试）：`dateOnly(DateTime)`、`mondayOfWeek(DateTime)`、`formatChineseDate(DateTime)`（`2026年9月7日`）、`formatChineseDateWithWeekday(DateTime)`（`2026年9月7日（周一）`）
 
-常量：`kMinTotalWeeks = 10`、`kMaxTotalWeeks = 30`、`kMaxSemesterNameLength = 30`
+常量：`kMinTotalWeeks = 4`、`kMaxTotalWeeks = 30`、`kMaxSemesterNameLength = 30`
 
 ### `settings/timetable_settings_page.dart` — TimetableSettingsPage（更新）
 

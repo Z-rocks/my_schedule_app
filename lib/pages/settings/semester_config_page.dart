@@ -9,8 +9,11 @@ import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
 import '../../widgets/timetable_grid.dart' show kWeekdayLabels;
 
-/// 总周数可选范围（视觉稿/提示词指定 10–30）。
-const int kMinTotalWeeks = 10;
+/// 总周数可选范围。
+///
+/// 下限 4 而不是 10：军训、小学期、暑期课程等短学期可能只有几周
+/// （Phase 2.2c.1 修正时放宽，避免把这类配置强行收进 10 周）。
+const int kMinTotalWeeks = 4;
 const int kMaxTotalWeeks = 30;
 
 /// 学期名称的最大长度（表单校验用）。
@@ -72,7 +75,7 @@ class _SemesterConfigPageState extends State<SemesterConfigPage> {
     _startDate = existing == null
         ? mondayOfWeek(DateTime.now())
         : dateOnly(existing.startDate);
-    // 滑杆范围是 10–30，历史数据若超出范围会被收进区间（见 kMinTotalWeeks 注释）
+    // 滑杆范围是 kMinTotalWeeks–kMaxTotalWeeks，历史数据若超出范围会被收进区间
     _totalWeeks = (existing?.totalWeeks ?? 20)
         .clamp(kMinTotalWeeks, kMaxTotalWeeks)
         .toInt();
