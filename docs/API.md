@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-22（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格渲染）
+- 最后更新：2026-09-22（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构）
 
 ---
 
@@ -374,7 +374,7 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 | `cardPadding` / `gridGap` / `sectionGap` | `double` | `12` / `4` / `16` |
 | `cardShadowColor` | `Color` | `#14000000` |
 | `cardShadowBlur` / `cardShadowOffsetY` | `double` | `8` / `2` |
-| `timetableCellHeight` / `timetableTimeColumnWidth` | `double` | `64` / `40` |
+| `timetableCellHeight` / `timetableTimeColumnWidth` | `double` | `72` / `40` |
 | `showWeekend` | `bool` | `true` |
 | `timeFormat` | `String` | `'HH:mm'` |
 
@@ -511,7 +511,7 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 
 常量（Box 名，落盘后即契约，见 CONTEXT 4.2.1）：`kCoursesBoxName = 'courses'`、`kExamsBoxName = 'exams'`、`kHomeworksBoxName = 'homeworks'`、`kMessagesBoxName = 'messages'`、`kOverridesBoxName = 'overrides'`、`kSettingsBoxName = 'settings'`、`kPluginsBoxName = 'plugins'`、`kSkinsBoxName = 'skins'`
 
-常量（`settings` Box 内的键名，同样属于契约）：`kModuleEnabledStateKey = 'module_enabled_state'`（值为 JSON 对象 `{"<capabilityId>": bool}`）、`kThemeBrightnessKey = 'theme_brightness'`（值为 `light` / `dark`）、`kSemesterConfigKey = 'semester_config'`（值为 `SemesterConfig` 的 JSON 字符串；单学期故为单值键）
+常量（`settings` Box 内的键名，同样属于契约）：`kModuleEnabledStateKey = 'module_enabled_state'`（值为 JSON 对象 `{"<capabilityId>": bool}`）、`kThemeBrightnessKey = 'theme_brightness'`（值为 `light` / `dark`）、`kSemesterConfigKey = 'semester_config'`（值为 `SemesterConfig` 的 JSON 字符串；单学期故为单值键）、`kGestureSwitchWeekKey = 'gesture_switch_week'`（值为 JSON `true` / `false`）
 
 - `static Future<void> init({String? path})` — 初始化 Hive 并依次打开 8 个 `Box<String>`。`path == null` 时走 `Hive.initFlutter()`（生产）；传 `path` 时走 `Hive.init(path)`（测试，免去 `path_provider` 平台依赖）。重复调用安全。初始化失败只 `debugPrint` 不抛
 - `static Future<void> close()` — 关闭 Hive 并清空缓存的 Box 引用（测试收尾 / App 退出）
@@ -565,6 +565,22 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 - `Future<void> clear()` — 内存与存储都清空
 
 > 已知行为：`loadFromStorage` 即使读到与当前相同的配置也会通知一次（`SemesterConfig` 没有 `==`，未做比较）。启动时只调用一次，实际无影响。
+
+---
+
+### `settings_provider.dart` — SettingsProvider（`ChangeNotifier`）
+
+UI 偏好设置（Phase 2.2b.1 新增）。目前只有"左右滑动切换周次"，后续把 `TimetableSettingsPage` 里其余几个内存态偏好也迁进来。
+
+**为什么单独建 Provider 而不是塞进 `SemesterProvider`**：后者建模的是**学期这个领域对象**（起止日期、总周数），存 `semester_config` 一条业务数据；而"滑动切周"是**纯交互偏好**，与学期内容无关。混在一起会让那个类说不清职责，且"显示周末/显示节次时间/每节高度"三个待持久化的偏好也需要同一个归宿。
+
+构造：`SettingsProvider({bool initialGestureSwitchWeek = true})`
+
+- `bool get gestureSwitchWeek` — 是否允许课表页左右滑动切周，默认 `true`
+- `bool get isLoaded`
+- `Future<void> loadFromStorage()` — 从 `settings` Box 的 `kGestureSwitchWeekKey` 读取；空值 / 非法 JSON / 类型不符一律**回落 `true`**
+- `Future<void> setGestureSwitchWeek(bool value)` — 内存与通知**同步**完成（调用方无需 await 即见 UI 更新）；返回的 Future 对应落盘，`await` 可确保持久化、忽略则等价 fire-and-forget。同值不通知也不写。落盘失败只记日志
+- `static bool? decodeBool(String? raw)` — 写入用 `jsonEncode`（存 `"true"` / `"false"`）；读取同时兼容裸字符串 `true`/`false`、数字 `0`/`1` 与已解析的 bool，无法识别返回 `null`
 
 ---
 
@@ -704,7 +720,7 @@ const TimetableView({super.key, int totalWeeks = 20, int initialWeek = 1});
 
 课表页（Phase 2.2b 起接入真实数据）。`const TimetableView({super.key})` — 无构造参数，数据全部来自 Provider。
 
-数据来源：`SemesterProvider`（学期/总周数/当前周）、`CourseProvider.visibleCourses`（已过滤隐藏课程）、`TimetableLogic`（纯函数）。
+数据来源：`SemesterProvider`（学期/总周数/当前周）、`CourseProvider.visibleCourses`（已过滤隐藏课程）、`SettingsProvider.gestureSwitchWeek`（是否启用滑动切周）、`TimetableLogic`（纯函数）。
 
 **三种状态**（`_buildBody`）：
 
@@ -712,16 +728,49 @@ const TimetableView({super.key, int totalWeeks = 20, int initialWeek = 1});
 |------|------|
 | `!semester.hasConfig` | `EmptyState(Icons.calendar_today, '还没有配置学期', '配置学期后才能看到课表', '去配置学期')` → SnackBar `学期配置页待实现（Phase 2.2c）`。**不显示周次选择器**（没有学期时周次无意义） |
 | 有学期但 `visibleCourses` 为空 | `EmptyState(Icons.add_circle_outline, '还没有课程', '点击下方按钮添加第一门课', '添加课程')` → SnackBar `添加课程页待实现（Phase 2.2c）` |
-| 有数据 | `TimetableGrid(grid: buildGrid(courses, _week), sectionTimes: kDefaultSectionTimes, currentWeek: _week, ...)` |
+| 有数据 + `gestureSwitchWeek == true` | `PageView.builder(itemCount: totalWeeks)`，每页一周；`initialPage = _week - 1` |
+| 有数据 + `gestureSwitchWeek == false` | 单个 `TimetableGrid`（只能通过顶部周次面板切周） |
 
-- `AppBar`：标题"课表"，右侧 `+` → SnackBar `添加课程页待实现（Phase 2.2c）`
-- 周次选择器：`ChoiceChip` 水平列表，长度 = `config.totalWeeks`
-  - **默认选中"当前周"**：`didChangeDependencies` 里比较学期的 `startDate|totalWeeks` 指纹，变化时用 `TimetableLogic.currentWeek(config)` 重置选中周；同一学期内保留用户选择（用户手动切周不会被覆盖）
-  - 切换周次 → `setState` → 重新 `buildGrid`
+**顶部栏（Phase 2.2b.3）** —— 一行日期栏，**不再有 AppBar、也没有常驻的周次 chips 行**：
+
+```dart
+SizedBox(
+  height: kTopBarHeight,                       // 48
+  child: Padding(
+    padding: EdgeInsets.symmetric(horizontal: theme.cardPadding),
+    child: Row(children: <Widget>[
+      Text(formatDateYmd(today)),              // 2026/9/23（yyyy/M/d，不补零）
+      SizedBox(width: theme.sectionGap),
+      if (config != null)
+        InkWell(                               // 可点击 → 周次面板
+          onTap: () => _showWeekPicker(config),
+          child: Row(children: <Widget>[
+            Text('第 $_week 周'), Icon(Icons.arrow_drop_down),
+          ]),
+        ),
+      if (semesterEnded) Text('学期已结束'),      // 灰色小字
+      const Spacer(),
+      IconButton(icon: Icon(Icons.add), tooltip: '添加课程'),
+    ]),
+  ),
+)
+```
+
+- `formatDateYmd(DateTime)` → `yyyy/M/d`（如 `2026/9/23`），不补零、不依赖 `intl` 初始化
+- `weekStartDateOf(SemesterConfig, week)` → `startDate + (week - 1) * 7` 天（该周周一），传给 `TimetableGrid.weekStartDate`
+- **"学期已结束"** 判定（`_isSemesterEnded`）：`currentWeek(config) == totalWeeks` **且** 今天（只比年月日）晚于 `config.endDate`
+- 点击"第 N 周" → `showModalBottomSheet` 弹出 `_WeekPickerSheet`：标题"选择周次" + `Wrap` 的 `ChoiceChip`（1..totalWeeks，当前周选中）；选中后 `pop(week)` 并 `_setWeek(...)`
+- 右上角 `+` → SnackBar `添加课程页待实现（Phase 2.2c）`
+
+常量：`kTopBarHeight = 48`、`kDefaultSectionTimes`（12 个节次的起止时间，**硬编码**；Phase 4 插件接入后改为从插件的 `sectionTime` 数据读取——各校作息不同，不能长期写死在客户端）
 - 点击卡片 → `showCourseDetailSheet(context, course)`
 - 长按卡片 → SnackBar `编辑功能待实现（Phase 5）`
 
-常量：`kWeekSelectorHeight = 48`、`kDefaultSectionTimes`（12 个节次的起止时间，**硬编码**；Phase 4 插件接入后改为从插件的 `sectionTime` 数据读取——各校作息不同，不能长期写死在客户端）
+**周次双向同步**：`_week` 是**唯一真相源**。PageView 的 `onPageChanged` 与周次面板的选择都只经 `_setWeek(...)` 改 `_week`，再由它把另一侧对齐（`_jumpPageToWeek` / `_animatePageToWeek`）。因此两侧不会互相触发形成循环；`_jumpPageToWeek` 里还有"已在目标页就不动"的判断，避免与手势抢位置。滑动回调用 `animate: false`（页面已滑到位，再动画会打架）。
+
+**边界**：`_setWeek` 用 `clamp(1, totalWeeks)`；PageView 首尾天然停住（实测第 1 周继续右滑仍是第 1 周，不会出现第 0 周）。
+
+> 已移除（Phase 2.2b.3）：`kWeekSelectorHeight` / `kWeekChipExtent` / `_weekScrollController` / `_scrollWeekChipIntoView` —— 常驻 chips 行改为顶部的周次面板后不再需要。
 
 ### `timetable/course_detail_sheet.dart` — showCourseDetailSheet
 
@@ -732,7 +781,7 @@ Future<void> showCourseDetailSheet(BuildContext context, Course course);
 只读底部弹层（`showModalBottomSheet`，`isScrollControlled: true`）。内容全部取自 `displayXxx`（已叠加用户覆盖层）：
 
 - 拖动条 → 课程名（`displayName`，`titleSize` + `titleFontWeight`）
-- 教师（`displayTeacher`，空则显示"未知教师"）、`N 学分 · 类别`
+- **教师（`displayTeacher`，空则显示"未知教师"）** —— 卡片里不显示教师后，这里是**唯一**能看到教师的地方；`N 学分 · 类别`
 - "上课时间地点"区块：`displayTimePlaces` 每项一行 →「周一 第3-4节 4,6-14周」+ 下一行教室
   - 节次：单节 `第3节`，连堂 `第3-4节`；周次优先用 `rawWeeksText`，缺单双周标记时按 `weekType` 补 `(单)`/`(双)`
   - 无安排时显示"暂无安排"
@@ -745,6 +794,12 @@ Phase 2.2b 在"显示周末"开关**上方**新增一行 `ListTile`：
 
 - 标题"学期配置"，副标题 = `SemesterProvider.config?.name ?? '未配置'`（`context.watch` 实时更新）
 - 点击 → SnackBar `学期配置页待实现（Phase 2.2c）`
+
+Phase 2.2b.1 又在"显示周末"上方新增 `SwitchListTile`：
+
+- 标题"左右滑动切换周次"，副标题"在课表页左右滑动切换周次"
+- 值 = `SettingsProvider.gestureSwitchWeek`，`onChanged` → `setGestureSwitchWeek`（**已持久化**）
+- 其余三个控件（显示周末 / 显示节次时间 / 每节高度）仍是内存状态、重启即丢（待迁入 `SettingsProvider`）
 
 ---
 
@@ -851,9 +906,9 @@ const EmptyState({
 
 ### `main.dart` — 入口
 
-- `Future<void> main()` — `WidgetsFlutterBinding.ensureInitialized()` → `await StorageService.init()` → 依次建 `CourseProvider` / `ModuleProvider` / `SemesterProvider` / `ThemeProvider` 并各自 `await loadFromStorage()` → `runApp(buildApp(...))`。**先读数据再起 UI**，避免首帧闪一下默认值（如导航栏先显示默认 4 个模块再跳成用户配置）
-- `Widget buildApp({CourseProvider? courseProvider, ModuleProvider? moduleProvider, SemesterProvider? semesterProvider, ThemeProvider? themeProvider})` — 构建完整 App（Provider 树 + `MyApp`）。抽成函数是为了让 widget 测试直接 `pumpWidget(buildApp())`，验证的就是 `main()` 真正使用的那棵树
-  - `courseProvider` / `semesterProvider` / `themeProvider` 传入时用 `ChangeNotifierProvider.value`（实例归调用方所有，不随树销毁而 dispose）；不传时内部 `create` 空实例（测试 / 预览用，不访问 Hive）
+- `Future<void> main()` — `WidgetsFlutterBinding.ensureInitialized()` → `await StorageService.init()` → 依次建 `CourseProvider` / `ModuleProvider` / `SemesterProvider` / `SettingsProvider` / `ThemeProvider` 并各自 `await loadFromStorage()` → `runApp(buildApp(...))`。**先读数据再起 UI**，避免首帧闪一下默认值（如导航栏先显示默认 4 个模块再跳成用户配置）
+- `Widget buildApp({CourseProvider? courseProvider, ModuleProvider? moduleProvider, SemesterProvider? semesterProvider, SettingsProvider? settingsProvider, ThemeProvider? themeProvider})` — 构建完整 App（Provider 树 + `MyApp`）。抽成函数是为了让 widget 测试直接 `pumpWidget(buildApp())`，验证的就是 `main()` 真正使用的那棵树
+  - `courseProvider` / `semesterProvider` / `settingsProvider` / `themeProvider` 传入时用 `ChangeNotifierProvider.value`（实例归调用方所有，不随树销毁而 dispose）；不传时内部 `create` 空实例（测试 / 预览用，不访问 Hive）
   - `moduleProvider` 由 `ChangeNotifierProxyProvider` 创建（该 Provider 无 `.value` 变体），注入的实例会被树接管生命周期；**不要**把同一个 `ModuleProvider` 实例同时传给两棵树（先卸载的那棵会 dispose 它）
 
 Provider 顺序（即依赖顺序，被依赖者必须在前）：
@@ -866,13 +921,13 @@ Provider 顺序（即依赖顺序，被依赖者必须在前）：
 | 4 | `ChangeNotifierProvider<CourseProvider>` | 无 |
 | 5 | `ChangeNotifierProvider<MessageProvider>` | 无 |
 | 6 | `ChangeNotifierProvider<SemesterProvider>` | 无 |
+| 7 | `ChangeNotifierProvider<SettingsProvider>` | 无 |
 
 > 注：prompt 把 `ModuleProvider` 列在第 2 位、`PluginProvider` 列在最后，但 `ChangeNotifierProxyProvider<PluginProvider, ModuleProvider>` 必须能读到 `PluginProvider`，故两者顺序对调。
 
-> **临时测试数据**：`main()` 里有一段 `_seedTemporaryTestData(...)`（标记 `TODO(Phase 2.2c): 删除`），
-> 在无学期/无课程时写入 1 个测试学期（起始日 = 今天 - 14 天 → `currentWeek` 返回第 3 周）
-> 与 3 门课（跨节 + 一课多安排 + 非连续周次「软件工程C」、单周「综合评价方法」、双周「创新创业基础」），
-> 供 Phase 2.2b 真机验收。**Phase 2.2c 完成后必须删除该函数及其调用。**
+> **临时测试数据已移除**：Phase 2.2b 曾在此写入 1 个测试学期与 3 门课供真机验收，
+> 已在 Phase 2.2b.1 按计划**全部删除**（`_seedTemporaryTestData` 及其调用与相关 import）。
+> 注意：已经写进设备的那些数据仍留在 Hive 里，需要清一次（见 PROGRESS 阻塞表）。
 
 proxy 的 `update` 回调每次 `PluginProvider` 通知时调用 `ModuleProvider.updateCapabilities(pluginProvider.allCapabilities)`；首次 build 时 `moduleProvider` 为 `null` 需自建。由于 `updateCapabilities` 只在可用性真正变化时才通知，默认状态下不会在 build 阶段触发 `notifyListeners`。
 
@@ -907,17 +962,36 @@ const TimetableGrid({
 });
 ```
 
-常量：`kGridHeaderHeight = 34`（表头高度，`AppTheme` 无对应令牌）、`kWeekdayLabels`（周一…周日）
+常量：`kGridHeaderHeight = 34`（表头高度，`AppTheme` 无对应令牌）、`kWeekdayShortLabels`（一…日，表头用）、`kWeekdayLabels`（周一…周日，详情弹层用）、`kCardInset = 2`（卡片外缩进，取 `gridGap / 2`）、`kCardPaddingH = 3` / `kCardPaddingV = 4`（卡片内边距，视觉稿指定）
 
-布局与定位：
-- 外层 `SingleChildScrollView`（纵向滚动）→ `SizedBox(height: kGridHeaderHeight + 12 * cellHeight)` → `LayoutBuilder`
-- 列宽 = `(可用宽度 - theme.timetableTimeColumnWidth) / 可见天数`；可见天数 = `theme.showWeekend ? 7 : 5`
-- 表头：左上角空单元格 + 7（或 5）个星期单元格
-- 12 行：左侧时间列（"第 N 节" + 起止时间）+ 右侧空单元格
-  - 时间列很窄（默认 40px），`"08:30-09:15"` 放一行会换行撑破单元格，因此**拆成上下两行**；外层套 `FittedBox(scaleDown)` 兜底防溢出
-- 课程卡片：`left = timeColumnWidth + (day-1) * columnWidth + gap`、`top = kGridHeaderHeight + (startSession-1) * cellHeight + gap`、`height = length * cellHeight - gap * 2`
+构造新增参数：`DateTime? weekStartDate`（当前周**周一**；`null` 时不显示日期）
+
+布局与定位（**一屏 7 天，不横向滚动**）：
+- 外层 `SingleChildScrollView`（**只纵向**滚动）→ `SizedBox(height: kGridHeaderHeight + 12 * cellHeight)` → `LayoutBuilder`
+- 列宽 = `(可用宽度 - theme.timetableTimeColumnWidth) / 可见天数`；可见天数 = `theme.showWeekend ? 7 : 5`。**没有最小列宽、没有横向滚动**（实测 360dp / 480dp 下 7 列铺满、右边缘正好贴屏）
+- 表头：
+  - 时间列格 = 该周**月份**（`${weekStartDate.month}月`，如 `9月`；取**周一**的月份，跨月周如 9/29–10/5 显示 `9月`）；`weekStartDate == null` 时空白
+  - 星期格 = `星期 + 日期`（如 `一 11`、`二 12`）；该列日期 = `weekStartDate + (dayIndex - 1)` 天；**1 号显示 `M/1`**（如 `三 10/1`）以便看出换月
+- 12 行：左侧时间列（"第 N 节" + 起止时间，拆上下两行 + `FittedBox` 兜底）+ 右侧空单元格
+- 课程卡片：`left = timeColumnWidth + (day-1) * columnWidth + kCardInset`、`top = kGridHeaderHeight + (startSession-1) * cellHeight + kCardInset`、`width = columnWidth - kCardInset*2`、`height = length * cellHeight - kCardInset*2`
   - 卡片 `Key = '<courseId>-<day>-<startSession>-<week>'`
-  - 内容用 `FittedBox(scaleDown)` 包裹（单节卡片放不下"2 行课名 + 教师 + 教室"时会等比缩小而非溢出）
+
+**卡片内容（Phase 2.2b.3 视觉重构）** — 固定字号，**不再按高度分档**：
+
+| 内容 | 字号 | 说明 |
+|------|------|------|
+| 课程名 | `theme.bodySize`（14）+ `titleFontWeight` | 最多 3 行，超出省略号 |
+| 教室（`HE-405`） | `theme.captionSize`（12） | |
+| `@校区`（`@曹妃甸校区`） | `theme.captionSize`（12） | |
+
+按**卡片块高度**（`length × cellHeight`）逐级显示：
+- `≥ 2.5 格` → 课程名 + 教室 + @校区
+- `≥ 1.5 格` → 课程名 + 教室
+- 否则 → 只显示课程名
+
+**卡片内不显示教师**（教师只在详情弹层里）。课程名行数按"可用高度扣掉内边距与 meta 行"精确算出（上限 3 行），因此**不需要** `FittedBox` 缩放——卡片的 `FittedBox` 已删除（时间列那一个保留，只服务于 40px 窄时间列）。
+
+`splitCampusAndRoom(String raw)` → `({String campus, String room})`：把 `TimePlace.room`（如 `"曹妃甸校区 HE-405"`）按**首个空白**拆成校区与教室；无空白时整串算教室、校区为空。**这是展示层权宜做法**——模型只有 `room` 一个字段，Phase 4 定下插件契约后应给 `TimePlace` 加独立的 `campus` 字段（届时按 CONTEXT 4.2.1 写迁移）。
 
 卡片推导（`_collectPlacements`）：扫描 `grid`，**上一格不是同一实例**的格子即课程块顶部（用 `identical` 比较——`buildGrid` 会把同一实例填进跨节涉及的每一格），再向下数连续同实例格数得到 `length`。教室信息按 `(day, startSession)` 回查 `course.displayTimePlaces`（网格里只有 `Course`，没有 `TimePlace`）。
 

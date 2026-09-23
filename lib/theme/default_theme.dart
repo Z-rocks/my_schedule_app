@@ -97,7 +97,11 @@ const double _kCardShadowOffsetY = 2;
 // —— 布局 ——
 
 /// 课表单元格高度。
-const double _kTimetableCellHeight = 64;
+///
+/// Phase 2.2b.1 由 64 提到 72：真机验收反馈卡片文字太小，
+/// 而 64px 减去上下留白后放不下"课程名 + 教师 + 教室"三行。
+/// `AppTheme` 是启动时构造的、不落盘，因此改默认值不影响已有数据。
+const double _kTimetableCellHeight = 72;
 
 /// 课表时间列宽度。
 const double _kTimetableTimeColumnWidth = 40;

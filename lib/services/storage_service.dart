@@ -27,6 +27,11 @@ const String kThemeBrightnessKey = 'theme_brightness';
 /// 目前只支持单学期，因此是一个"单值键"而不是列表。
 const String kSemesterConfigKey = 'semester_config';
 
+/// 是否允许在课表页左右滑动切换周次，值为 JSON `true` / `false`。
+///
+/// 属于 **UI 偏好**（只影响交互，不影响数据），由 `SettingsProvider` 管理。
+const String kGestureSwitchWeekKey = 'gesture_switch_week';
+
 /// Hive 存储服务。
 ///
 /// 职责：初始化 Hive、打开全部 Box、对外提供只读的 Box 引用。

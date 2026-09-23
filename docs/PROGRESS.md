@@ -212,6 +212,87 @@
 > 这两处在真机上表现为黄色黑条纹溢出警告，属于必须修的问题。
 >
 > **待办**：`main.dart` 的临时测试数据必须在 Phase 2.2c 删除（已用 TODO 标记）。
+> —— 已在 **Phase 2.2b.1 提前删除**（见下）。
+
+> **Phase 2.2b.3**（参照主流课表 App 的视觉重构）：`dart analyze lib` 通过，未新增依赖。
+>
+> ⚠️ **前提更正**：任务书说"删除 Phase 2.2b.2 的横向滚动逻辑 / `kMinDayColumnWidth`"，
+> 但**代码里从来没有这些东西**——`TimetableGrid` 从 Phase 2.2b 起就是
+> `列宽 = (可用宽度 - 时间列宽) / 天数` 的一屏 7 天布局，只做纵向滚动。
+> （"横向滚动 + 最小列宽"只是我在 Phase 2.2b.1 汇报里提的**建议**，并未实施。）
+> 因此本次**没有可删除的横向滚动代码**，只做了实测确认（360dp/480dp 下 7 列铺满、右边缘贴屏）。
+>
+> 改动：
+> - `lib/widgets/timetable_grid.dart`：
+>   - 新增参数 `weekStartDate`（该周周一）
+>   - 表头：时间列格显示**该周月份**（`9月`，取周一的月份，跨月周 9/29–10/5 显示 `9月`，
+>     `null` 时空白）；星期格改为 `星期 + 日期`（`一 11`、`二 12`），1 号显示 `M/1`（`三 10/1`）
+>   - 卡片内容重排：课程名（`bodySize` 14 加粗，最多 3 行省略）+ 教室 + `@校区`
+>     （均 `captionSize` 12）；**不显示教师**；按块高度 `≥2.5 格` 显示三项、
+>     `≥1.5 格` 显示两项、否则只显示课程名
+>   - **删除卡片上的 `FittedBox` 与 Phase 2.2b.1 的字号分档/行数预算**（改为固定字号 +
+>     按可用高度精确算课程名行数，上限 3 行）；**时间列的 `FittedBox` 保留**
+>     （只服务于 40px 窄时间列，与卡片无关）
+>   - 卡片外缩进改为 `kCardInset = 2`（原为 `gridGap = 4`）→ 卡片"占满格子"；
+>     内边距 `kCardPaddingH = 3` / `kCardPaddingV = 4`（视觉稿指定）
+>   - 新增 `splitCampusAndRoom()`：把 `room`（`"曹妃甸校区 HE-405"`）按首个空白拆成
+>     校区 + 教室（模型只有 `room` 一个字段，属展示层权宜做法，Phase 4 应加 `campus` 字段）
+> - `lib/pages/timetable/timetable_view.dart`：
+>   - **删除 AppBar 与常驻周次 chips 行**，改为一行日期栏
+>     `[2026/9/23] [第 N 周 ▾] (学期已结束) ... [+]`
+>   - 点击"第 N 周"弹出 `_WeekPickerSheet`（标题"选择周次" + `Wrap` chips），选中即跳周
+>   - 新增 `formatDateYmd()`（`yyyy/M/d` 不补零）、`weekStartDateOf()`、`_isSemesterEnded()`
+>   - 删除 `kWeekSelectorHeight` / `kWeekChipExtent` / `_weekScrollController` /
+>     `_scrollWeekChipIntoView`（chips 行没了就不需要）
+>   - `gestureSwitchWeek` 的 PageView 滑动切周**保留**（任务书未要求删除，且是 2.2b.1 已验收功能）
+> - `lib/pages/timetable/course_detail_sheet.dart`：**无需改动**——教师本来就在弹层里显示
+>   （`person_outline` 图标 + `displayTeacher`，空值显示"未知教师"），已用测试确认；
+>   仅在文档里注明"卡片不显示教师后这里是唯一入口"
+>
+> 验证：临时 `flutter test` 脚本 **36 组全部通过**（首轮即全绿），脚本已删除。覆盖：
+> 360dp/480dp 下每列宽 == `(屏宽 - 时间列宽)/7` 且右边缘贴屏、网格仅纵向滚动、
+> 表头 `一 11`/`二 12` 格式、月份格（9月/12月/跨月周取周一月份/null 空白/10月1日）、
+> 卡片 1 节仅课名 / 2 节课名+教室 / 3 节与 4 节完整、无空格时校区为空、
+> 长课名 3 行省略、meta 字号 = captionSize、卡片铺满格子（宽高 = 列宽/块高 - 2×inset）、
+> 四档高度均无溢出、卡片内无 `FittedBox`、`splitCampusAndRoom` 5 种输入、
+> 顶部栏日期与周次、无常驻 chips、周次面板弹出与选中跳周、学期已结束判定（正反两例）、
+> 无学期时的空态、滑动后顶部同步、`weekStartDateOf` 与 `formatDateYmd` 计算、
+> 详情弹层显示教师（含空值"未知教师"与用户改过的教师名）。
+
+> **Phase 2.2b.1**（真机验收反馈的两项体验修正）：`dart analyze lib` 通过，未新增依赖。
+> 真机（Redmi K60）反馈：①课程卡片字体太小，不点详情看不清；②不能左右滑动切周，只能点数字。
+>
+> 改动：
+> - `lib/widgets/timetable_grid.dart`：卡片字号由固定 `captionSize`(12) 改为**随可用高度
+>   （`timetableCellHeight × length`）分档**：<60 → `titleSize-4`、60~119 → `titleSize-2`、
+>   120~179 → `titleSize`、≥180 → `titleSize+2`；meta（教师/教室）统一 `-3`。
+>   默认主题下单节 16、两节 18、三节 20。
+> - 新增**行数预算**：至少 1 行课名，剩余高度给 meta（教师 → 教室，最多 2 行）；
+>   **只有在 meta 也放得下的前提下**课名才占 2 行——否则课名 1 行省略也要保住教室。
+> - `lib/theme/default_theme.dart`：`timetableCellHeight` **64 → 72**（对已交付 Phase 1.2
+>   的小修正；`AppTheme` 启动时构造、不落盘，不影响已有数据）。
+> - 新增 `kGestureSwitchWeekKey = 'gesture_switch_week'`（`StorageService`）。
+> - **新增 `lib/providers/settings_provider.dart`（`SettingsProvider`）**：管 UI 偏好，
+>   目前只有 `gestureSwitchWeek`（默认 `true`，坏数据回落 `true`）。
+> - `lib/pages/timetable/timetable_view.dart`：开关开启时用 `PageView.builder`
+>   （`initialPage = week-1`、`itemCount = totalWeeks`）左右滑动切周；关闭时维持点数字。
+>   `_week` 为唯一真相源，滑动与点击都经 `_setWeek` 单向同步另一侧，避免循环。
+>   chip 列表改为固定 `itemExtent = 48` 并把选中 chip 自动滚进视野。
+> - `lib/pages/settings/timetable_settings_page.dart`：新增"左右滑动切换周次"开关（已持久化）。
+> - `lib/main.dart`：**删除 Phase 2.2b 的全部临时测试数据**（`_seedTemporaryTestData`
+>   及其调用，以及随之无用的 `models/*` / `timetable_logic` import），并接入 `SettingsProvider`。
+>
+> 验证：临时 `flutter test` 脚本 34 组全部通过（Hive 用例用普通 `test()`，UI 用例所在
+> group 不初始化 Hive），覆盖：6 档 cellHeight 的字号（含跨节 2/3 节）、meta 字号、
+> 行数预算（单节显示课名+教师+教室、跨节课名 2 行、40px 极矮不溢出）、
+> PageView 开关/滑动 ±1/首周不越界/点击同步跳页/反复点击无循环/关闭时无 PageView
+> 且仍可点选/chip 固定宽度、设置页开关读写、`SettingsProvider` 落盘重建一致/
+> 默认 true/7 种坏数据回落/宽松写法/decodeBool 规则/未初始化不崩/与其他键互不干扰。
+> 脚本已删除。
+>
+> **过程中发现并修复 2 个问题**：① 原 `FittedBox(scaleDown)` 兜底会把放大的字号又缩回去，
+> 等于没放大——改为按可用高度精确计算行数，`FittedBox` 只作病态主题兜底；
+> ② 首版预算在 72px 下让课名占 2 行从而**挤掉了教室**，改为"meta 放得下才给课名 2 行"。
 
 > **Phase 2.2a**（学期配置 + 周次解析 + 数据模型扩展）：
 > `dart analyze lib` 通过，未新增依赖。本次为 **2.2 的第一部分，不做 UI**。
@@ -373,7 +454,12 @@
 | 2026-09-22 | `settings` Box 的键名（`module_enabled_state` / `theme_brightness` / `semester_config`）已写入 API.md，属契约；改动需写迁移逻辑 | 已决定 |
 | 2026-09-22 | `TimePlace` 新增 `weekType` 字段（Phase 2.2a），因当时无落盘课程故未写迁移；此后改 schema 必须写迁移 | 已决定 |
 | 2026-09-22 | `SemesterProvider.loadFromStorage` 读到相同配置也会通知一次（`SemesterConfig` 无 `==`）；启动只调一次，暂不优化 | 待处理 |
-| 2026-09-22 | `main.dart` 的 `_seedTemporaryTestData`（Phase 2.2b 临时测试数据）必须在 Phase 2.2c 删除 | 待处理 |
+| 2026-09-22 | `main.dart` 的 `_seedTemporaryTestData`（Phase 2.2b 临时测试数据）必须在 Phase 2.2c 删除 | ✅ 已完成（Phase 2.2b.1 提前删除） |
+| 2026-09-22 | 设备上已写入的测试学期与 3 门测试课程仍留在 Hive 里（代码已删，数据还在）；需 `CourseProvider.clearAll()` 或清除应用数据一次 | 待处理 |
+| 2026-09-22 | `TimetableSettingsPage` 的"显示周末/显示节次时间/每节高度"仍是内存态、重启即丢，待迁入 `SettingsProvider` | 待处理 |
+| 2026-09-22 | 卡片字号分档依赖 `timetableCellHeight`；若用户在课表设置里改每节高度，字号会自动跟随（该设置持久化后需回归验证） | ✅ 已作废（Phase 2.2b.3 改为固定字号，不再分档） |
+| 2026-09-22 | `TimePlace` 只有 `room` 一个字段，卡片要分两行显示教室与 `@校区`，目前靠 `splitCampusAndRoom` 按空白拆；Phase 4 定下插件契约后应加独立 `campus` 字段（需迁移） | 待处理 |
+| 2026-09-22 | 窄屏（360dp）下每列约 46px，教室/`@校区` 用 `maxLines: 1` + 省略号，长校区名会被截断；若要完整显示需考虑更窄的字体或折行 | 待处理 |
 | 2026-09-22 | `kDefaultSectionTimes` 硬编码 12 个节次时间，Phase 4 插件接入后需改为从插件数据读取 | 待处理 |
 | 2026-09-22 | 课表网格的星期表头不显示日期（如"周一 9/7"），后续可结合学期起始日补上 | 待处理 |
 | 2026-09-22 | 导航栏配置页需给出"已达上限 5 个"的提示，并显示哪些模块被挤出 | ✅ 已完成（Phase 1.6） |

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/semester_provider.dart';
+import '../../providers/settings_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
 
@@ -91,6 +92,28 @@ class _TimetableSettingsPageState extends State<TimetableSettingsPage> {
             onTap: () => ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('学期配置页待实现（Phase 2.2c）')),
             ),
+          ),
+          // 左右滑动切换周次（Phase 2.2b.1）
+          SwitchListTile(
+            title: Text(
+              '左右滑动切换周次',
+              style: TextStyle(
+                fontSize: theme.bodySize,
+                color: theme.onBackground,
+              ),
+            ),
+            subtitle: Text(
+              '在课表页左右滑动切换周次',
+              style: TextStyle(
+                fontSize: theme.captionSize,
+                color: theme.onBackground.withValues(alpha: 0.6),
+              ),
+            ),
+            value: context.watch<SettingsProvider>().gestureSwitchWeek,
+            activeThumbColor: theme.primary,
+            onChanged: (bool value) => context
+                .read<SettingsProvider>()
+                .setGestureSwitchWeek(value),
           ),
           SwitchListTile(
             title: Text(
