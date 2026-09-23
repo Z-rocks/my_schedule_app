@@ -12,10 +12,10 @@
 
 > 给新会话 AI 用。每次阶段切换时更新。
 
-- **最新完成**：Phase 3.1（flutter_js 集成 + 最小 demo）
+- **最新完成**：Phase 3.2a（JS 运行时沙箱与兜底）
 - **代码状态**：dart analyze 全绿，真机（Redmi K60）验收通过
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
-- **下一步**：Phase 3.2（插件运行时：sandbox / PluginRuntime / 插件文件加载）
+- **下一步**：Phase 3.2b（PluginRuntime：ctx.http / ctx.storage 跨 isolate 服务注入 + 插件文件加载）
 - **最近 commit**：feat(edit): 新增添加课程页
 - **关键约束**：
   - testWidgets 不能触发 Hive 写（会卡死）
@@ -24,6 +24,8 @@
   - 一屏 7 天不横向滚动
   - **JS 侧取 JSON 必须用 JS 的 `JSON.stringify`**（QuickJS 的 `jsonStringify` 未实现）
   - **`evaluate()` 语法错误不抛异常**，靠 `JsEvalResult.isError` 判断
+  - **JS 必须跑在独立 isolate**（`QuickJsRuntime2.timeout` 实测无法中断死循环，且会连带冻结 Dart 侧超时）
+  - **绝不传 `memoryLimit`**（`jsSetMemoryLimit` 在两个随包二进制里都不存在，传了直接打死 isolate）
 
 ---
 
@@ -552,10 +554,73 @@
 > 会让后续 flutter 命令无限等待，已删除。
 > ③ `flutter run` 期间手机曾掉线一次（`device 'aacfd78e' not found`），重连后正常。
 
+> **Phase 3.2a**（JS 运行时沙箱与兜底）：`dart analyze lib` 通过，**未新增依赖**。
+> 只动 `lib/runtime/`，未碰业务页面。
+>
+> 改动：
+> - 新建 `lib/runtime/js_sandbox.dart`：`JsSandbox` + `JsSandboxStatus` + `JsSandboxResult`
+>   - **JS 跑在独立 isolate**，父 isolate 只计时；到点 `Isolate.kill(priority: immediate)`
+>   - 常量：`kDefaultJsTimeout`(1000ms) / `kJsSandboxCreateTimeout`(5s) /
+>     `kJsStackSize`(1MB) / `kJsNativeTimeoutHintMs`(1000) / `kSandboxLogChannel`('log')
+>   - 串行化执行（Future 链 + `seq` 校验归属）；子 isolate 长驻，沙箱可复用
+>   - 创建失败（isolate 起不来 / 初始化抛异常 / **被原生层静默打死**）一律降级为
+>     不可用沙箱 + `debugPrint`，不抛异常；`onLog` 接收插件 `sendMessage('log', ...)`
+>   - `dispose()` 幂等
+>
+> ⚠️ **必须记牢的三条实测结论（与任务书假设不符，已按证据调整实现）**：
+>
+> 1. **`getJavascriptRuntime()` 无法满足"显式传 timeout 和 memoryLimit"**：
+>    它只透传 `extraArgs['stackSize']`，`timeout` / `memoryLimit` **既不在参数表里、
+>    也不被转发**。故沙箱**直接构造 `QuickJsRuntime2`**，绕开该工厂函数。
+>
+> 2. **`QuickJsRuntime2.timeout` 实测无法中断死循环**：探针里
+>    `while(true){}` 传 `timeout=1000` **与** `timeout=1` 都**永久挂住**
+>    （两个探针进程都是手动 kill 的）。更麻烦的是 `evaluate()` 是同步 FFI 调用，
+>    主 isolate 被阻塞在原生调用里，**Dart 侧的 `Future.timeout` 与测试 `Timeout` 也一起失效**
+>    （探针设的 30s / 25s 测试超时同样没能触发）。
+>    → 结论：**唯一可靠的兜底是独立 isolate + 父侧墙钟 kill**。这正是本阶段的核心设计。
+>    原生 `timeout` 参数仍照传（纵深防御），但文档里明确标注"实测无效，不要依赖"。
+>
+> 3. **`memoryLimit` 传了就崩，两个平台都一样**：`QuickJsRuntime2` 在
+>    `memoryLimit > 0` 时调用 `jsSetMemoryLimit`，而该符号
+>    **不在任何随包发布的二进制里**：
+>    - Windows `quickjs_c_bridge.dll` → `Failed to lookup symbol 'jsSetMemoryLimit'`（error 127），
+>      抛的是**未被捕获**的 FFI 异常，直接把子 isolate 打死（探针4 复现：父 isolate 只等到超时）
+>    - Android `libfastdev_quickjs_runtime.so`（从 APK 的 `lib/arm64-v8a/` 取出后检查）
+>      → 符号名字符串**不在** `.dynstr` 中；同库的 `jsNewRuntime` / `jsEval` /
+>      `jsSetMaxStackSize` / `jsFreeRuntime` **都在**
+>    → 结论：**不传 `memoryLimit`**。内存失控改由"隔离 + 截止时间 kill"兜底
+>    （内存炸弹测试已验证：疯狂分配也会被截止时间掐掉，父 isolate 不受影响）。
+>    *残留风险*：没有内存硬上限，原生层 OOM 仍可能打死子 isolate（父 isolate 靠
+>    `createTimeout` / `execute` 超时能收敛，但无法保证进程级内存安全）。已记入阻塞表。
+>
+> 验证：临时 `flutter test` 脚本 **12 组全部通过**，脚本已删除。覆盖：
+> 正常路径（`1+1` → `'2'`、同沙箱复用三次、JS 出错返回 `error` 且之后仍可用）、
+> **死循环被掐断**（800ms 截止 → `timeout`，耗时 <4s，父 isolate 未被阻塞）、
+> **超时后沙箱标记不可用**且后续调用降级 `unavailable`、
+> **内存炸弹**（疯狂分配 → `timeout`/`error`，绝不挂住）、
+> **创建失败降级**（`simulateCreateFailure` → `unavailable`，`message` 含"创建失败"，不抛异常）、
+> 不可用沙箱 `dispose` 幂等、**onMessage 桥穿过 isolate 边界**
+> （JS `sendMessage('log','hello-from-js')` → 父 isolate 收到）、
+> `dispose` 后执行降级且幂等、**并发 `execute` 串行化不错配**（`2`/`4`/`6`）。
+>
+> **真机验证**（Redmi K60，Android 16 / arm64）三条路径全部符合预期：
+> ```
+> [JS-VERIFY] 正常路径: status=success value=2
+> [JS-VERIFY] UI tick @200ms（主 isolate 未被阻塞）   ← 死循环期间仍按时打印
+> [JS-VERIFY] 死循环: status=timeout 耗时=804ms isUsable=false
+> [JS-VERIFY] 创建失败: status=unavailable isUsable=false msg=运行时创建失败：...
+> ```
+> 其中 **200ms 的 tick 在 800ms 超时之前打印**，是"UI 线程确实没被 JS 阻塞"的直接证据。
+>
+> **测试注意**：JS 相关测试需 `quickjs_c_bridge.dll`（见 `docs/ENV.md`），
+> 已拷到项目根目录；跑完已删除。
+
 - [x] flutter_js 集成（Phase 3.1，仅验证可用性）
+- [x] JS 运行时沙箱与兜底（Phase 3.2a，`lib/runtime/js_sandbox.dart`）
 - [ ] `lib/runtime/plugin_context.dart`
 - [ ] `lib/runtime/plugin_runtime.dart`
-- [ ] `lib/runtime/sandbox.dart`
+- [ ] `lib/runtime/sandbox.dart`（沙箱已在 3.2a 落地于 `js_sandbox.dart`，此项按需合并）
 - [ ] `lib/runtime/plugin_manager.dart`
 - [ ] `lib/runtime/package_manager.dart`
 - [ ] 插件管理 UI 接入真实数据
@@ -653,3 +718,8 @@
 | 2026-09-22 | 课表网格的星期表头不显示日期 | ✅ 已完成（Phase 2.2b.3：表头显示"一 11"并在时间列显示月份） |
 | 2026-09-22 | 导航栏配置页需给出"已达上限 5 个"的提示，并显示哪些模块被挤出 | ✅ 已完成（Phase 1.6） |
 | 2026-09-22 | ThemeProvider.currentSkinId 暂未落盘，Phase 6 创意工坊时补 | 待处理 |
+| 2026-09-23 | `QuickJsRuntime2.timeout` 实测无法中断死循环，且会连带冻结 Dart 侧 `Future.timeout`；JS 必须跑独立 isolate（3.2a 已按此实现） | 已决定 |
+| 2026-09-23 | `jsSetMemoryLimit` 符号在 Windows DLL 与 Android .so 中均不存在，**不能传 `memoryLimit`**；因此**没有 JS 内存硬上限**，原生 OOM 仍可能打死子 isolate（父 isolate 可靠超时收敛，但非进程级内存安全） | ⚠️ 待处理 |
+| 2026-09-23 | `getJavascriptRuntime()` 不转发 `timeout`/`memoryLimit`，沙箱改为直接构造 `QuickJsRuntime2`；若将来改用该工厂函数需重审 | 已决定 |
+| 2026-09-23 | flutter_js 的 Promise 路径走 `callFunction`，而 QuickJS 后端该方法是 `UnimplementedError`；3.2b 若插件需要异步需自行设计（不依赖库的 Promise 支持） | ⚠️ 待处理 |
+| 2026-09-23 | 3.2a 的 `kDefaultJsTimeout`(1000ms) 是按"单次求值"设的；3.2b 拉取大表数据时可能需放宽，需实测后定 | 待处理 |

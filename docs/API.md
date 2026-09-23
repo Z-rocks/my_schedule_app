@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-23（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证）
+- 最后更新：2026-09-23（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底）
 
 ---
 
@@ -978,6 +978,62 @@ const EmptyState({
 ---
 
 ## lib/runtime/
+
+### `js_sandbox.dart` — JsSandbox（Phase 3.2a）
+
+把 flutter_js（QuickJS）包成**不会拖死 UI 线程、不会因插件乱来而崩溃**的执行环境。JS 在**独立 isolate** 里跑，父 isolate 只管计时。
+
+> **为什么必须用独立 isolate（实测结论，不是设计偏好）**：`QuickJsRuntime2.timeout` **实测无法中断死循环**——`while(true){}` 传 `timeout=1000` 与 `timeout=1` 都永久挂住；又因为 `evaluate()` 是**同步 FFI 调用**，主 isolate 被阻塞在原生调用里，Dart 侧的 `Future.timeout` / 测试 `Timeout` **也一并失效**。因此唯一可靠的兜底是"子 isolate 跑 + 到点 `Isolate.kill(priority: immediate)`"。
+
+> **不要传 `memoryLimit`**：`QuickJsRuntime2` 在 `memoryLimit > 0` 时调用 `jsSetMemoryLimit`，而该符号在**两个随包二进制里都不存在**——Windows `quickjs_c_bridge.dll` 抛 `Failed to lookup symbol`（error 127，**未被捕获**、直接打死 isolate）；Android `libfastdev_quickjs_runtime.so`（取自 APK）的符号名不在 `.dynstr` 中。同库的 `jsNewRuntime` / `jsEval` / `jsSetMaxStackSize` / `jsFreeRuntime` 都在。故本沙箱不传 `memoryLimit`，内存失控由"隔离 + 截止时间 kill"兜底。
+
+> **不能用 `getJavascriptRuntime()`**：它只透传 `extraArgs['stackSize']`，**不接受也不转发** `timeout` / `memoryLimit`。故沙箱直接构造 `QuickJsRuntime2`。
+
+常量：
+
+| 常量 | 值 | 说明 |
+|------|-----|------|
+| `kDefaultJsTimeout` | `1000ms` | 单次执行的默认**墙钟**上限。正常求值实测 <1ms，1000ms 足够宽裕又能掐掉失控脚本 |
+| `kJsSandboxCreateTimeout` | `5s` | 创建（isolate 启动 + QuickJS 初始化）等待上限。QuickJS 初始化实测约 22ms |
+| `kJsStackSize` | `1MB` | QuickJS 栈上限，沿用 flutter_js 默认值 |
+| `kJsNativeTimeoutHintMs` | `1000` | 传给原生 `jsNewRuntime` 的 timeout。**纵深防御**：将来若换到实现了中断的二进制可生效；当前实测无效，**不要依赖它** |
+| `kSandboxLogChannel` | `'log'` | 插件日志通道名（`ctx.log` 雏形） |
+
+#### `enum JsSandboxStatus`
+取值：`success`（执行成功）、`error`（JS 出错：语法/运行时异常）、`timeout`（执行超时，子 isolate 已被 kill）、`unavailable`（沙箱创建失败或已销毁）。
+
+#### `class JsSandboxResult`（`@immutable`）
+所有失败都表现为"带状态的结果对象"，**不抛异常**。
+
+| 成员 | 类型 | 说明 |
+|------|------|------|
+| `status` | `JsSandboxStatus` | 结果状态 |
+| `value` | `String?` | 成功时的 JS 返回值（`JsEvalResult.stringResult`） |
+| `message` | `String?` | 失败原因（错误信息 / 超时说明 / 不可用原因） |
+| `isSuccess` / `isUnavailable` / `isTimeout` | `bool` | 便捷判定 |
+
+命名构造：`JsSandboxResult.success(String)` / `.error(String)` / `.timeout(String)` / `.unavailable(String)`
+
+#### `class JsSandbox`
+
+生命周期：`create()` → 多次 `execute()` → `dispose()`。**一旦某次执行超时，子 isolate 已被 kill，沙箱即变为不可用**（`isUsable == false`），后续调用返回 `unavailable`；要继续用就重新 `create()`。
+
+- `static Future<JsSandbox> create({int stackSize = kJsStackSize, Duration createTimeout = kJsSandboxCreateTimeout, void Function(String message)? onLog, @visibleForTesting bool simulateCreateFailure = false})` — 创建沙箱。**任何创建失败都降级为不可用沙箱并 `debugPrint` 原因，不抛异常**；调用方先看 `isUsable`，据此把插件标记为"不可用"。
+  - 失败来源三类：子 isolate 起不来（`Isolate.spawn` 抛异常）；QuickJS 初始化抛异常（子 isolate 回传 `_WorkerCreateFailed`）；**子 isolate 被原生层静默打死**（如符号缺失，既不发 ready 也不发 failed）——最后一类靠 `createTimeout` 计时器收敛，不会无限等
+  - `onLog` 接收插件经 `sendMessage('log', ...)` 打出的日志，在**父** isolate 上回调（可安全更新 UI）
+  - `simulateCreateFailure` 仅测试用（验证降级路径）
+- `bool get isUsable` — 创建成功且未因超时/`dispose` 失效
+- `Future<JsSandboxResult> execute(String script, {Duration timeout = kDefaultJsTimeout})` — 在沙箱里执行 JS。`timeout` 是**墙钟**上限；超时即 kill 子 isolate 并返回 `timeout` 状态
+- `Future<void> dispose()` — kill 子 isolate 并关闭端口。**幂等**
+
+内部实现要点：
+- **串行化**：`_serialize` 用 Future 链保证同一时刻只有一个求值在飞，请求/应答按单调递增的 `seq` 校验归属，避免错配
+- **握手协议**（子 → 父）：`_WorkerReady`（运行时创建成功）→ `SendPort`（请求端口）→ `_EvalReply` / `_LogMessage`；失败为 `_WorkerCreateFailed(reason)`
+- 子 isolate 用长驻 `ReceivePort` 接收求值请求，**沙箱可复用**，不必每次重建 isolate
+
+> 本阶段**不做**（留给后续）：权限控制、插件文件加载、`ctx.http` / `ctx.storage` 等跨 isolate 的服务注入、Promise 支持（库的 Promise 路径走 `callFunction`，而 QuickJS 后端该方法是 `UnimplementedError`）。
+
+---
 
 ### `plugin_demo.dart` — PluginDemo（**Phase 3.1 临时验证文件**）
 
