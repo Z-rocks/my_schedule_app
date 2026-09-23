@@ -1,6 +1,8 @@
 // 课表设置页（Phase 1.6 占位：控件可用但不保存）
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../../providers/semester_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
 
@@ -66,6 +68,30 @@ class _TimetableSettingsPageState extends State<TimetableSettingsPage> {
       body: ListView(
         padding: EdgeInsets.symmetric(vertical: theme.sectionGap),
         children: <Widget>[
+          // 学期配置入口（Phase 2.2c 做真实页面）
+          ListTile(
+            title: Text(
+              '学期配置',
+              style: TextStyle(
+                fontSize: theme.bodySize,
+                color: theme.onBackground,
+              ),
+            ),
+            subtitle: Text(
+              context.watch<SemesterProvider>().config?.name ?? '未配置',
+              style: TextStyle(
+                fontSize: theme.captionSize,
+                color: theme.onBackground.withValues(alpha: 0.6),
+              ),
+            ),
+            trailing: Icon(
+              Icons.chevron_right,
+              color: theme.onBackground.withValues(alpha: 0.4),
+            ),
+            onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('学期配置页待实现（Phase 2.2c）')),
+            ),
+          ),
           SwitchListTile(
             title: Text(
               '显示周末',

@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-22（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析 + 网格）
+- 最后更新：2026-09-22（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格渲染）
 
 ---
 
@@ -668,7 +668,7 @@ class HomePage extends StatefulWidget {
 - `Widget _pendingPage(BuildContext, ModuleInfo, String subtitle)` — 尚未实现的页面（插件模块）的临时外壳，用 `EmptyState`，不再单写占位类
 - 图标解析（原 `_kIconByName` / `_iconFromName`）已在 Phase 1.6 抽到 `lib/widgets/module_icon.dart`
 
-### `timetable/timetable_view.dart` — TimetableView
+---
 
 课表页（Phase 1.5 空态骨架，不接任何 Provider）。
 
@@ -699,6 +699,54 @@ const TimetableView({super.key, int totalWeeks = 20, int initialWeek = 1});
 ### `message/message_view.dart` — MessageView
 
 `const MessageView({super.key})` — AppBar"消息"，右侧"全部已读"按钮 → `SnackBar('已全部标记为已读')`；Body `EmptyState(Icons.notifications_none, '暂无消息')`。
+
+### `timetable/timetable_view.dart` — TimetableView
+
+课表页（Phase 2.2b 起接入真实数据）。`const TimetableView({super.key})` — 无构造参数，数据全部来自 Provider。
+
+数据来源：`SemesterProvider`（学期/总周数/当前周）、`CourseProvider.visibleCourses`（已过滤隐藏课程）、`TimetableLogic`（纯函数）。
+
+**三种状态**（`_buildBody`）：
+
+| 条件 | 展示 |
+|------|------|
+| `!semester.hasConfig` | `EmptyState(Icons.calendar_today, '还没有配置学期', '配置学期后才能看到课表', '去配置学期')` → SnackBar `学期配置页待实现（Phase 2.2c）`。**不显示周次选择器**（没有学期时周次无意义） |
+| 有学期但 `visibleCourses` 为空 | `EmptyState(Icons.add_circle_outline, '还没有课程', '点击下方按钮添加第一门课', '添加课程')` → SnackBar `添加课程页待实现（Phase 2.2c）` |
+| 有数据 | `TimetableGrid(grid: buildGrid(courses, _week), sectionTimes: kDefaultSectionTimes, currentWeek: _week, ...)` |
+
+- `AppBar`：标题"课表"，右侧 `+` → SnackBar `添加课程页待实现（Phase 2.2c）`
+- 周次选择器：`ChoiceChip` 水平列表，长度 = `config.totalWeeks`
+  - **默认选中"当前周"**：`didChangeDependencies` 里比较学期的 `startDate|totalWeeks` 指纹，变化时用 `TimetableLogic.currentWeek(config)` 重置选中周；同一学期内保留用户选择（用户手动切周不会被覆盖）
+  - 切换周次 → `setState` → 重新 `buildGrid`
+- 点击卡片 → `showCourseDetailSheet(context, course)`
+- 长按卡片 → SnackBar `编辑功能待实现（Phase 5）`
+
+常量：`kWeekSelectorHeight = 48`、`kDefaultSectionTimes`（12 个节次的起止时间，**硬编码**；Phase 4 插件接入后改为从插件的 `sectionTime` 数据读取——各校作息不同，不能长期写死在客户端）
+
+### `timetable/course_detail_sheet.dart` — showCourseDetailSheet
+
+```dart
+Future<void> showCourseDetailSheet(BuildContext context, Course course);
+```
+
+只读底部弹层（`showModalBottomSheet`，`isScrollControlled: true`）。内容全部取自 `displayXxx`（已叠加用户覆盖层）：
+
+- 拖动条 → 课程名（`displayName`，`titleSize` + `titleFontWeight`）
+- 教师（`displayTeacher`，空则显示"未知教师"）、`N 学分 · 类别`
+- "上课时间地点"区块：`displayTimePlaces` 每项一行 →「周一 第3-4节 4,6-14周」+ 下一行教室
+  - 节次：单节 `第3节`，连堂 `第3-4节`；周次优先用 `rawWeeksText`，缺单双周标记时按 `weekType` 补 `(单)`/`(双)`
+  - 无安排时显示"暂无安排"
+- "备注"区块：仅在 `userOverride.note` 非空时显示
+- 底部按钮：`编辑`（→ SnackBar `编辑功能待实现（Phase 5）`）、`关闭`（→ `Navigator.pop`）
+
+### `settings/timetable_settings_page.dart` — TimetableSettingsPage（更新）
+
+Phase 2.2b 在"显示周末"开关**上方**新增一行 `ListTile`：
+
+- 标题"学期配置"，副标题 = `SemesterProvider.config?.name ?? '未配置'`（`context.watch` 实时更新）
+- 点击 → SnackBar `学期配置页待实现（Phase 2.2c）`
+
+---
 
 ### `settings/settings_page.dart` — SettingsPage
 
@@ -817,8 +865,14 @@ Provider 顺序（即依赖顺序，被依赖者必须在前）：
 | 3 | `ChangeNotifierProxyProvider<PluginProvider, ModuleProvider>` | PluginProvider |
 | 4 | `ChangeNotifierProvider<CourseProvider>` | 无 |
 | 5 | `ChangeNotifierProvider<MessageProvider>` | 无 |
+| 6 | `ChangeNotifierProvider<SemesterProvider>` | 无 |
 
 > 注：prompt 把 `ModuleProvider` 列在第 2 位、`PluginProvider` 列在最后，但 `ChangeNotifierProxyProvider<PluginProvider, ModuleProvider>` 必须能读到 `PluginProvider`，故两者顺序对调。
+
+> **临时测试数据**：`main()` 里有一段 `_seedTemporaryTestData(...)`（标记 `TODO(Phase 2.2c): 删除`），
+> 在无学期/无课程时写入 1 个测试学期（起始日 = 今天 - 14 天 → `currentWeek` 返回第 3 周）
+> 与 3 门课（跨节 + 一课多安排 + 非连续周次「软件工程C」、单周「综合评价方法」、双周「创新创业基础」），
+> 供 Phase 2.2b 真机验收。**Phase 2.2c 完成后必须删除该函数及其调用。**
 
 proxy 的 `update` 回调每次 `PluginProvider` 通知时调用 `ModuleProvider.updateCapabilities(pluginProvider.allCapabilities)`；首次 build 时 `moduleProvider` 为 `null` 需自建。由于 `updateCapabilities` 只在可用性真正变化时才通知，默认状态下不会在 build 阶段触发 `notifyListeners`。
 
@@ -838,6 +892,33 @@ class MyApp extends StatelessWidget {
 
 ---
 
-## lib/widgets/
+### `timetable_grid.dart` — TimetableGrid
 
-（待填充）
+课表网格（**纯展示组件**：不读 Provider、不访问存储）。用 `Stack` + `Positioned` 绝对定位，**不用 `Table`**（`Table` 不支持 rowspan，而连上 3 节的课要占 3 格高度）。
+
+```dart
+const TimetableGrid({
+  super.key,
+  required List<List<Course?>> grid,          // (7+1) × (12+1)，索引 0 为占位
+  required Map<int, String> sectionTimes,     // {1: '08:30-09:15', ...}
+  required int currentWeek,                   // 用于卡片 Key，切周时重建
+  void Function(Course course)? onTapCourse,
+  void Function(Course course)? onLongPressCourse,
+});
+```
+
+常量：`kGridHeaderHeight = 34`（表头高度，`AppTheme` 无对应令牌）、`kWeekdayLabels`（周一…周日）
+
+布局与定位：
+- 外层 `SingleChildScrollView`（纵向滚动）→ `SizedBox(height: kGridHeaderHeight + 12 * cellHeight)` → `LayoutBuilder`
+- 列宽 = `(可用宽度 - theme.timetableTimeColumnWidth) / 可见天数`；可见天数 = `theme.showWeekend ? 7 : 5`
+- 表头：左上角空单元格 + 7（或 5）个星期单元格
+- 12 行：左侧时间列（"第 N 节" + 起止时间）+ 右侧空单元格
+  - 时间列很窄（默认 40px），`"08:30-09:15"` 放一行会换行撑破单元格，因此**拆成上下两行**；外层套 `FittedBox(scaleDown)` 兜底防溢出
+- 课程卡片：`left = timeColumnWidth + (day-1) * columnWidth + gap`、`top = kGridHeaderHeight + (startSession-1) * cellHeight + gap`、`height = length * cellHeight - gap * 2`
+  - 卡片 `Key = '<courseId>-<day>-<startSession>-<week>'`
+  - 内容用 `FittedBox(scaleDown)` 包裹（单节卡片放不下"2 行课名 + 教师 + 教室"时会等比缩小而非溢出）
+
+卡片推导（`_collectPlacements`）：扫描 `grid`，**上一格不是同一实例**的格子即课程块顶部（用 `identical` 比较——`buildGrid` 会把同一实例填进跨节涉及的每一格），再向下数连续同实例格数得到 `length`。教室信息按 `(day, startSession)` 回查 `course.displayTimePlaces`（网格里只有 `Course`，没有 `TimePlace`）。
+
+卡片颜色（`_colorForCourse`）：优先 `course.displayColor`（即 `userOverride.customColor`）；否则 `course.id.hashCode.abs() % theme.courseCardColors.length` —— 同一门课每次渲染颜色一致，不同课程尽量分散。配色池为空时回落 `theme.surface`。

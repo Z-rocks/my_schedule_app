@@ -178,7 +178,40 @@
 - [x] `lib/services/override_engine.dart`
 - [x] `lib/services/timetable_logic.dart`（周次解析、网格构建）— Phase 2.2a
 - [x] CourseProvider 接入 Hive
-- [ ] 手工塞测试数据，课表能渲染
+- [x] 手工塞测试数据，课表能渲染 — Phase 2.2b
+
+> **Phase 2.2b**（课表网格渲染）：`dart analyze lib` 通过，未新增依赖。
+>
+> 改动：
+> - 新建 `lib/widgets/timetable_grid.dart`：`Stack` + `Positioned` 绝对定位的网格，
+>   表头 / 时间列 / 空单元格 / 课程卡片四层；跨节卡片高度 = 节数 × 单元格高度；
+>   颜色优先 `userOverride.customColor`，否则按 `course.id` 哈希从
+>   `theme.courseCardColors` 取；`showWeekend == false` 时只渲染周一到周五
+> - 新建 `lib/pages/timetable/course_detail_sheet.dart`：只读底部弹层
+>   （课程名 / 教师 / 学分类别 / 全部时间地点 / 备注 + 编辑·关闭按钮）
+> - 改造 `lib/pages/timetable/timetable_view.dart`：三种状态（未配学期 /
+>   有学期无课程 / 有数据）、周次选择器默认选中 `currentWeek`、
+>   点击卡片开弹层、长按提示 Phase 5；**移除了 `totalWeeks` / `initialWeek`
+>   构造参数**（改由 `SemesterProvider` 驱动，单一数据源）
+> - 改造 `lib/pages/settings/timetable_settings_page.dart`：新增"学期配置"入口行
+> - `lib/main.dart`：新增 `_seedTemporaryTestData`（标记 `TODO(Phase 2.2c): 删除`），
+>   写入 1 个测试学期（起始日 = 今天 - 14 天 → 第 3 周）与 3 门课
+>
+> **验证**：临时 `flutter test` 脚本 28 组全部通过（本阶段无需 Hive，测试文件
+> 全程不初始化 Hive，避免 fake-async 卡死），覆盖：空网格 / 单课 / 跨节高度与
+> 位置 / 点击与长按回调 / 无回调不崩 / `showWeekend=false` / 自定义色 / 哈希取色
+> 稳定性 / 课名 2 行截断、TimetableView 三种状态与两个 SnackBar / 隐藏课程不显示、
+> 默认选中第 3 周 / 切周后单周课与双周课的出现与消失 / 第 5 周不在周次内不显示 /
+> 选择器长度 = totalWeeks、弹层内容完整性 / 关闭 / 编辑 SnackBar / 备注有无 /
+> 一课多安排列出两条 / 独立调用 / `displayXxx` 覆盖生效。脚本已删除。
+>
+> **过程中发现并修复 2 个真实布局 bug**（单元测试直接抓出 RenderFlex overflow）：
+> ① 时间列宽仅 40px，`"08:30-09:15"` 会换行撑破单元格（溢出 27px）→ 改为上下
+> 两行显示并套 `FittedBox(scaleDown)`；② 单节卡片（56px 高）放不下"2 行课名 +
+> 教师 + 教室"→ 卡片内容套 `FittedBox(scaleDown)`。
+> 这两处在真机上表现为黄色黑条纹溢出警告，属于必须修的问题。
+>
+> **待办**：`main.dart` 的临时测试数据必须在 Phase 2.2c 删除（已用 TODO 标记）。
 
 > **Phase 2.2a**（学期配置 + 周次解析 + 数据模型扩展）：
 > `dart analyze lib` 通过，未新增依赖。本次为 **2.2 的第一部分，不做 UI**。
@@ -340,5 +373,8 @@
 | 2026-09-22 | `settings` Box 的键名（`module_enabled_state` / `theme_brightness` / `semester_config`）已写入 API.md，属契约；改动需写迁移逻辑 | 已决定 |
 | 2026-09-22 | `TimePlace` 新增 `weekType` 字段（Phase 2.2a），因当时无落盘课程故未写迁移；此后改 schema 必须写迁移 | 已决定 |
 | 2026-09-22 | `SemesterProvider.loadFromStorage` 读到相同配置也会通知一次（`SemesterConfig` 无 `==`）；启动只调一次，暂不优化 | 待处理 |
+| 2026-09-22 | `main.dart` 的 `_seedTemporaryTestData`（Phase 2.2b 临时测试数据）必须在 Phase 2.2c 删除 | 待处理 |
+| 2026-09-22 | `kDefaultSectionTimes` 硬编码 12 个节次时间，Phase 4 插件接入后需改为从插件数据读取 | 待处理 |
+| 2026-09-22 | 课表网格的星期表头不显示日期（如"周一 9/7"），后续可结合学期起始日补上 | 待处理 |
 | 2026-09-22 | 导航栏配置页需给出"已达上限 5 个"的提示，并显示哪些模块被挤出 | ✅ 已完成（Phase 1.6） |
 | 2026-09-22 | ThemeProvider.currentSkinId 暂未落盘，Phase 6 创意工坊时补 | 待处理 |

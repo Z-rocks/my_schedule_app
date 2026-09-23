@@ -153,6 +153,10 @@ class TimetableLogic {
   /// - **跳过** `userOverride.hidden == true` 的课程（网格用于展示）。
   /// - 同一格被多门课占用时保留**先出现**的那门（按 `courses` 顺序），
   ///   后出现的只填它自己还没被占用的格子。
+  ///
+  /// 注意：本方法会跳过 `userOverride.hidden == true` 的课程。
+  /// 若调用方已传入 `visibleCourses`（已过滤），此过滤是冗余但无害的。
+  /// 保留它是为了防御"误传全部 `courses`"的常见错误。
   static List<List<Course?>> buildGrid(List<Course> courses, int week) {
     final List<List<Course?>> grid = List<List<Course?>>.generate(
       kDaysPerWeek + 1,
