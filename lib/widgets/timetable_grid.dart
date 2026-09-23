@@ -409,12 +409,13 @@ String _endOfTimeRange(String time) {
 
 /// 把 `TimePlace.room`（如 `"曹妃甸校区 HE-405"`）拆成"校区 + 教室"。
 ///
-/// 模型层目前只有 `room` 一个字段，而视觉稿要分两行显示教室与 `@校区`，
-/// 所以按**首个空白**拆分：第一段是校区，其余是教室。
-/// 没有空白时整串都算教室，校区为空。
+/// 模型层目前只有 `room` 一个字段，而它常常是"校区 + 教室"拼在一起
+/// （如 `"曹妃甸校区 HE-405"`），所以按**首个空白**拆分：
+/// 第一段是校区，其余是教室；没有空白时整串都算教室、校区为空。
 ///
-/// 这是展示层的权宜做法——Phase 4 定下插件的数据契约后，
-/// 应给 `TimePlace` 加一个独立的 `campus` 字段（那时要按 CONTEXT 4.2.1 写迁移）。
+/// 卡片只用 `.room`（Phase 2.2b.4 起不再显示校区）；`.campus` 目前没有调用方，
+/// 保留它是为了详情弹层将来能分开展示，以及 Phase 4 给 `TimePlace` 加
+/// 独立的 `campus` 字段时可以直接替换（届时按 CONTEXT 4.2.1 写迁移）。
 ({String campus, String room}) splitCampusAndRoom(String raw) {
   final String text = raw.trim();
   if (text.isEmpty) return (campus: '', room: '');
@@ -428,14 +429,14 @@ String _endOfTimeRange(String time) {
   return (campus: campus, room: room);
 }
 
-/// 单个课程卡片：课程名（最多 3 行）+ 教室 + `@校区`。
+/// 单个课程卡片：课程名 + 教室。
 ///
-/// 内容按**卡片可用高度**逐级显示（视觉稿规则）：
-/// - 高度 ≥ 2.5 格 → 课程名 + 教室 + @校区
-/// - 高度 ≥ 1.5 格 → 课程名 + 教室
-/// - 否则 → 只显示课程名
+/// 内容按**节数**逐级显示（Phase 2.2b.4）：
+/// - `length >= 2` → 课程名 + 教室
+/// - `length == 1` → 只显示课程名（格子太小，放不下教室）
 ///
-/// **不显示教师**（视觉稿要求，教师移到详情弹层）。
+/// **不显示教师**（只在详情弹层里），**不显示 `@校区`**
+/// （真机反馈：窄列宽下教室与校区互相挤到看不清）。
 class _CourseCard extends StatelessWidget {
   const _CourseCard({
     required this.course,
@@ -465,32 +466,26 @@ class _CourseCard extends StatelessWidget {
     final Color textColor = theme.onBackground;
 
     final String name = course.displayName;
+    // 只取教室部分：`"曹妃甸校区 HE-405"` → `"HE-405"`。
+    // 校区不再显示（Phase 2.2b.4：窄列宽下教室与 @校区 会互相挤到看不清）。
     final ({String campus, String room}) place =
         splitCampusAndRoom(timePlace?.room ?? '');
+    final String room = place.room;
 
     // 卡片块高度 = 节数 × 单元格高度
     final double blockHeight = length * theme.timetableCellHeight;
-    final bool showRoom = blockHeight >= 1.5 * theme.timetableCellHeight;
-    final bool showCampus = blockHeight >= 2.5 * theme.timetableCellHeight;
+    // 1 节课的格子放不下教室，只显示课程名；2 节及以上才有位置
+    final bool showRoom = length >= 2 && room.isNotEmpty;
 
-    // 课程名能占几行：扣掉内边距与 meta 行占用的高度，最多 3 行。
-    // 这一步保证按目标字号渲染也不会溢出（不依赖 FittedBox 缩放）。
+    // 课程名能占几行：按可用高度算，最多 3 行。
+    // 课程名优先——教室排在后面，真放不下时由外层裁掉（不抢课程名的空间）。
     final double innerHeight = blockHeight - kCardPaddingV * 2;
-    final int metaLines =
-        (showRoom && place.room.isNotEmpty ? 1 : 0) +
-            (showCampus && place.campus.isNotEmpty ? 1 : 0);
-    final double metaHeight = metaLines * theme.captionSize * _lineFactor;
     final double nameLineHeight = theme.bodySize * _lineFactor;
     int nameMaxLines = nameLineHeight <= 0
         ? 1
-        : ((innerHeight - metaHeight) / nameLineHeight).floor();
+        : (innerHeight / nameLineHeight).floor();
     if (nameMaxLines < 1) nameMaxLines = 1;
     if (nameMaxLines > 3) nameMaxLines = 3;
-
-    final List<String> metaTexts = <String>[
-      if (showRoom && place.room.isNotEmpty) place.room,
-      if (showCampus && place.campus.isNotEmpty) '@${place.campus}',
-    ];
 
     return Material(
       color: color,
@@ -504,34 +499,45 @@ class _CourseCard extends StatelessWidget {
             horizontal: kCardPaddingH,
             vertical: kCardPaddingV,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: <Widget>[
-              Text(
-                name,
-                maxLines: nameMaxLines,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: theme.bodySize,
-                  fontWeight: theme.titleFontWeight,
-                  color: textColor,
-                  height: _lineFactor,
-                ),
-              ),
-              for (final String meta in metaTexts)
-                Text(
-                  meta,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: theme.captionSize,
-                    color: textColor.withValues(alpha: 0.75),
-                    height: _lineFactor,
+          // 内容按自然高度排布，超出卡片高度的部分**裁掉**（不用省略号）：
+          // OverflowBox 让 Column 拿到无界高度、按内容自然排布，
+          // 外层 ClipRect 把溢出部分裁掉——这样既允许教室换行，
+          // 又不会触发 RenderFlex 溢出报错。
+          child: ClipRect(
+            child: OverflowBox(
+              alignment: Alignment.topLeft,
+              maxHeight: double.infinity,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    name,
+                    maxLines: nameMaxLines,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: theme.bodySize,
+                      fontWeight: theme.titleFontWeight,
+                      color: textColor,
+                      height: _lineFactor,
+                    ),
                   ),
-                ),
-            ],
+                  if (showRoom)
+                    Text(
+                      room,
+                      // 允许换行、最多 2 行；超出部分直接裁掉，不加省略号
+                      maxLines: 2,
+                      overflow: TextOverflow.clip,
+                      softWrap: true,
+                      style: TextStyle(
+                        fontSize: theme.captionSize,
+                        color: textColor.withValues(alpha: 0.75),
+                        height: _lineFactor,
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
       ),

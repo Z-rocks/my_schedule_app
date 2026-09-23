@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-22（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构）
+- 最后更新：2026-09-22（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室）
 
 ---
 
@@ -976,22 +976,22 @@ const TimetableGrid({
 - 课程卡片：`left = timeColumnWidth + (day-1) * columnWidth + kCardInset`、`top = kGridHeaderHeight + (startSession-1) * cellHeight + kCardInset`、`width = columnWidth - kCardInset*2`、`height = length * cellHeight - kCardInset*2`
   - 卡片 `Key = '<courseId>-<day>-<startSession>-<week>'`
 
-**卡片内容（Phase 2.2b.3 视觉重构）** — 固定字号，**不再按高度分档**：
+**卡片内容（Phase 2.2b.4）** — 固定字号，**只显示课程名与教室**：
 
-| 内容 | 字号 | 说明 |
-|------|------|------|
-| 课程名 | `theme.bodySize`（14）+ `titleFontWeight` | 最多 3 行，超出省略号 |
-| 教室（`HE-405`） | `theme.captionSize`（12） | |
-| `@校区`（`@曹妃甸校区`） | `theme.captionSize`（12） | |
+| 内容 | 字号 | 行数 / 溢出策略 |
+|------|------|-----------------|
+| 课程名 | `theme.bodySize`（14）+ `titleFontWeight` | 最多 3 行，超出**省略号** |
+| 教室（`HE-405`） | `theme.captionSize`（12） | 最多 2 行，**允许换行**，超出**裁切**（不省略号） |
 
-按**卡片块高度**（`length × cellHeight`）逐级显示：
-- `≥ 2.5 格` → 课程名 + 教室 + @校区
-- `≥ 1.5 格` → 课程名 + 教室
-- 否则 → 只显示课程名
+按**节数**逐级显示：
+- `length >= 2` → 课程名 + 教室
+- `length == 1` → 只显示课程名（格子太小放不下教室）
 
-**卡片内不显示教师**（教师只在详情弹层里）。课程名行数按"可用高度扣掉内边距与 meta 行"精确算出（上限 3 行），因此**不需要** `FittedBox` 缩放——卡片的 `FittedBox` 已删除（时间列那一个保留，只服务于 40px 窄时间列）。
+**卡片内不显示教师**（只在详情弹层里）、**不显示 `@校区`**（Phase 2.2b.4：真机反馈窄列宽下教室与校区互相挤到看不清，如 `@曹...HA...`）。
 
-`splitCampusAndRoom(String raw)` → `({String campus, String room})`：把 `TimePlace.room`（如 `"曹妃甸校区 HE-405"`）按**首个空白**拆成校区与教室；无空白时整串算教室、校区为空。**这是展示层权宜做法**——模型只有 `room` 一个字段，Phase 4 定下插件契约后应给 `TimePlace` 加独立的 `campus` 字段（届时按 CONTEXT 4.2.1 写迁移）。
+裁切策略：卡片内容用 `ClipRect` + `OverflowBox(maxHeight: infinity)` 包裹 —— `OverflowBox` 让 `Column` 按内容自然排布（因此教室能换行、且不触发 `RenderFlex` 溢出报错），`ClipRect` 把超出卡片高度的部分裁掉。**卡片的 `FittedBox` 已删除**（时间列那一个保留，只服务于 40px 窄时间列）。课程名行数按可用高度精确算出（上限 3 行），课程名优先、教室在后，真放不下时裁掉的是教室。
+
+`splitCampusAndRoom(String raw)` → `({String campus, String room})`：把 `TimePlace.room`（如 `"曹妃甸校区 HE-405"`）按**首个空白**拆成校区与教室；无空白时整串算教室、校区为空。卡片**只用 `.room`**（Phase 2.2b.4 起不显示校区）；`.campus` 目前无调用方，保留供详情弹层将来分开展示、以及 Phase 4 给 `TimePlace` 加独立 `campus` 字段时替换（届时按 CONTEXT 4.2.1 写迁移）。
 
 卡片推导（`_collectPlacements`）：扫描 `grid`，**上一格不是同一实例**的格子即课程块顶部（用 `identical` 比较——`buildGrid` 会把同一实例填进跨节涉及的每一格），再向下数连续同实例格数得到 `length`。教室信息按 `(day, startSession)` 回查 `course.displayTimePlaces`（网格里只有 `Course`，没有 `TimePlace`）。
 
