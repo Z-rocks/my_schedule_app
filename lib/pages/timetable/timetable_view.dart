@@ -12,6 +12,7 @@ import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/timetable_grid.dart';
+import '../edit/course_edit_page.dart';
 import '../settings/semester_config_page.dart';
 import 'course_detail_sheet.dart';
 
@@ -164,6 +165,29 @@ class _TimetableViewState extends State<TimetableView> {
     );
   }
 
+  /// 打开添加课程页；**必须先配置学期**（周次范围依赖总周数）。
+  ///
+  /// 没有学期时提示并提供"去配置"入口，而不是直接跳转。
+  Future<void> _openCourseEdit() async {
+    if (!context.read<SemesterProvider>().hasConfig) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('请先配置学期'),
+          action: SnackBarAction(
+            label: '去配置',
+            onPressed: _openSemesterConfig,
+          ),
+        ),
+      );
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<bool>(
+        builder: (BuildContext _) => const CourseEditPage(),
+      ),
+    );
+  }
+
   /// 弹出周次选择面板；选中周次则跳周，选"编辑学期"则打开学期配置页。
   Future<void> _showWeekPicker(SemesterConfig config) async {
     final int totalWeeks = config.totalWeeks < 1 ? 1 : config.totalWeeks;
@@ -274,7 +298,7 @@ class _TimetableViewState extends State<TimetableView> {
               icon: const Icon(Icons.add),
               tooltip: '添加课程',
               color: theme.primary,
-              onPressed: () => _showSnack('添加课程页待实现（Phase 2.2c）'),
+              onPressed: _openCourseEdit,
             ),
           ],
         ),
@@ -318,7 +342,7 @@ class _TimetableViewState extends State<TimetableView> {
         title: '还没有课程',
         subtitle: '点击下方按钮添加第一门课',
         actionLabel: '添加课程',
-        onAction: () => _showSnack('添加课程页待实现（Phase 2.2c）'),
+        onAction: _openCourseEdit,
       );
     }
 

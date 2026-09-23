@@ -258,6 +258,46 @@
 > 8 周与 5 周原样保留、3 周收进 4 周、40 周收进 30 周、默认仍 20 周、
 > 短学期（4 周、起始日很久以前）预览显示"学期已结束"。
 
+> **Phase 2.2c.2**（添加课程页）：`dart analyze lib` 通过，未新增依赖。
+> 本次只做**添加**，编辑/删除留给 Phase 5。
+>
+> 改动：
+> - 新建 `lib/pages/edit/course_edit_page.dart`（`CourseEditPage`，无参构造）：
+>   `Form` 表单含 基本信息（课程名 / 教师 / 学分 Slider 0–10 步进 0.5 / 类别 / 颜色）、
+>   上课时间地点（可增删的多个时间段卡片）、备注、底部取消 + 保存
+> - 时间段用可变临时类 `_TimePlaceDraft`（day / startSession / length /
+>   startWeek / endWeek / weekType / roomController），保存时转成 `TimePlace`；
+>   `endWeek` 按学期总周数传入，避免默认值超出学期范围
+> - 时间段卡片：星期 7 个 ChoiceChip、起始节次与持续节数两个 Dropdown、
+>   教室输入、**周次范围用 `RangeSlider`**（1..totalWeeks）、单双周 3 个 ChoiceChip、
+>   右上角删除；**至少保留一个**（删最后一个时提示并拒绝）
+> - 颜色选择 `_ColorPicker`：预设色（`theme.courseCardColors`，默认选中第一个）
+>   + "自动"选项（`null` → 交给哈希分配）
+> - 颜色与备注存进 `userOverride`（`Course` 没有 color 字段，`displayColor`
+>   读的是 `userOverride.customColor`；`saveCourse` 会把覆盖层剥离到
+>   `overrides` Box 持久化）；两者都为空时 `userOverride` 为 null
+> - `timetable_view.dart`：顶部 `+` 与空态"添加课程"都改为 `_openCourseEdit()` ——
+>   **无学期时不跳转**，弹 `SnackBar('请先配置学期')` + `SnackBarAction('去配置')`
+> - 导出纯函数 `weeksFromRange` / `rawWeeksTextFromRange`；常量
+>   `kMaxCourseNameLength`(30) / `kMinUnit`(0) / `kMaxUnit`(10) / `kUnitStep`(0.5) /
+>   `kMinLength`(1) / `kMaxLength`(4)
+>
+> 验证：临时 `flutter test` 脚本 **33 组全部通过**，脚本已删除。覆盖：
+> 周次转换（全部 1-16 → [1..16]、单周 → 奇数周、双周 → 偶数周、反向区间 → 空、
+> 单周 + 无奇数周区间 → 空）、`rawWeeksText`（三种单双周 + 起止相同写成"9周"）、
+> 页面字段齐全、默认一个时间段且周次覆盖整学期（短学期下不超过总周数）、
+> 颜色默认选中第一个预设色 + 有"自动"、课程名空/纯空白被拦、`maxLength` = 30、
+> 时间段可增可删、**删到最后一个被拦下**、保存后 `sourcePluginId == 'user'` 且
+> `id` 以 `user_` 开头且 `timePlaces` 长度 = 时间段数、20 周生成 20 个周次、
+> 单双周影响 weeks 与 rawWeeksText、颜色存入 `userOverride.customColor`、
+> 选"自动"时 `displayColor` 为 null、教师/类别/教室/备注都被保存、
+> 取消返回 false 且不保存、**无学期时保存被兜底拦下**、
+> 两个入口（有学期跳转 / 无学期弹 SnackBar 且不跳转 / "去配置"能打开学期配置页 /
+> 添加课程后课表页不再显示空态）。
+>
+> **测试注意**：本页比学期配置页更长，需高视口（500×2400）才能点到底部按钮与
+> 第二个时间段卡片。
+
 > **Phase 2.2b.4**（真机反馈"卡片信息太挤"）：`dart analyze lib` 通过，未新增依赖。
 >
 > 问题：窄列宽（约 46px）下同时显示教室与 `@校区`，两个都被截断成
@@ -525,13 +565,17 @@
 | 2026-09-22 | `TimePlace` 新增 `weekType` 字段（Phase 2.2a），因当时无落盘课程故未写迁移；此后改 schema 必须写迁移 | 已决定 |
 | 2026-09-22 | `SemesterProvider.loadFromStorage` 读到相同配置也会通知一次（`SemesterConfig` 无 `==`）；启动只调一次，暂不优化 | 待处理 |
 | 2026-09-22 | `main.dart` 的 `_seedTemporaryTestData`（Phase 2.2b 临时测试数据）必须在 Phase 2.2c 删除 | ✅ 已完成（Phase 2.2b.1 提前删除） |
-| 2026-09-22 | 设备上已写入的测试学期与 3 门测试课程仍留在 Hive 里（代码已删，数据还在）；需 `CourseProvider.clearAll()` 或清除应用数据一次 | 待处理 |
+| 2026-09-22 | 设备上已写入的测试学期与 3 门测试课程仍留在 Hive 里（代码已删，数据还在）；需 `CourseProvider.clearAll()` 或清除应用数据一次 | 待处理（**真机已清空数据，见 Phase 2.2b 系列验收记录**；后续无需再处理） |
 | 2026-09-22 | `TimetableSettingsPage` 的"显示周末/显示节次时间/每节高度"仍是内存态、重启即丢，待迁入 `SettingsProvider` | 待处理 |
 | 2026-09-22 | 卡片字号分档依赖 `timetableCellHeight`；若用户在课表设置里改每节高度，字号会自动跟随（该设置持久化后需回归验证） | ✅ 已作废（Phase 2.2b.3 改为固定字号，不再分档） |
 | 2026-09-22 | `TimePlace` 只有 `room` 一个字段（常含"校区 + 教室"），卡片靠 `splitCampusAndRoom` 按空白取教室；Phase 4 定下插件契约后应加独立 `campus` 字段（需迁移） | 待处理 |
 | 2026-09-22 | 卡片已不显示校区（Phase 2.2b.4），校区信息目前只在详情弹层的教室串里；若将来要分开展示需用 `splitCampusAndRoom().campus` | 已决定 |
 | 2026-09-22 | 学期配置页的总周数滑杆范围固定 10–30；若插件/历史数据给出该范围外的周数，进页面后会被收进区间（保存即改动原值） | ✅ 已完成（Phase 2.2c.1 修正：下限放宽到 4，军训等短学期不再被顶成 10 周） |
 | 2026-09-22 | 学期配置页只在"已有配置"时显示"重置"；清除后没有再次进入的入口提示（需重新从空态/设置页进入） | 待处理 |
+| 2026-09-22 | `weeksFromRange` 按提示词要求**预先过滤**单双周（单周 → 只有奇数周），而 `TimetableLogic.parseWeeks` 保留基础周次、由 `hasClassInWeek` 叠加过滤。两者界面表现等价，但 `weeks` 值形态不一致（自建课程 vs 插件课程） | 待处理 |
+| 2026-09-22 | 添加课程页的时间段默认 `length = 2`（连堂），且未限制"起始节次 + 持续节数 ≤ 12"；越界部分会被 `buildGrid` 静默忽略 | 待处理 |
+| 2026-09-22 | 添加课程页的课程 id 用 `user_${microsecondsSinceEpoch}`，理论上同一微秒内两次保存会撞 id（UI 操作不可能达到，暂不处理） | 待处理 |
+| 2026-09-22 | 添加课程页颜色默认选中第一个预设色（按提示词）；从"配色分散"角度，默认选"自动"更好，待确认 | 待处理 |
 | 2026-09-22 | 窄屏（360dp）下每列约 46px，教室用 `maxLines: 2` + 裁切；很长的教室名（如 `教学楼A HE-405`）第 2 行仍可能被裁掉尾部 | 待处理 |
 | 2026-09-22 | `kDefaultSectionTimes` 硬编码 12 个节次时间，Phase 4 插件接入后需改为从插件数据读取 | 待处理 |
 | 2026-09-22 | 课表网格的星期表头不显示日期 | ✅ 已完成（Phase 2.2b.3：表头显示"一 11"并在时间列显示月份） |

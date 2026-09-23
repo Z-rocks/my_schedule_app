@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-22（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页）
+- 最后更新：2026-09-22（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页）
 
 ---
 
@@ -727,7 +727,7 @@ const TimetableView({super.key, int totalWeeks = 20, int initialWeek = 1});
 | 条件 | 展示 |
 |------|------|
 | `!semester.hasConfig` | `EmptyState(Icons.calendar_today, '还没有配置学期', '配置学期后才能看到课表', '去配置学期')` → **Phase 2.2c.1 起 `Navigator.push(SemesterConfigPage)`**（原为 SnackBar 占位）。**不显示周次选择器**（没有学期时周次无意义） |
-| 有学期但 `visibleCourses` 为空 | `EmptyState(Icons.add_circle_outline, '还没有课程', '点击下方按钮添加第一门课', '添加课程')` → SnackBar `添加课程页待实现（Phase 2.2c）` |
+| 有学期但 `visibleCourses` 为空 | `EmptyState(Icons.add_circle_outline, '还没有课程', '点击下方按钮添加第一门课', '添加课程')` → **Phase 2.2c.2 起 `_openCourseEdit()`**：有学期则 push `CourseEditPage`，无学期则弹 `SnackBar('请先配置学期')` + `去配置` action |
 | 有数据 + `gestureSwitchWeek == true` | `PageView.builder(itemCount: totalWeeks)`，每页一周；`initialPage = _week - 1` |
 | 有数据 + `gestureSwitchWeek == false` | 单个 `TimetableGrid`（只能通过顶部周次面板切周） |
 
@@ -750,7 +750,8 @@ SizedBox(
         ),
       if (semesterEnded) Text('学期已结束'),      // 灰色小字
       const Spacer(),
-      IconButton(icon: Icon(Icons.add), tooltip: '添加课程'),
+      IconButton(icon: Icon(Icons.add), tooltip: '添加课程',
+        onPressed: _openCourseEdit),   // 无学期时弹 SnackBar + "去配置"
     ]),
   ),
 )
@@ -761,7 +762,7 @@ SizedBox(
 - **"学期已结束"** 判定（`_isSemesterEnded`）：`currentWeek(config) == totalWeeks` **且** 今天（只比年月日）晚于 `config.endDate`
 - 点击"第 N 周" → `showModalBottomSheet` 弹出 `_WeekPickerSheet`：标题"选择周次" + `Wrap` 的 `ChoiceChip`（1..totalWeeks，当前周选中）+ 右下角 `TextButton.icon('编辑学期')`
   - 面板返回 `int` → 跳到该周；返回 `_WeekPickerResult.editSemester` → `Navigator.push(SemesterConfigPage)`（Phase 2.2c.1）
-- 右上角 `+` → SnackBar `添加课程页待实现（Phase 2.2c）`
+- 右上角 `+` → `_openCourseEdit()`：**有学期**则 `Navigator.push(CourseEditPage)`；**无学期**则 `SnackBar('请先配置学期')` + `SnackBarAction('去配置')` → 打开 `SemesterConfigPage`（Phase 2.2c.2）
 
 常量：`kTopBarHeight = 48`、`kDefaultSectionTimes`（12 个节次的起止时间，**硬编码**；Phase 4 插件接入后改为从插件的 `sectionTime` 数据读取——各校作息不同，不能长期写死在客户端）
 - 点击卡片 → `showCourseDetailSheet(context, course)`
@@ -788,6 +789,50 @@ Future<void> showCourseDetailSheet(BuildContext context, Course course);
   - 无安排时显示"暂无安排"
 - "备注"区块：仅在 `userOverride.note` 非空时显示
 - 底部按钮：`编辑`（→ SnackBar `编辑功能待实现（Phase 5）`）、`关闭`（→ `Navigator.pop`）
+
+### `edit/course_edit_page.dart` — CourseEditPage
+
+**添加课程**页（Phase 2.2c.2）。`const CourseEditPage({super.key})` —— 无构造参数；**编辑/删除留到 Phase 5**。
+
+两个入口（课表页顶部 `+`、空态"添加课程"按钮）都先检查 `SemesterProvider.hasConfig`：**没有学期时不跳转**，改弹 `SnackBar('请先配置学期')` 并带 `SnackBarAction('去配置')`（打开 `SemesterConfigPage`）。本页 `_save()` 里还有一次同样的兜底。
+
+`Form` + `ListView` 结构：
+
+| 区块 | 内容 |
+|------|------|
+| 基本信息 | 课程名（`TextFormField`，`maxLength: 30`，validator 非空）；教师（可选）；学分（`Slider` 0–10 步进 0.5，默认 2）；课程类别（可选，如"专业必修课"）；**课程颜色**（`_ColorPicker`） |
+| 上课时间地点 | 标题右侧 `TextButton.icon('添加时间段')`；每个时间段一张 `_TimePlaceCard` |
+| 备注 | `TextFormField(maxLines: 3)` |
+| 底部 | `OutlinedButton 取消`（`pop(false)`）+ `FilledButton 保存` |
+
+**时间段的临时数据结构** `_TimePlaceDraft`（可变，保存时转 `TimePlace`）：
+
+```dart
+class _TimePlaceDraft {
+  _TimePlaceDraft({required this.endWeek});   // endWeek 按学期总周数传入
+  int day = 1; int startSession = 1; int length = 2;
+  int startWeek = 1; int endWeek;
+  WeekType weekType = WeekType.all;
+  final TextEditingController roomController = TextEditingController();
+  void dispose() => roomController.dispose();
+}
+```
+
+时间段卡片内容：`时间段 N` + 右上角 `IconButton(close, tooltip: '删除该时间段')`、星期（7 个 `ChoiceChip`）、起始节次 / 持续节数（两个 `DropdownButton`，1–12 / 1–4）、教室（可选）、**周次范围**（`RangeSlider`）、单双周（3 个 `ChoiceChip`：每周 / 单周 / 双周）。**至少保留一个时间段**：删到最后一个时弹 `SnackBar('至少保留一个时间段')` 并拒绝。
+
+**周次范围 UX**：用 `RangeSlider(1..totalWeeks, divisions: totalWeeks - 1)` + 上方 `周次：第 X - Y 周` 文案。选它而不是两行数字 chip：总周数最多 30、chip 行会很长，且 `RangeSlider` **天然保证"起始周 ≤ 结束周"**。`totalWeeks <= 1` 时退化为静态"第 1 周"（避免退化区间）。
+
+**保存流程**：`validate()` → 逐时间段校验（`endWeek >= startWeek`；`weeksFromRange` 结果非空，否则该时间段永远不会显示 → 提示"第 N 个时间段的周次与单双周设置组合后为空"）→ 构造 `Course` → `await CourseProvider.saveCourse(course)` → `pop(true)` + `SnackBar('课程已添加')`。
+
+`Course` 的构造：
+- `id = 'user_${DateTime.now().microsecondsSinceEpoch}'`
+- `sourcePluginId = kUserSourcePluginId`（`'user'`）
+- `timePlaces` = 各草稿转换结果
+- **颜色存进 `userOverride.customColor`**（`Course` 没有 color 字段，`displayColor` 读的就是它；`saveCourse` 会把覆盖层剥离到 `overrides` Box 持久化）。选了"自动"时 `customColor = null`，由 `TimetableGrid` 按 `course.id` 哈希取色。备注同样存进 `userOverride.note`；两者都为空时 `userOverride` 为 `null`。
+
+纯函数（同文件导出）：`weeksFromRange(int startWeek, int endWeek, WeekType)`、`rawWeeksTextFromRange(int, int, WeekType)`
+
+常量：`kMaxCourseNameLength = 30`、`kMinUnit = 0` / `kMaxUnit = 10` / `kUnitStep = 0.5`、`kMinLength = 1` / `kMaxLength = 4`
 
 ### `settings/semester_config_page.dart` — SemesterConfigPage
 
