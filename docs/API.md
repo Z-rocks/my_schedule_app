@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-22（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页）
+- 最后更新：2026-09-23（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证）
 
 ---
 
@@ -977,7 +977,30 @@ const EmptyState({
 
 ---
 
-## lib/ 根
+## lib/runtime/
+
+### `plugin_demo.dart` — PluginDemo（**Phase 3.1 临时验证文件**）
+
+flutter_js 集成验证类。**仅用于确认 QuickJS 能在本项目里跑起来**，Phase 3.2 起被正式的 `plugin_runtime.dart` 替代。全部方法为 `static`，纯静态类（`PluginDemo._()` 禁止实例化）。
+
+每个方法都是**自建运行时 → 执行 → `dispose()`** 的独立闭环（finally 里必然释放），因此可重复调用、互不影响。运行时统一用 `getJavascriptRuntime(xhr: false)`——本阶段不测网络，关掉内置 fetch/XHR 扩展；Android / Windows / Linux 走 QuickJS，其他平台走 JavaScriptCore，调用方无需关心平台差异。
+
+| 方法 | 返回 | 说明 |
+|------|------|------|
+| `static int? evalSimple()` | `2` | 执行 `1 + 1`，验证"能建运行时 + 能执行 + 能取值" |
+| `static String? evalWithCallback()` | `'pong\|from-dart'` | 注册 `onMessage('demoEcho', ...)`，JS 侧 `sendMessage('demoEcho', JSON.stringify('ping'))` 取回 Dart 返回值 |
+| `static Map<String, dynamic>? evalWithObject()` | 课程对象 Map | JS 构造对象 → `JSON.stringify` → Dart `jsonDecode` |
+| `static String? evalInvalid()` | 非空错误串 | 执行非法 JS，验证 `isError == true` 且**不抛异常** |
+
+**失败一律返回 `null` 而非抛异常**，并 `debugPrint` 原因，调用方可据此判断集成是否可用。
+
+私有辅助：`_createRuntime()`、`_asInt(Object?)`（兼容 QuickJS 把数字给成 `int` 或 `double`，`2.0` 也算 `2`）、`_decodeJsonObject(String)`（解析出非对象或坏 JSON 返回 `null`）。
+
+> **两条实测得到的实现约束**（Phase 3.2 必须沿用）：
+> 1. QuickJS 后端的 `JavascriptRuntime.jsonStringify` 是 `UnimplementedError`，**不能**用它序列化；要 JSON 就得在 JS 侧调 `JSON.stringify(...)` 再在 Dart 侧 `jsonDecode`。`rawResult` 的 Dart 类型（Map / JSInvokable）不够稳定，也不宜直接依赖。
+> 2. `evaluate()` 在 QuickJS 后端是**同步**返回，且**语法错误不抛异常**——错误通过 `JsEvalResult.isError == true` 传递，必须显式检查该标志位。
+
+---
 
 ### `main.dart` — 入口
 

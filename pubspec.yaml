@@ -56,6 +56,9 @@ dependencies:
   # 时间格式化
   intl: ^0.19.0
 
+  # JS 引擎（插件运行时：Android 用 QuickJS，其他平台用 JavaScriptCore）
+  flutter_js: ^0.8.7
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

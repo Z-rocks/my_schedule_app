@@ -4,7 +4,28 @@
 > 遇到阻塞，在旁边加 `⚠️` 并说明。
 > 本文件是"当前状态"的唯一真相来源。
 
-- 最后更新：2026-09-22
+- 最后更新：2026-09-23
+
+---
+
+## 🚩 当前进度快照
+
+> 给新会话 AI 用。每次阶段切换时更新。
+
+- **最新完成**：Phase 3.1（flutter_js 集成 + 最小 demo）
+- **代码状态**：dart analyze 全绿，真机（Redmi K60）验收通过
+- **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
+- **下一步**：Phase 3.2（插件运行时：sandbox / PluginRuntime / 插件文件加载）
+- **最近 commit**：feat(edit): 新增添加课程页
+- **关键约束**：
+  - testWidgets 不能触发 Hive 写（会卡死）
+  - schema 已冻结（改字段要写迁移）
+  - 卡片不显示教师和 @校区
+  - 一屏 7 天不横向滚动
+  - **JS 侧取 JSON 必须用 JS 的 `JSON.stringify`**（QuickJS 的 `jsonStringify` 未实现）
+  - **`evaluate()` 语法错误不抛异常**，靠 `JsEvalResult.isError` 判断
+
+---
 
 ---
 
@@ -171,7 +192,7 @@
 
 ---
 
-## Phase 2：存储与业务（进行中）
+## Phase 2：存储与业务 ✅
 
 - [x] Hive 初始化
 - [x] `lib/services/storage_service.dart`
@@ -478,9 +499,60 @@
 
 ---
 
-## Phase 3：插件运行时（未开始）
+## Phase 3：插件运行时（进行中）
 
-- [ ] flutter_js 集成
+> **Phase 3.1**（flutter_js 集成 + 最小 demo）：`dart analyze lib` 通过，**只加了 1 个依赖**。
+> 本次仅做**集成验证**，不做沙箱、不做 PluginRuntime、不做插件文件加载（留给 3.2+）。
+>
+> 改动：
+> - `pubspec.yaml`：新增 `flutter_js: ^0.8.7`（pub.dev 实际最新稳定版；
+>   提示词里写的 0.8.2 已过期，0.8.7 的 SDK 约束 `>=3.0.0 <4.0.0` 与本项目 Dart 3.13.4 兼容）
+> - 新建 `lib/runtime/plugin_demo.dart`（`PluginDemo`）：4 个静态方法
+>   `evalSimple()` / `evalWithCallback()` / `evalWithObject()` / `evalInvalid()`，
+>   每个方法自建运行时、`finally` 里 `dispose()`，失败一律返回 `null` 而非抛异常
+> - `main.dart` 临时加验证行 → 真机确认后**已删除**（`PluginDemo` 文件保留，供 3.2 参考）
+>
+> **两条实测得到的关键约束**（Phase 3.2 必须沿用，已写入 API.md）：
+> 1. QuickJS 后端的 `JavascriptRuntime.jsonStringify` 是 `UnimplementedError`，
+>    **不能**用它序列化；要 JSON 必须在 JS 侧调 `JSON.stringify(...)`、Dart 侧 `jsonDecode`。
+>    `rawResult` 的 Dart 类型（Map / JSInvokable）不够稳定，也不宜直接依赖。
+> 2. `evaluate()` 在 QuickJS 后端**同步**返回，且**语法错误不抛异常**——
+>    错误通过 `JsEvalResult.isError == true` 传递，必须显式检查该标志位。
+>
+> **平台差异（重要）**：Android 的 QuickJS **不是**本项目自己编译的——插件
+> `android/build.gradle` 里 `externalNativeBuild` 的 CMake 构建被注释掉了
+> （注释说明 "crashing with SEGV_MAPERR on ARM based devices"），改用 JitPack 预编译库
+> `com.github.fast-development.android-js-runtimes:fastdev-jsruntimes-quickjs:0.3.6`。
+> 即 Android 侧依赖 **JitPack 网络仓库**，构建机需能访问 jitpack.io。
+> 已确认产物中带 `lib/<abi>/libfastdev_quickjs_runtime.so`（arm64-v8a / armeabi-v7a / x86_64）。
+>
+> **`flutter test` 的坑（新增，务必记牢）**：`flutter test` 跑在 **Windows 宿主的 Dart VM** 上，
+> 而 QuickJS 需要 `quickjs_c_bridge.dll` 在 DLL 搜索路径里；插件只为 **Flutter Windows 应用构建**
+> 拷贝该 DLL，**不为 `flutter test` 拷贝**。因此直接跑测试会失败于
+> `Failed to load dynamic library 'quickjs_c_bridge.dll'`（error code 126）。
+> 解决：把 `%LOCALAPPDATA%\Pub\Cache\hosted\pub.dev\flutter_js-0.8.7\windows\shared\quickjs_c_bridge.dll`
+> 拷到项目根目录（或设 `PATH`）即可。**这不影响 Android**（QuickJS 走 JitPack 的 .so）。
+>
+> 验证：临时 `flutter test` 脚本 **5 组全部通过**，脚本已删除。覆盖：
+> `evalSimple() == 2`、`evalWithCallback()` 拿到 Dart 函数返回值 `'pong|from-dart'`
+> （日志可见 JS 传回的参数 `ping`）、`evalWithObject()` 解析出含中文/浮点/数组/嵌套对象的 Map、
+> 非法 JS 返回非空错误串且 `isError == true` 不崩、连续多次创建运行时互不影响。
+> 另跑了一次**耗时基准**（脚本已删）：首次 `evalSimple()` **22ms**、第二次 **0ms**。
+>
+> **真机验证**：Redmi K60（2211133C，Android 16 / arm64）`flutter run` 输出
+> `I/flutter: JS 1+1 = 2`，App 正常启动。Windows 桌面端（同一套 `QuickJsRuntime2` 后端）
+> 同样输出 `JS 1+1 = 2`，交叉印证。
+>
+> **本阶段的环境问题（与代码无关，但会卡住后续阶段）**：
+> ① `flutter.bat` 在本机 DSH 沙箱里**永远挂死**（无输出直到超时）——原因是该批处理检测到
+> PATH 里有 `pwsh` 后会 `call pwsh` 重新起一个 shell 来跑工具，嵌套 shell 在沙箱里被卡住。
+> 绕开办法：直接用 `dart.exe <flutter>/bin/cache/flutter_tools.snapshot <args>` 调用，
+> 或给 `flutter.bat` 传 `--no-version-check`。**后续所有 flutter 命令都建议走 snapshot 方式。**
+> ② Flutter SDK 缓存里残留过 `flutter.bat.lock` / `lockfile`（零字节、无进程持有），
+> 会让后续 flutter 命令无限等待，已删除。
+> ③ `flutter run` 期间手机曾掉线一次（`device 'aacfd78e' not found`），重连后正常。
+
+- [x] flutter_js 集成（Phase 3.1，仅验证可用性）
 - [ ] `lib/runtime/plugin_context.dart`
 - [ ] `lib/runtime/plugin_runtime.dart`
 - [ ] `lib/runtime/sandbox.dart`
