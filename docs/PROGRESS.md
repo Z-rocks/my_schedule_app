@@ -12,11 +12,11 @@
 
 > 给新会话 AI 用。每次阶段切换时更新。
 
-- **最新完成**：Phase 3.2b.1（插件文件加载 + PluginRuntime 骨架）
+- **最新完成**：Phase 3.3（多插件管理 PluginManager + PluginProvider 接线）
 - **代码状态**：dart analyze 全绿，真机验收通过（`getprop ro.product.model` = `2211133C`）
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
-- **下一步**：Phase 3.2b.2（`ctx.http` 注入：插件跨 isolate 发起网络请求）
-- **最近 commit**：feat(plugin): 新增 JS 运行时沙箱与超时兜底
+- **下一步**：Phase 3.4（插件文件来源：`path_provider` 接入 + 插件安装流程；并做 `ctx.http` / `ctx.storage` 注入）
+- **最近 commit**：feat(plugin): 新增插件文件加载与 PluginRuntime 骨架
 - **关键约束**：
   - testWidgets 不能触发 Hive 写（会卡死）
   - schema 已冻结（改字段要写迁移）
@@ -27,6 +27,8 @@
   - **JS 必须跑在独立 isolate**（`QuickJsRuntime2.timeout` 实测无法中断死循环，且会连带冻结 Dart 侧超时）
   - **绝不传 `memoryLimit`**（`jsSetMemoryLimit` 在两个随包二进制里都不存在，传了直接打死 isolate）
   - **每插件独占一个 JsSandbox**（`__plugin` 是全局变量，共用会互相覆盖）
+  - **PluginManager 不继承 ChangeNotifier**（无状态服务），通知 UI 是 PluginProvider 的职责
+  - **加载失败原因不落盘**（运行时瞬时状态），只存 `PluginProvider.loadErrors` 内存
   - **docs/PROGRESS.md 曾因编码问题损坏**，见阻塞表（编辑该文件时务必确认保存为 UTF-8）
 
 ---
@@ -693,12 +695,74 @@
 >
 > **测试注意**：JS 相关测试需 `quickjs_c_bridge.dll`（见 `docs/ENV.md`），已拷到项目根目录、跑完已删。
 
+> **Phase 3.3**（多插件管理 PluginManager + PluginProvider 接线）：`dart analyze lib` 通过，**未新增依赖**。
+> 只动 `lib/runtime/`、`lib/providers/plugin_provider.dart`、`lib/main.dart` 与 `docs/`。
+>
+> 改动：
+> - 新建 `lib/runtime/plugin_manager.dart`：`PluginManager`（**不继承 ChangeNotifier**，无状态服务）
+>   - `load(meta, {jsSource})` / `unload(id)` / `getHandle(id)` / `isLoaded(id)` /
+>     `loadedHandles` / `loadedCount` / `handleCount` / `allLoadedCapabilities` /
+>     `loadErrors` / `disposeAll()`
+>   - 新增可注入的 `PluginSourceResolver`（typedef）+ `defaultSourceResolver`：
+>     默认用 `PluginMeta.assetPath` 作为文件路径；解析器可注入，**测试就能绕过文件系统直接给 `jsSource`**，
+>     且 Phase 3.4 接入 `path_provider` 时只换解析器、本类不用改
+> - 改造 `lib/providers/plugin_provider.dart`：
+>   - 持有 `PluginManager`（可注入，沿用 `ThemeProvider({ThemeEngine?})` 先例）
+>   - **新增持久化**：插件列表存 `plugins` Box，一 id 一 key（`loadFromStorage` /
+>     `saveToStorage` / `clearAll`）
+>   - 新增 `loadAllEnabledPlugins()` / `loadPlugin(id, {jsSource})` / `unloadPlugin(id)` /
+>     `loadedCapabilities` / `loadedHandles` / `loadedCount` / `loadErrors` / `loadErrorOf(id)` /
+>     `getHandle(id)` / `isLoaded`
+>   - `togglePlugin` 改为异步：改内存 + **立即通知** → 落盘 `enabled` → 加载/卸载运行时 → 再通知
+>   - `addPlugin` / `removePlugin` 由 `void` 改为 `Future<void>`（**原签名在 lib/ 里没有调用方**，无破坏性）
+> - 改造 `lib/main.dart`：`PluginProvider` 从"树内 create"改为 main() 里建实例并
+>   `loadFromStorage()` + `loadAllEnabledPlugins()` 后经 `.value` 传入（`buildApp` 新增可选参数）
+>
+> **我的决定：不给 `PluginMeta` 加 `lastError` 字段**。理由：
+> ① `PluginMeta` 是**持久化模型**，CONTEXT 4.2.1 规定 schema 已冻结，加字段要写迁移；
+> ② "加载失败原因"是**运行时瞬时状态**，不是领域数据，持久化它会在重启后显示**过期错误**；
+> ③ 放 `PluginProvider.loadErrors`（内存 `Map<id, String>`）即可满足 UI 展示需求，零 schema 成本。
+>
+> **三个设计取舍**：
+> 1. **`load()` 只在"已加载且可用"时跳过**；既有 handle 若是**降级**的（上次失败），
+>    会先 dispose 再重试——降级不算"已加载"，否则用户永远没机会重试。
+> 2. **`allLoadedCapabilities` 只统计沙箱可用的插件**，且同时取
+>    `handle.manifest.capabilities` 与 `meta.effectiveCapabilities`（含 `modules` 的 capabilityId）两处来源，
+>    避免漏掉任一种声明方式。加载失败的插件**不会**让模块变可用。
+> 3. **加载成功后用插件自报能力补齐 meta 取并集、不替换**：`PluginMeta.modules` 里的
+>    `capabilityId` 不在 `PluginManifest.capabilities` 里，替换会丢能力；且只在真的变化时才写盘。
+>
+> **验证**：临时 `flutter test` 脚本 **29 组全部通过**（真实 Hive + 临时目录），脚本已删除。覆盖：
+> 空 Provider 启动不报错、2 个插件加载后 `loadedHandles` 有 2 个且入口函数可调用、
+> `allLoadedCapabilities` 去重（A 声明 exam，B 声明 homework+exam → `{exam, homework}`）、
+> 未启用插件不加载、**默认解析器走真实 `assetPath` 文件（生产路径）**、
+> `assetPath` 为空且无 `jsSource` 时降级且原因明确、
+> **禁用→handle 卸载→重新启用→重新加载**、toggle 落盘 enabled 且重建 Provider 后保留、
+> **加载失败时 enabled 仍落盘 true**、toggle 找不到 id / 同值为空操作、
+> **坏 JS 不影响其他插件加载**且其能力不计入已加载能力、失败插件可重试、
+> `loadPlugin` 找不到 id 返回降级 handle、加载成功用自报能力补齐 meta（并集）、
+> `disposeAll` 后 `loadedHandles` 为空、`removePlugin` 销毁运行时并删存储、
+> 内置插件不可卸载、`unloadPlugin` 不改 enabled、`clearAll` 清内存与存储、
+> `disposeAll` 后再 load 降级不抛异常、已加载可用时 load 跳过（返回同一实例）、
+> 失败后再次 load 会重试、`loadedHandles`/`loadErrors` 是不可变视图、
+> 插件自报 id 与安装 id 不一致仍按安装 id 管理、`unload` 不存在的 id 为空操作、
+> 存储容错（坏 JSON / 非对象 / 缺 id / 空串被跳过、存储未初始化不崩）、
+> `PluginMeta` 往返存储保持一致。
+>
+> **真机验证**（Redmi K60；`adb shell getprop ro.product.model` 原始输出 = `2211133C`）：
+> 本次未要求真机验证，但因改动了 `lib/main.dart`（App 入口）做了一次**启动冒烟**：
+> `flutter run -d aacfd78e` 正常启动、无崩溃、无插件相关报错
+> （设备上没有已安装插件，`loadAllEnabledPlugins()` 遍历为空）。
+> 仅有的 `Skipped 116 frames!` 是 debug 模式 + Impeller 首帧编译的既有现象（3.1 已确认）。
+>
+> **测试注意**：JS 相关测试需 `quickjs_c_bridge.dll`（见 `docs/ENV.md`），已拷到项目根目录、跑完已删。
+
 - [x] flutter_js 集成（Phase 3.1，仅验证可用性）
 - [x] JS 运行时沙箱与兜底（Phase 3.2a，`lib/runtime/js_sandbox.dart`）
 - [x] 插件文件加载 + PluginRuntime 骨架（Phase 3.2b.1：`plugin_manifest.dart` /
       `plugin_handle.dart` / `plugin_runtime.dart`）
+- [x] 多插件管理（Phase 3.3：`plugin_manager.dart` + `PluginProvider` 接线 + 持久化）
 - [ ] `lib/runtime/plugin_context.dart`（`ctx.http` / `ctx.storage` 注入）
-- [ ] `lib/runtime/plugin_manager.dart`
 - [ ] `lib/runtime/package_manager.dart`
 - [ ] 插件管理 UI 接入真实数据
 
@@ -802,3 +866,7 @@
 | 2026-09-23 | 3.2a 的 `kDefaultJsTimeout`(1000ms) 是按"单次求值"设的；3.2b 拉取大表数据时可能需放宽，需实测后定 | 待处理 |
 | 2026-09-23 | **`docs/PROGRESS.md` 被编码损坏**：commit `f2cad97` 里的该文件不是合法 UTF-8（1057 处三字节序列的第三字节被替换成 `?`，如 `EF BC 88`→`EF BC 3F`，即全角标点变乱码），且混入 `0A 0D 0A` 混合换行。`1224163` 及更早的版本都是合法 UTF-8，两者 diff 为 545 增 545 删（**同样的行被重新编码，无内容改动**）。已 `git checkout 1224163 -- docs/PROGRESS.md` 恢复。**疑似编辑器以非 UTF-8 编码保存所致**；`f2cad97` 与 `1224163` 是同一 commit message 的重复提交 | ✅ 已恢复（但 `f2cad97` 仍留在历史里） |
 | 2026-09-23 | 插件"从文件安装"需要应用私有目录：引入 `path_provider` 需先改 CONTEXT 技术栈（当前**未声明**该依赖），或改用 assets（需改 pubspec）。3.2b.1 未做，等后续阶段定 | 待处理 |
+| 2026-09-23 | **`ModuleProvider` 仍由 `allCapabilities`（按"已启用"算）驱动，未改用 `loadedCapabilities`（按"加载成功"算）**：结果是"插件启用了但加载失败"时，其声明的模块仍会变成可用。改用后者语义更正确，但会改变模块可用性行为，属独立决策 | ⚠️ 待处理 |
+| 2026-09-23 | 3.3 给 `PluginProvider` 加了 `plugins` Box 持久化（一 id 一 key，值为 `PluginMeta` JSON）。**该存储格式此后即契约**，改动需写迁移 | 已决定 |
+| 2026-09-23 | 3.3 未做插件管理 UI 接线（`PluginManagePage` 仍是占位页），`togglePlugin` 等新方法暂无 UI 调用方 | 待处理 |
+| 2026-09-23 | PluginProvider 用 allCapabilities（enabled）驱动模块可用性，插件加载失败时模块仍在——Phase 3.5 在插件详情页显示 loadErrors | 待处理 |

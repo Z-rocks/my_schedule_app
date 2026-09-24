@@ -36,12 +36,18 @@ Future<void> main() async {
   final ThemeProvider themeProvider = ThemeProvider();
   await themeProvider.loadFromStorage();
 
+  // 插件：先读列表，再加载所有已启用插件的运行时（失败只降级，不影响启动）。
+  final PluginProvider pluginProvider = PluginProvider();
+  await pluginProvider.loadFromStorage();
+  await pluginProvider.loadAllEnabledPlugins();
+
   runApp(buildApp(
     courseProvider: courseProvider,
     moduleProvider: moduleProvider,
     semesterProvider: semesterProvider,
     settingsProvider: settingsProvider,
     themeProvider: themeProvider,
+    pluginProvider: pluginProvider,
   ));
 }
 
@@ -50,11 +56,12 @@ Future<void> main() async {
 /// 抽成函数是为了让 widget 测试能直接 `pumpWidget(buildApp())`，
 /// 验证的即是 `main()` 真正使用的这棵 Provider 树，而不是测试里另写一份。
 ///
-/// 四个可选参数由 `main()` 传入**已完成存储加载**的实例；
+/// 五个可选参数由 `main()` 传入**已完成存储加载**的实例；
 /// 不传时（测试、预览）内部自建空实例，此时不会访问 Hive。
 ///
 /// 生命周期：`CourseProvider` / `SemesterProvider` / `SettingsProvider` /
-/// `ThemeProvider` 走 `.value`，实例归调用方所有，不随 Provider 树销毁而 dispose。
+/// `ThemeProvider` / `PluginProvider` 走 `.value`，实例归调用方所有，
+/// 不随 Provider 树销毁而 dispose。
 /// `ModuleProvider` 由 `ChangeNotifierProxyProvider` 创建（该 Provider 没有
 /// `.value` 变体），因此注入的实例会被 Provider 树接管生命周期——
 /// 在 App 生命周期内不会销毁，所以实际没有差别；但**不要**把同一个
@@ -65,6 +72,7 @@ Widget buildApp({
   SemesterProvider? semesterProvider,
   SettingsProvider? settingsProvider,
   ThemeProvider? themeProvider,
+  PluginProvider? pluginProvider,
 }) {
   return MultiProvider(
     // Provider 顺序即依赖顺序：被依赖者必须排在依赖者之前。
@@ -79,9 +87,13 @@ Widget buildApp({
           create: (BuildContext context) => ThemeProvider(),
         ),
       // 2. 插件（无依赖，但被 ModuleProvider 依赖）
-      ChangeNotifierProvider<PluginProvider>(
-        create: (BuildContext context) => PluginProvider(),
-      ),
+      // Phase 3.3 起可由 main() 传入已加载完插件运行时的实例；不传时自建空实例。
+      if (pluginProvider != null)
+        ChangeNotifierProvider<PluginProvider>.value(value: pluginProvider)
+      else
+        ChangeNotifierProvider<PluginProvider>(
+          create: (BuildContext context) => PluginProvider(),
+        ),
       // 3. 模块（依赖 PluginProvider 的能力集合）
       ChangeNotifierProxyProvider<PluginProvider, ModuleProvider>(
         create: (BuildContext context) => moduleProvider ?? ModuleProvider(),

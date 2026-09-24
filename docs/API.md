@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-23（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架）
+- 最后更新：2026-09-23（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager）
 
 ---
 
@@ -586,19 +586,58 @@ UI 偏好设置（Phase 2.2b.1 新增）。目前只有"左右滑动切换周次
 
 ### `plugin_provider.dart` — PluginProvider（`ChangeNotifier`）
 
-已安装插件状态。**Phase 1 为空列表**，只提供接口。
+已安装插件状态。**Phase 3.3 起接线 `PluginRuntime`**：本类持有 `PluginManager`（组合关系），
+由它负责多插件的加载 / 卸载 / 能力汇总；本类负责状态通知与持久化。
+仍**不直接引用** ModuleProvider——能力集合由 Phase 1.4 的 `ChangeNotifierProxyProvider` 推给它。
 
-构造：`PluginProvider({List<PluginMeta>? plugins})`
+**持久化（Phase 3.3 新增）**：插件列表存 `plugins` Box，**一个插件 id 一个 key**，
+值为 `PluginMeta` 的 JSON（与 `courses` Box 的做法一致）。
+
+构造：`PluginProvider({List<PluginMeta>? plugins, PluginManager? manager})`
+（`manager` 可注入以便测试，沿用 `ThemeProvider({ThemeEngine?})` 的先例）
+
+**列表与查询**
 
 - `List<PluginMeta> get plugins` — 全部插件（含未启用），不可变视图
 - `List<PluginMeta> get enabledPlugins`
-- `Set<String> get allCapabilities` — 已启用插件的 `effectiveCapabilities` 并集（`capabilities` ∪ `modules` 能力），不可变集合
-- `int get enabledCount` / `int get updatableCount`
-- `PluginMeta? getById(String id)`
-- `void addPlugin(PluginMeta p)` — 同 id 则替换
-- `void removePlugin(String id)` — 内置插件（`isBuiltIn`）不可卸载
-- `void togglePlugin(String id, bool enabled)`
-- `void clear()`
+- `Set<String> get allCapabilities` — 已启用插件的 `effectiveCapabilities` 并集（`capabilities` ∪ `modules` 能力），不可变集合。**只看"启用"，不看"是否加载成功"**（Phase 1 起的行为，未改动）
+- `Set<String> get loadedCapabilities` — **已成功加载**（沙箱可用）插件的能力并集，转发给 `PluginManager.allLoadedCapabilities`
+- `Map<String, PluginHandle> get loadedHandles` — `id → handle`（含加载失败的降级 handle）
+- `int get loadedCount` / `int get enabledCount` / `int get updatableCount`
+- `Map<String, String> get loadErrors` — 加载失败原因（`id` → 原因），不可变视图
+- `String? loadErrorOf(String id)`
+- `PluginMeta? getById(String id)` / `PluginHandle? getHandle(String id)`
+- `bool get isLoaded` — 是否已尝试从存储载入过（区分"没有插件"与"尚未加载"）
+
+**运行时接线**
+
+- `Future<void> loadAllEnabledPlugins()` — App 启动时调用：遍历所有 `enabled` 插件逐个加载。**单个插件失败不影响其他插件**（每个单独 try-catch），失败原因记入 `loadErrors`；其 `enabled` 在存储里**保留 true**，用户重启后可重试
+- `Future<PluginHandle> loadPlugin(String id, {String? jsSource})` — 手动加载单个；`jsSource` 可绕过文件系统直接给源码（测试 / 内联插件用）。找不到 id 时返回降级 handle，不抛异常
+- `Future<void> unloadPlugin(String id)` — 手动卸载（只销毁运行时，**不改 `enabled`**）
+
+**启停（Phase 3.3 改造）**
+
+- `Future<void> togglePlugin(String id, bool enabled)` — 流程：改内存并**立即通知**（UI 不等异步）→ 落盘 `enabled` → 启用则 `_manager.load(meta)`、停用则 `_manager.unload(id)` → 再通知一次。**无论加载成功失败都落盘 `enabled`**。找不到 id 或同值时为**空操作**
+
+**增删**
+
+- `Future<void> addPlugin(PluginMeta p)` — 同 id 则替换，并落盘
+- `Future<void> removePlugin(String id)` — 内置插件（`isBuiltIn`）不可卸载；会一并销毁其运行时沙箱并删存储
+- `void clear()` — **仅内存**清空（测试 / 重置用）
+- `Future<void> clearAll()` — 清空内存 + 存储 + 销毁所有运行时
+- `dispose()` — 会 fire-and-forget 地 `_manager.disposeAll()` 释放所有沙箱
+
+> **签名变更**：`addPlugin` / `removePlugin` / `togglePlugin` 由 `void` 改为 `Future<void>`，
+> 以便调用方 `await` 落盘/加载完成。原签名在 `lib/` 里**没有调用方**（插件管理页仍是占位页），
+> 故无破坏性影响。
+
+> **`allCapabilities` vs `loadedCapabilities`**：前者按"已启用"算（Phase 1 起驱动
+> `ModuleProvider`），后者按"确实加载成功"算。**目前只有前者接到了 ModuleProvider**——
+> 若改用后者，加载失败的插件就不会让模块变可用，但那会改变模块可用性语义，
+> 属独立决策，留待后续阶段（见 PROGRESS 阻塞表）。
+
+**存储容错**：没存过 → 空列表；坏 JSON / 非对象 / 缺 `id` / 空串 → 跳过该条；
+存储未初始化（`StateError`）→ 按"没有插件"处理。`loadFromStorage` **会替换内存列表**（不是累加）。
 
 ---
 
@@ -1179,6 +1218,41 @@ JS 侧 `JSON.stringify` 出来、Dart 侧 `jsonDecode` 解析；**不使用 `con
 
 ---
 
+### `plugin_manager.dart` — PluginManager（Phase 3.3）
+
+多插件管理器：管理"当前已加载的插件运行时句柄"（加载 / 卸载 / 查询 / 能力汇总）。
+它把 3.2b.1 的 `PluginRuntime`（只能加载**单个**插件）包成多插件管理。
+
+**本类不继承 `ChangeNotifier`**（无状态服务）：只管资源生命周期，通知 UI 是 `PluginProvider` 的职责。
+
+类型别名：
+- `typedef PluginSource = ({String? path, String? jsSource})` — "从哪读插件的 JS"，二者给其一
+- `typedef PluginSourceResolver = PluginSource Function(PluginMeta meta)` — 把 meta 解析成来源
+
+构造：`PluginManager({PluginRuntime? runtime, PluginSourceResolver? sourceResolver})`
+- 都不传时自建 `PluginRuntime()` 并使用 [defaultSourceResolver]
+- 抽成可注入是为了：① 测试可绕过文件系统直接给 `jsSource`（否则必须往磁盘写 .js 文件）；② Phase 3.4 接入 `path_provider` 后只换解析器，本类不用改
+
+- `static PluginSource defaultSourceResolver(PluginMeta meta)` — 用 `PluginMeta.assetPath` 作为文件路径；`assetPath` 为空时两者给 `null`，由 `load` 降级为"没有可加载的本地文件"
+- `Map<String, PluginHandle> get loadedHandles` — `meta.id → handle`，**不可变视图**。**包含加载失败的降级 handle**（`isUsable == false`），这样调用方既能查到"尝试过"，也能读到失败原因
+- `int get loadedCount` — 已成功加载（沙箱可用）的数量
+- `int get handleCount` — 全部 handle 数（含降级）
+- `Future<PluginHandle> load(PluginMeta meta, {String? jsSource})` — 加载一个插件
+  - **已加载且可用** → 直接返回既有 handle（跳过，不重复建沙箱）
+  - 既有 handle 是**降级**的（上次失败）→ 先 `dispose` 再重试（降级不算"已加载"）
+  - `jsSource` 优先于 `sourceResolver`
+  - 没有可加载来源时**不白起沙箱**，直接降级并给出明确原因（含"待 Phase 3.4 接入 path_provider"）
+  - 插件自报 `id` 与安装 `id` 不一致时 `debugPrint` 提示，**仍按安装 id 管理**
+  - **不抛异常**：任何失败都返回降级 handle
+- `Future<void> unload(String pluginId)` — 销毁沙箱并移出映射；找不到该 id 为空操作
+- `PluginHandle? getHandle(String pluginId)` — 含降级 handle
+- `bool isLoaded(String pluginId)` — 是否已加载**且可用**
+- `Set<String> get allLoadedCapabilities` — 已加载（**沙箱可用**）插件的能力并集，已去重。同时取两处来源：`handle.manifest.capabilities` 与 `meta.effectiveCapabilities`（`capabilities` ∪ 各 `modules` 的 `capabilityId`），避免漏掉任一种声明方式。**只统计可用插件**——加载失败的插件不该让模块变成可用
+- `Map<String, String> get loadErrors` — 加载失败原因（`id` → 原因），不可变视图
+- `Future<void> disposeAll()` — 卸载全部并销毁内部运行时。幂等；销毁后再 `load` 返回降级 handle（`已销毁`）
+
+---
+
 ### `plugin_demo.dart` — PluginDemo（**Phase 3.1 临时验证文件**）
 
 flutter_js 集成验证类。**仅用于确认 QuickJS 能在本项目里跑起来**，Phase 3.2 起被正式的 `plugin_runtime.dart` 替代。全部方法为 `static`，纯静态类（`PluginDemo._()` 禁止实例化）。
@@ -1204,9 +1278,10 @@ flutter_js 集成验证类。**仅用于确认 QuickJS 能在本项目里跑起�
 
 ### `main.dart` — 入口
 
-- `Future<void> main()` — `WidgetsFlutterBinding.ensureInitialized()` → `await StorageService.init()` → 依次建 `CourseProvider` / `ModuleProvider` / `SemesterProvider` / `SettingsProvider` / `ThemeProvider` 并各自 `await loadFromStorage()` → `runApp(buildApp(...))`。**先读数据再起 UI**，避免首帧闪一下默认值（如导航栏先显示默认 4 个模块再跳成用户配置）
-- `Widget buildApp({CourseProvider? courseProvider, ModuleProvider? moduleProvider, SemesterProvider? semesterProvider, SettingsProvider? settingsProvider, ThemeProvider? themeProvider})` — 构建完整 App（Provider 树 + `MyApp`）。抽成函数是为了让 widget 测试直接 `pumpWidget(buildApp())`，验证的就是 `main()` 真正使用的那棵树
-  - `courseProvider` / `semesterProvider` / `settingsProvider` / `themeProvider` 传入时用 `ChangeNotifierProvider.value`（实例归调用方所有，不随树销毁而 dispose）；不传时内部 `create` 空实例（测试 / 预览用，不访问 Hive）
+- `Future<void> main()` — `WidgetsFlutterBinding.ensureInitialized()` → `await StorageService.init()` → 依次建 `CourseProvider` / `ModuleProvider` / `SemesterProvider` / `SettingsProvider` / `ThemeProvider` 并各自 `await loadFromStorage()` → **Phase 3.3 起再建 `PluginProvider`，`await loadFromStorage()` + `await loadAllEnabledPlugins()`** → `runApp(buildApp(...))`。**先读数据再起 UI**，避免首帧闪一下默认值（如导航栏先显示默认 4 个模块再跳成用户配置）
+  - 插件运行时加载失败只降级、不影响启动（`loadAllEnabledPlugins` 内部逐个 try-catch）
+- `Widget buildApp({CourseProvider? courseProvider, ModuleProvider? moduleProvider, SemesterProvider? semesterProvider, SettingsProvider? settingsProvider, ThemeProvider? themeProvider, PluginProvider? pluginProvider})` — 构建完整 App（Provider 树 + `MyApp`）。抽成函数是为了让 widget 测试直接 `pumpWidget(buildApp())`，验证的就是 `main()` 真正使用的那棵树
+  - `courseProvider` / `semesterProvider` / `settingsProvider` / `themeProvider` / `pluginProvider` 传入时用 `ChangeNotifierProvider.value`（实例归调用方所有，不随树销毁而 dispose）；不传时内部 `create` 空实例（测试 / 预览用，不访问 Hive）
   - `moduleProvider` 由 `ChangeNotifierProxyProvider` 创建（该 Provider 无 `.value` 变体），注入的实例会被树接管生命周期；**不要**把同一个 `ModuleProvider` 实例同时传给两棵树（先卸载的那棵会 dispose 它）
 
 Provider 顺序（即依赖顺序，被依赖者必须在前）：
