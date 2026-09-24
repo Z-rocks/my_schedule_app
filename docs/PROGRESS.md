@@ -12,11 +12,13 @@
 
 > 给新会话 AI 用。每次阶段切换时更新。
 
-- **最新完成**：Phase 3.4（插件文件持久化 PluginStorageService + path_provider）
+- **最新完成**：Phase 3.5.1（修正：示例插件无法卸载）
 - **代码状态**：dart analyze 全绿；真机验收通过（`getprop ro.product.model` = `2211133C`）
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
-- **下一步**：Phase 3.5（`ctx.http` / `ctx.storage` 注入；并处理 3.3 遗留的 ModuleProvider 用 allCapabilities 问题）
-- **最近 commit**：feat(plugin): 新增多插件管理 PluginManager 并接线 PluginProvider
+- **Phase 3 全部完成**：插件运行时（沙箱 → 加载 → 多插件管理 → 文件持久化 → 管理 UI）
+- **下一步**：Phase 4（第一个真实插件：WebView 登录 + Cookie 提取 + NCST 教务插件）；
+  另外 3.5 遗留：`ctx.http` / `ctx.storage` 注入、ModuleProvider 改用 loadedCapabilities
+- **最近 commit**：feat(plugin): 插件文件持久化到应用私有目录
 - **关键约束**：
   - testWidgets 不能触发 Hive 写（会卡死）
   - schema 已冻结（改字段要写迁移）
@@ -31,6 +33,12 @@
   - **加载失败原因不落盘**（运行时瞬时状态），只存 `PluginProvider.loadErrors` 内存
   - **插件 id 只允许字母/数字/下划线/横线**（防 `../` 路径穿越），点号也禁止
   - **不把安装绝对路径存进 meta**（iOS 容器 UUID 每次更新会变），一律按 id 现算
+  - **UI 颜色一律从 AppTheme 读**（3.5 新增 `success` / `warning` 两个状态令牌，禁止硬编码绿/黄）
+  - **"来源"与"策略"必须分开**：`source == 'builtin'` 只表示随 App 打包，**不代表不可卸载**；
+    能否卸载只看 `PluginMeta.isRemovable`（3.5.1 修正了这个过度推断）
+  - **widget 测试里真实文件 I/O 不会推进**（fake-async），相关断言须放 `tester.runAsync`；
+    且**不要在 `runAsync` 里用 `pumpAndSettle`**（会永不返回）
+  - **禁止用 PowerShell 的 Get-Content/Set-Content 做文本往返**（会按控制台代码页解码，中文变乱码，见阻塞表）
   - **docs/PROGRESS.md 曾因编码问题损坏**，见阻塞表（编辑该文件时务必确认保存为 UTF-8）
 
 ---
@@ -507,7 +515,7 @@
 
 ---
 
-## Phase 3：插件运行时（进行中）
+## Phase 3：插件运行时 ✅（收官）
 
 > **Phase 3.1**（flutter_js 集成 + 最小 demo）：`dart analyze lib` 通过，**只加了 1 个依赖**。
 > 本次仅做**集成验证**，不做沙箱、不做 PluginRuntime、不做插件文件加载（留给 3.2+）。
@@ -854,14 +862,156 @@
 > **测试注意**：JS 相关测试需 `quickjs_c_bridge.dll`（见 `docs/ENV.md`），已拷到项目根目录、跑完已删。
 > 文件存储测试用 `PluginStorageService.setRootDirForTesting(临时目录)` 绕过 path_provider 平台通道。
 
+> **Phase 3.5**（插件管理 UI 接入）—— **Phase 3 收官**：`dart analyze lib` 通过，**未引入新依赖**。
+>
+> 改动：
+> - 重写 `lib/pages/settings/plugin_manage_page.dart`：空态占位 → 真实列表
+>   - 卡片：能力图标 + 插件名 + `版本 x.x.x · 作者` + 能力标签 + 启停 `Switch` + 状态徽章
+>   - 状态徽章四态抽成**公开枚举 + 纯函数**（`PluginUiStatus` / `pluginUiStatusOf` /
+>     `pluginUiStatusColor` / `pluginUiStatusLabel`），便于单独测试
+>   - `+` 改为 `PopupMenuButton`：从文件导入（占位）/ 安装示例插件
+> - 新建 `lib/pages/settings/plugin_detail_page.dart`：基本信息 / 运行时 / 操作三个分区卡片
+> - 新建 `assets/plugins/example.js` + `pubspec.yaml` 声明 `assets/plugins/`
+> - `PluginStorageService` 新增 `installFromAssets`（`rootBundle` 读 → 落盘）
+> - `PluginProvider` 新增 `installExamplePluginForDemo()` + 两个常量
+> - **`AppTheme` 新增 `success` / `warning` 两个状态色令牌（28 → 30 字段）**，见下
+> - `settings_page.dart` 的入口**无需改动**（已指向 `PluginManagePage`）；`main.dart` 也无需改动
+>   （3.3 已接好 `loadAllEnabledPlugins`）
+>
+> **为什么动 AppTheme（超出任务清单，但必要）**：任务要求徽章"加载成功绿色、已启用未加载黄色"，
+> 而原主题**没有绿/黄令牌**；CONTEXT 3.2 又明确**禁止 UI 硬编码颜色**。
+> 两条约束只有一条出路：把状态色补进主题。故新增
+> `success = #43A047`（绿）、`warning = #F9A825`（黄），并同步
+> `default_theme.dart` / `fromJson` / `toJson` / `merge` / `toString`。
+> `AppTheme` 是启动时构造、**不落盘**，故无迁移成本；皮肤仍可覆盖这两个令牌。
+>
+> **状态徽章四态判定**（`pluginUiStatusOf`）优先级：**失败 > 已加载 > 已启用未加载 > 已停用**。
+> 失败优先于成功，因为"失败原因"对用户最有价值；tooltip / 无障碍文案会带上 `loadErrors` 的原因。
+> 徽章 Key 为 `ValueKey('plugin-status-<id>')`，便于测试定位。
+>
+> **示例插件的生命周期**：`assets/plugins/example.js` 与 `PluginProvider.installExamplePluginForDemo()`
+> 都是**临时**的——只为让插件管理页在没有任何真实插件时也能看到"已安装 → 已启用 → 沙箱就绪"的完整效果。
+> **Phase 4 做出真实教务插件后一并删除**（已在该文件、方法注释与 API.md 三处标注）。
+>
+> **验证**：临时 `flutter test` 脚本 **22 组全部通过**，脚本已删除。覆盖：
+> 四态判定优先级与四态颜色（含"成功色确实偏绿、警告色确实偏黄橙"的通道断言）、状态文案、
+> 空列表显示 EmptyState、有插件显示卡片（名称/`版本 2.1.0 · zys`/能力中文化/两个 Switch）、
+> **空列表 → 有插件自动切换**（watch 生效）、开关切换调用 `togglePlugin` 且 enabled 翻转、
+> 加载失败时徽章为失败态、点卡片进详情页、`+` 弹出两个菜单项、选"从文件导入"弹 SnackBar、
+> 详情页显示元信息（ID/版本/作者/描述/`exam · homework`/三个分区标题/三个占位操作）、
+> 插件不存在时的兜底文案、未安装时安装路径显示"未安装"、内置插件不显示卸载按钮、
+> **卸载确认框取消则不删除**、**确认后移除并退回列表（回到空态）**、详情页开关也能切换、
+> `installExamplePluginForDemo` 后 `plugins` 长度 +1 且已启用且文件已落盘且 `entries=[fetchExams]`、
+> 重复安装不产生第二条记录、
+> **真实加载后徽章渲染为 `theme.success`（绿）**（用 `runAsync` 跑真实安装 + 真实 JS 沙箱，
+> 再断言徽章 `Container` 的实际 `BoxDecoration.color`）。
+>
+> **真机验证**（Redmi K60；`adb shell getprop ro.product.model` 原始输出 = `2211133C`，Android 16 / arm64-v8a）：
+> 为做**可视化**验证，临时把 `app.dart` 的 `home` 改成 `PluginManagePage`、
+> 并在 `main.dart` 里装一次示例插件（两处**已用 `git checkout HEAD --` 还原，git diff 为空**）。
+> 日志：
+> ```
+> [PluginRuntime] 插件加载成功：example-plugin，入口函数 [fetchExams]
+> [PluginProvider] 示例插件已安装并启用：example-plugin
+> [UI-VERIFY] 安装示例插件 ok=true plugins=1
+> [UI-VERIFY] enabled=true capabilities=[exam]
+> [UI-VERIFY] handle.isUsable=true entries=[fetchExams] reason=null
+> [UI-VERIFY] loadErrors={} loadedCapabilities=[exam]
+> [UI-VERIFY] 徽章状态=loaded
+> ```
+> 另用 `adb shell screencap` 抓屏后**逐像素扫描**（`System.Drawing`）独立佐证徽章真的画在屏幕上：
+> **成功绿 `#43A047`（容差 12）命中 558 像素，包围盒 (745,345)-(771,371) = 27×27 像素**
+> ——正是 10 逻辑像素圆点在 3x 密度下的尺寸与位置（卡片标题行右侧）；
+> **失败红 `#E53935` 命中 0 像素**（与"加载成功"一致）。
+> 截图留在 `build/ui_verify.png` 供人工查看（在 `build/` 下，`flutter clean` 会清掉）。
+>
+> **测试注意（新增两条）**：
+> ① `_InstallPathRow` 的 `getPluginJsPath` 是**真实文件 I/O**，`testWidgets` 的 fake-async
+> **不会推进它**（会永远停在"读取中…"），相关断言必须放 `tester.runAsync(...)`；
+> 真实安装 + 真实沙箱同理。
+> ② widget 测试**不初始化 Hive**，让落盘走 `StateError` 分支被 try-catch 兜住，
+> 从而避开"fake-async 下 Hive 写永不完成"的坑。
+
+> **Phase 3.5.1**（修正：示例插件无法卸载）：`dart analyze lib` 通过，**未加新依赖**。
+>
+> **问题**：真机验收发现示例插件卸不掉。根因是 **Phase 3.5 把"来源"当成了"策略"**：
+> 示例插件从 assets 安装，`source` 标为 `'builtin'`，而 `removePlugin` 与详情页都用
+> `isBuiltIn`（即 `source == 'builtin'`）判定"不可卸载" → 用户在详情页看不到卸载入口。
+>
+> **决策：方案 A —— 新增独立的策略字段 `PluginMeta.isRemovable`（默认 `true`）。** 理由：
+> 1. 这是**建模错误**，不是"多了一个判断"：`source`（来源）回答"插件从哪来"，
+>    `isRemovable`（策略）回答"能不能卸"。示例插件来源**确实是** builtin（随 App 打包），
+>    所以 `source` 并没有标错——错的是从它反推卸载策略。
+> 2. 你的要求里明确保留了保护："**只有**硬编码的系统级插件才该禁止卸载"。
+>    方案 B（去掉判定、全部可卸）会把这个保护一起删掉，将来还得加回来。
+> 3. 向后兼容：缺键回落 `true`，所以**设备上 3.5 装的那个示例插件不用重装**就能卸了
+>    （真机已验证，见下）。
+>
+> 改动：
+> - `lib/models/plugin_meta.dart`：新增 `isRemovable`（字段 / 构造 / `fromJson` / `toJson` /
+>   `copyWith` / `toString`）；`_asBool` 增加 `fallback` 参数（默认 `false`，
+>   `isRemovable` 传 `true`）；**收窄 `isBuiltIn` 的文档语义**为"来源"
+> - `lib/pages/settings/plugin_detail_page.dart`：卸载按钮显示条件
+>   `!meta.isBuiltIn` → **`meta.isRemovable`**；确认框文案改为
+>   "确定要卸载插件「X」吗？这会删除插件文件与本地数据。"
+> - `lib/providers/plugin_provider.dart`：`removePlugin` 保护条件改为 `!isRemovable`；
+>   示例插件构造时**显式**写 `isRemovable: true`
+> - `docs/CONTEXT.md`：4.2.1 补充"**纯新增**字段无需迁移"的例外说明，版本 **v1.2 → v1.3**
+>
+> **顺带修掉一个真 bug（测试发现的）**：`removePlugin` 此前**只删元数据，不删磁盘文件**，
+> 而确认框早已声称"插件文件与运行时都会被移除"——**文案与实现不符**。
+> 现已补上 `PluginStorageService.uninstallPlugin(id)` 删除 `<id>.js` / `<id>.manifest.json`
+> （失败只记日志不抛）。同时把 `notifyListeners()` 提到异步收尾**之前**，
+> 让 UI 立刻反映列表变化（与 `togglePlugin` 同一思路）。
+>
+> **schema 兼容**：`isRemovable` 是**纯新增**键（不改名、不改已有字段语义、缺键有默认值），
+> 按 CONTEXT 4.2.1 的新补充**不需要迁移**。真机上用 3.5 落盘的旧数据验证：
+> `source=builtin isBuiltIn=true isRemovable=true` —— 旧数据读出来就是可卸载的。
+>
+> **验证**：临时 `flutter test` 脚本 **15 组全部通过**，脚本已删除。覆盖：
+> `isRemovable` 默认 `true`、**旧数据缺键回落 `true`**（且 `isBuiltIn` 仍为 `true`）、
+> 显式 `false` 能读回、宽松写法与坏值（`false`/`"false"`/`"0"`/`0` → 不可卸载；
+> `'maybe'`/数组/`null` → 回落 `true`）、`toJson`/`fromJson` 往返、
+> `copyWith` 保留与可改、`toString` 含该字段、
+> 详情页 `isRemovable==true` 显示卸载按钮 / `false` 不显示 /
+> **来源 builtin 但 `isRemovable==true` 仍显示**（本次修正核心）、确认框新文案、
+> `removePlugin` 对 `false` 不做任何事 / 对 `true` 正常移除 /
+> **builtin 但可卸载的能移除**、
+> 示例插件安装后 `isRemovable==true` 且卸载后**文件真的被删除**（`listInstalled` 为空）、
+> **完整 UI 链路**：详情页点卸载 → 弹确认框 → 点"卸载" → 插件从列表消失且磁盘文件被删、
+> 真实 Hive 往返（`isRemovable` 落盘读回；手写不含该键的旧 JSON 读回为 `true`）。
+>
+> **真机验证（✅ 全部通过）**：Redmi K60（`adb shell getprop ro.product.model` 原始输出 =
+> `2211133C`，Android 16 / arm64-v8a）。设备上正好留着 **3.5 装的那个示例插件**
+> （Hive 里**没有** `isRemovable` 键、磁盘上有 `example-plugin.js` 837 字节），
+> 是天然的向后兼容样本。
+>
+> 1. **旧数据兼容**：`[REMOVABLE-VERIFY] id=example-plugin source=builtin
+>    isBuiltIn=true isRemovable=true enabled=true` —— 旧数据读出来可卸载 ✅
+> 2. **卸载按钮存在且可点**：把 `home` 临时设为详情页，点 AppBar 右上角 (1008,174) 后
+>    **整屏平均亮度 248.0 → 134.7**（对话框 scrim 遮罩），且截图**新增 5 个偏蓝文字簇**
+>    位于 y≈1395 的 x 580-653 与 x 778-852（即"取消"/"卸载"两个文字按钮）✅
+> 3. **点卸载 → 确认 → 插件消失**：点 (815,1395)（右侧那个 = 卸载）后
+>    `adb shell run-as ... ls app_flutter/plugins` **目录变空**，`example-plugin.js` 已删除 ✅
+> 4. 卸载后 **app 进程仍存活**（pid 7010），logcat 无 FATAL/异常 ✅
+>
+> 说明：验证时把 `home` 临时设为详情页（该临时改动**已用 `git checkout HEAD --` 还原，
+> `git diff` 为空**），因此确认卸载后 `Navigator.pop()` 弹掉了最后一个路由、
+> 屏幕变黑（亮度 0.4）——这是临时脚手架的副作用，真实路径下会退回插件列表。
+> 另外我当前模型**不能读图**，所以截图验证是靠像素分析（亮度差 / 偏蓝文字簇定位）完成的，
+> 反而比目视更客观。
+
 - [x] flutter_js 集成（Phase 3.1，仅验证可用性）
 - [x] JS 运行时沙箱与兜底（Phase 3.2a，`lib/runtime/js_sandbox.dart`）
 - [x] 插件文件加载 + PluginRuntime 骨架（Phase 3.2b.1：`plugin_manifest.dart` /
       `plugin_handle.dart` / `plugin_runtime.dart`）
 - [x] 多插件管理（Phase 3.3：`plugin_manager.dart` + `PluginProvider` 接线 + 持久化）
 - [x] 插件文件持久化（Phase 3.4：`plugin_storage_service.dart` + `path_provider`）
-- [ ] `lib/runtime/plugin_context.dart`（`ctx.http` / `ctx.storage` 注入）
-- [ ] 插件管理 UI 接入真实数据
+- [x] 插件管理 UI 接入真实数据（Phase 3.5：`plugin_manage_page.dart` 重写 +
+      `plugin_detail_page.dart` + 示例插件 + `AppTheme` 状态色）
+- [x] 修正示例插件无法卸载（Phase 3.5.1：`PluginMeta.isRemovable` +
+      真正删除插件文件）
+- [ ] `lib/runtime/plugin_context.dart`（`ctx.http` / `ctx.storage` 注入）—— 留给 Phase 4/3.5 后续
 
 ---
 
@@ -967,7 +1117,11 @@
 | 2026-09-23 | 3.3 给 `PluginProvider` 加了 `plugins` Box 持久化（一 id 一 key，值为 `PluginMeta` JSON）。**该存储格式此后即契约**，改动需写迁移 | 已决定 |
 | 2026-09-23 | 3.3 未做插件管理 UI 接线（`PluginManagePage` 仍是占位页），`togglePlugin` 等新方法暂无 UI 调用方 | 待处理 |
 | 2026-09-23 | 3.4 的真机验证**已完成**：Redmi K60（`2211133C`）上 `installPlugin` → 默认解析 → 沙箱执行 → 路径安全 → 卸载全部通过，实际目录 `/data/user/0/com.example.my_schedule_app/app_flutter/plugins` 已用 adb 独立确认 | ✅ 已完成 |
-| 2026-09-23 | 3.4 未做"插件安装 UI / 安装流程"：`PluginStorageService.installPlugin` 目前只有测试与验证代码在调，用户还不能导入插件文件（需要文件选择器，属新依赖） | 待处理 |
+| 2026-09-23 | 3.4 未做"插件安装 UI / 安装流程"：用户还不能从任意文件导入插件（需文件选择器，属新依赖）。3.5 把入口做成 `+` 菜单并给了 SnackBar 占位 + 内置示例插件，**真实文件导入仍是 Phase 6+** | 待处理 |
+| 2026-09-23 | **禁止用 PowerShell 的 `Get-Content`/`Set-Content` 做文本往返**：本机控制台代码页非 UTF-8，会按 GBK 解码后再以 UTF-8 写出，**中文全部变乱码且行结构被破坏**。3.5 期间我用它改一行测试代码，整个测试文件的中文被毁（与 `f2cad97` 那次 PROGRESS.md 损坏同源）。**必须用文件编辑工具，或 `[System.IO.File]::ReadAllText/WriteAllText` 显式指定 UTF-8** | 已决定 |
+| 2026-09-23 | `assets/plugins/example.js` 与 `PluginProvider.installExamplePluginForDemo()` 是**临时**验证代码，**Phase 4 完成后必须删除**（已在该文件、方法注释、API.md 三处标注） | 待处理 |
+| 2026-09-23 | 3.5.1 修正了"示例插件无法卸载"：根因是把 `source == 'builtin'`（来源）当成卸载策略。现由 `PluginMeta.isRemovable` 独立决定；**目前没有任何插件设为 `false`**（留给将来的硬编码系统级插件） | ✅ 已完成 |
+| 2026-09-23 | 3.5.1 顺带修掉：`removePlugin` 此前**不删磁盘插件文件**，与确认框文案不符。现已真正删除 `<id>.js` / `<id>.manifest.json` | ✅ 已完成 |
 | 2026-09-23 | `PluginStorageService` 的目录布局（`<appDocuments>/plugins/<id>.js` + `<id>.manifest.json`）此后即**契约**：已装插件的文件名/后缀改动需写迁移（重命名旧文件） | 已决定 |
 | 2026-09-23 | PluginProvider 用 allCapabilities（enabled）驱动模块可用性，插件加载失败时模块仍在——Phase 3.5 在插件详情页显示 loadErrors | 待处理 |
 | 2026-09-24 | 插件安装 UI（文件选择器）暂不做，Phase 4 从 assets 内置插件加载 | 已决定 |

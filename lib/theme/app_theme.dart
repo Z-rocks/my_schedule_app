@@ -45,6 +45,17 @@ class AppTheme {
   /// 作业强调色。
   final Color homeworkHighlight;
 
+  /// 成功 / 正常状态色（Phase 3.5 新增）。
+  ///
+  /// 用于状态徽章、加载成功提示等"一切正常"的语义。
+  /// 加这个令牌是因为 CONTEXT 3.2 禁止 UI 硬编码颜色，而原主题没有绿色。
+  final Color success;
+
+  /// 警告状态色（Phase 3.5 新增）。
+  ///
+  /// 用于"已启用但尚未就绪""需要用户注意但不算错误"的语义。
+  final Color warning;
+
   // —— 字体 ——
 
   /// 字体族名，空字符串表示使用系统默认字体。
@@ -133,6 +144,8 @@ class AppTheme {
     required this.courseCardColors,
     required this.examHighlight,
     required this.homeworkHighlight,
+    required this.success,
+    required this.warning,
     required this.fontFamily,
     required this.titleSize,
     required this.bodySize,
@@ -255,6 +268,8 @@ class AppTheme {
           colors('courseCardColors', base.courseCardColors),
       examHighlight: color('examHighlight', base.examHighlight),
       homeworkHighlight: color('homeworkHighlight', base.homeworkHighlight),
+      success: color('success', base.success),
+      warning: color('warning', base.warning),
       fontFamily: text('fontFamily', base.fontFamily),
       titleSize: number('titleSize', base.titleSize),
       bodySize: number('bodySize', base.bodySize),
@@ -298,6 +313,8 @@ class AppTheme {
           courseCardColors.map(_colorToHex).toList(growable: false),
       'examHighlight': _colorToHex(examHighlight),
       'homeworkHighlight': _colorToHex(homeworkHighlight),
+      'success': _colorToHex(success),
+      'warning': _colorToHex(warning),
       'fontFamily': fontFamily,
       'titleSize': titleSize,
       'bodySize': bodySize,
@@ -344,6 +361,8 @@ class AppTheme {
       homeworkHighlight: o.contains('homeworkHighlight')
           ? other.homeworkHighlight
           : homeworkHighlight,
+      success: o.contains('success') ? other.success : success,
+      warning: o.contains('warning') ? other.warning : warning,
       fontFamily: o.contains('fontFamily') ? other.fontFamily : fontFamily,
       titleSize: o.contains('titleSize') ? other.titleSize : titleSize,
       bodySize: o.contains('bodySize') ? other.bodySize : bodySize,
@@ -394,7 +413,8 @@ class AppTheme {
       'onPrimary: $onPrimary, onBackground: $onBackground, '
       'courseCardColors: ${courseCardColors.length} colors, '
       'examHighlight: $examHighlight, '
-      'homeworkHighlight: $homeworkHighlight, fontFamily: $fontFamily, '
+      'homeworkHighlight: $homeworkHighlight, '
+      'success: $success, warning: $warning, fontFamily: $fontFamily, '
       'titleSize: $titleSize, bodySize: $bodySize, '
       'captionSize: $captionSize, fontWeightTitle: $fontWeightTitle, '
       'cardRadius: $cardRadius, buttonRadius: $buttonRadius, '

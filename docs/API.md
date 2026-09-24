@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-23（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService）
+- 最后更新：2026-09-23（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService；3.5 插件管理 UI 接入；3.5.1 插件可卸载性 isRemovable）
 
 ---
 
@@ -295,16 +295,18 @@
 | `enabled` | `bool` | 是否启用 |
 | `installedAt` | `DateTime` | 安装时间（`required`） |
 | `lastSyncAt` | `DateTime?` | 最近同步时间 |
+| `isRemovable` | `bool` | **是否允许用户卸载（Phase 3.5.1 新增，默认 `true`）**。这是**策略**，与 `source`（来源）是两件事：从 assets 安装的示例插件来源确实是 `"builtin"`，但**应当可以卸载**；只有**硬编码的系统级插件**才设为 `false`。缺键回落 `true`（向后兼容，**无需迁移**） |
 
-构造：`const PluginMeta({required id, required name, String version = '0.0.0', String author = '', String description = '', String school = '', List<String> capabilities = const [], List<ModuleInfo> modules = const [], String entryFile = '', String assetPath = '', String source = 'local', String downloadUrl = '', bool hasUpdate = false, String latestVersion = '', bool enabled = false, required DateTime installedAt, DateTime? lastSyncAt})`
+构造：`const PluginMeta({required id, required name, String version = '0.0.0', String author = '', String description = '', String school = '', List<String> capabilities = const [], List<ModuleInfo> modules = const [], String entryFile = '', String assetPath = '', String source = 'local', String downloadUrl = '', bool hasUpdate = false, String latestVersion = '', bool enabled = false, required DateTime installedAt, DateTime? lastSyncAt, bool isRemovable = true})`
 
 方法：
 - `bool get isBuiltIn` / `bool get isFromWorkshop` / `bool get hasSynced` / `bool get hasModules`
+  - **`isBuiltIn` 是"来源"不是"能否卸载"**（`source == 'builtin'`）。判断卸载请看 `isRemovable`
 - `Set<String> get effectiveCapabilities` — `capabilities` ∪ 各 `modules` 的 `capabilityId`（两种声明方式都支持，忽略空串）
 - `bool get hasCapabilities` — `effectiveCapabilities.isNotEmpty`
-- `factory PluginMeta.fromJson(Map<String, dynamic> json)` — `modules` 兼容 `ModuleInfo` Map 与纯字符串能力 ID；`capabilities` 忽略 `null` 与空串
+- `factory PluginMeta.fromJson(Map<String, dynamic> json)` — `modules` 兼容 `ModuleInfo` Map 与纯字符串能力 ID；`capabilities` 忽略 `null` 与空串；`isRemovable` 缺键或值无法识别时回落 `true`
 - `Map<String, dynamic> toJson()`
-- `PluginMeta copyWith({..., bool clearLastSyncAt})`
+- `PluginMeta copyWith({..., bool clearLastSyncAt, bool? isRemovable})`
 
 ---
 
@@ -346,7 +348,7 @@
 
 ### `app_theme.dart` — AppTheme
 
-App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `AppThemeExtension.of(context)` 读取，禁止硬编码。
+App 的全部视觉令牌集合，不可变（**30 个字段**，Phase 3.5 由 28 增至 30：新增 `success` / `warning`）。UI 必须经 `AppThemeExtension.of(context)` 读取，禁止硬编码。
 
 **颜色**
 
@@ -362,6 +364,8 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 | `courseCardColors` | `List<Color>` | 8 色（`#E3F2FD`/`#FCE4EC`/`#E8F5E9`/`#FFF3E0`/`#F3E5F5`/`#E0F7FA`/`#FFF9C4`/`#FFEBEE`） | 课程卡片配色池 |
 | `examHighlight` | `Color` | `#E53935` | 考试强调色 |
 | `homeworkHighlight` | `Color` | `#FB8C00` | 作业强调色 |
+| `success` | `Color` | `#43A047` | **成功 / 正常状态色（Phase 3.5 新增）**。用于状态徽章等"一切正常"语义；加它是因为 CONTEXT 3.2 禁止硬编码颜色，而原主题没有绿色 |
+| `warning` | `Color` | `#F9A825` | **警告状态色（Phase 3.5 新增）**。用于"已启用但尚未就绪"等语义 |
 
 **字体 / 形状 / 间距 / 阴影 / 布局**
 
@@ -558,6 +562,7 @@ Android 上 `<appDocuments>` 是 `/data/user/0/<package>/app_flutter`，
 - `static Future<String?> getPluginJsPath(String pluginId)` — JS 文件绝对路径；**未安装返回 `null`**
 - `static Future<String?> getPluginManifestPath(String pluginId)` — manifest 绝对路径；不存在返回 `null`
 - `static Future<void> clearAll()` — 清除目录内全部文件（测试用），目录本身保留
+- `static Future<void> installFromAssets({required String pluginId, required String assetPath})` — **Phase 3.5 新增**：从 **assets** 安装（用于随 App 打包的内置 / 示例插件）。用 `rootBundle.loadString(assetPath)` 读出内容后走同一条 `installPlugin` 落盘路径——因为**运行时只能从文件系统加载**（`defaultSourceResolver` 取的是 `<id>.js` 文件路径），而 `rootBundle` 拿不到文件路径。asset 不存在 / 内容为空时记日志并抛 `FlutterError`（不静默吞掉，否则用户会以为"装了但没效果"）
 - `static void setRootDirForTesting(String? rootDir)`（`@visibleForTesting`）— 把根目录指向临时路径并清缓存，**测试免去 `path_provider` 平台通道**（与 `StorageService.init({String? path})` 同思路）
 
 > **为什么不把安装路径存进 `PluginMeta`**：路径是 `pluginId` 的**纯函数**，存下来既冗余又危险——
@@ -668,10 +673,23 @@ UI 偏好设置（Phase 2.2b.1 新增）。目前只有"左右滑动切换周次
 **增删**
 
 - `Future<void> addPlugin(PluginMeta p)` — 同 id 则替换，并落盘
-- `Future<void> removePlugin(String id)` — 内置插件（`isBuiltIn`）不可卸载；会一并销毁其运行时沙箱并删存储
+- `Future<void> removePlugin(String id)` — **销毁运行时 + 删除磁盘插件文件 + 从列表与存储移除**。
+  `isRemovable == false` 的插件**不可卸载**（空操作，留给硬编码的系统级插件）——
+  注意这与"来源是 `builtin`"**不是一回事**：从 assets 安装的示例插件来源也是 `builtin`，但它可以卸载。
+  **Phase 3.5.1 起会真正删除 `<id>.js` / `<id>.manifest.json`**（此前只删元数据，文件会留在磁盘上）；
+  删文件失败只记日志、不抛（元数据已移除，遗留文件下次安装会被覆盖）。
+  列表变更后**先 `notifyListeners`**，再做异步收尾（沙箱销毁 / 删文件 / 落盘），保证 UI 立刻反映
 - `void clear()` — **仅内存**清空（测试 / 重置用）
 - `Future<void> clearAll()` — 清空内存 + 存储 + 销毁所有运行时
 - `dispose()` — 会 fire-and-forget 地 `_manager.disposeAll()` 释放所有沙箱
+
+**示例插件（Phase 3.5 临时功能，Phase 4 完成后删除）**
+
+- 常量 `kExamplePluginId = 'example-plugin'`、`kExamplePluginAssetPath = 'assets/plugins/example.js'`
+- `Future<bool> installExamplePluginForDemo()` — 从 assets 读 `example.js` → `installFromAssets` 落盘 →
+  `addPlugin`（先以 `enabled: false` 落盘）→ `togglePlugin(id, true)` 启用（复用同一条启停链路，
+  避免在这里重写"落盘 + 加载运行时"）。**任何一步失败都不抛异常**，只 `debugPrint` 并返回 `false`，
+  由 UI 弹 SnackBar。重复调用安全（同 id 替换 + 覆盖文件）
 
 > **签名变更**：`addPlugin` / `removePlugin` / `togglePlugin` 由 `void` 改为 `Future<void>`，
 > 以便调用方 `await` 落盘/加载完成。原签名在 `lib/` 里**没有调用方**（插件管理页仍是占位页），
@@ -1004,9 +1022,75 @@ Body 为 `ListView`，分 6 组，每组 = 小标题 + 一张 `Card`（`color: t
     - 其余 → `Switch(value: module.enabled, onChanged: toggle)`
 - **上限处理**（见下方说明）：先应用再校验，必要时回滚
 
-### `settings/plugin_manage_page.dart` — PluginManagePage
+### `settings/plugin_manage_page.dart` — PluginManagePage（Phase 3.5 接入真实数据）
 
-`const PluginManagePage({super.key})` — AppBar"插件管理" + 右侧 `+` → `SnackBar('安装插件（待实现）')`；Body `EmptyState(Icons.extension, '还没有安装插件', subtitle: '插件可以从创意工坊下载，或从本地文件导入', actionLabel: '去创意工坊', onAction: push WorkshopPage)`。
+插件管理页。**Phase 1.6 曾是空态占位，Phase 3.5 起列表来自 `PluginProvider.plugins`**。
+`const PluginManagePage({super.key})`，`StatelessWidget` + `context.watch<PluginProvider>()`
+（插件从 0 个变 N 个或反向时自动重建，空态与列表自动切换）。
+
+- **AppBar**：标题"插件管理"，右侧 `PopupMenuButton`（`Icons.add`），两项：
+  - "从文件导入（Phase 6+）" → `SnackBar('从文件导入（Phase 6+ 实现）')`
+  - "安装示例插件（Phase 3.5 验证用）" → `PluginProvider.installExamplePluginForDemo()`，
+    按成功与否弹不同 SnackBar
+- **空列表** → `EmptyState(Icons.extension, '还没有安装插件', '从文件导入或从创意工坊下载', '去创意工坊')`
+- **有插件** → `ListView.builder`，每项一张 `_PluginCard`
+
+**卡片布局**（`Card` + `ListTile`）：
+
+| 位置 | 内容 |
+|------|------|
+| `leading` | 图标：由**第一个能力**经 `_iconNameForCapability` 映射到图标名，再走 `iconFromName`（查不到兜底 `Icons.extension`） |
+| `title` | 插件名 + 右侧状态徽章 |
+| `subtitle` 第一行 | `版本 x.x.x · 作者`（作者为空显示"未知作者"） |
+| `subtitle` 第二行 | 能力标签（`考试 · 作业` 形式，`_capabilityLabel` 中文化；插件自定义能力原样显示 id） |
+| `trailing` | `Switch`，值 = `meta.enabled`，`onChanged` → `provider.togglePlugin(id, v)` |
+| `onTap` | push `PluginDetailPage(pluginId: meta.id)` |
+
+**状态徽章四态**（抽成公开枚举 + 纯函数，便于单独测试）：
+
+- `enum PluginUiStatus { loaded, failed, enabledNotLoaded, disabled }`
+- `PluginUiStatus pluginUiStatusOf({required bool enabled, required bool isLoaded, required bool hasError})`
+  — **优先级：失败 > 已加载 > 已启用未加载 > 已停用**。失败优先于成功，因为"失败原因"对用户最有价值
+- `Color pluginUiStatusColor(PluginUiStatus status, AppTheme theme)` —
+  `loaded → theme.success`（绿）、`failed → theme.error`（红）、
+  `enabledNotLoaded → theme.warning`（黄）、`disabled → theme.onBackground.withValues(alpha: 0.3)`（灰）
+- `String pluginUiStatusLabel(PluginUiStatus status)` — 已加载 / 加载失败 / 已启用，尚未加载 / 已停用
+- 常量 `kPluginStatusDotSize = 10`（徽章圆点直径；`AppTheme` 无徽章尺寸令牌，按 `empty_state.dart` 先例设为组件级常量）
+
+徽章实现为 `Tooltip` + `Semantics` + 圆形 `Container`，**Key 为 `ValueKey('plugin-status-<id>')`**，
+便于测试与调试定位；tooltip / 无障碍文案在失败时带上 `loadErrors` 的原因。
+
+### `settings/plugin_detail_page.dart` — PluginDetailPage（Phase 3.5）
+
+```dart
+class PluginDetailPage extends StatelessWidget {
+  const PluginDetailPage({super.key, required this.pluginId});
+  final String pluginId;
+}
+```
+
+- **AppBar**：标题 = 插件名；**`isRemovable == true`** 才显示"卸载"（`Icons.delete_outline`）。
+  **Phase 3.5.1 修正**：此前用 `!meta.isBuiltIn` 判断，导致从 assets 安装的示例插件
+  （`source == 'builtin'`）看不到卸载入口；现在只看独立的策略字段 `isRemovable`
+- 插件不存在（已卸载 / id 失效）→ 显示"插件不存在或已卸载"兜底文案，不崩
+- Body = `ListView`，三个分区卡片：
+
+| 分区 | 内容 |
+|------|------|
+| 基本信息 | 插件 ID / 版本 / 作者 / 描述 / 能力 / 来源（中文）/ **安装路径** / 加载状态（带状态色） |
+| 运行时 | 沙箱（可用 / 不可用 / 未创建）、入口函数列表、降级原因（不可用时，红色） |
+| 操作 | `SwitchListTile` 启用；"登录"/"立即同步"/"查看日志" 三个 `ListTile` → SnackBar 占位（Phase 4 / 3 后） |
+
+- **安装路径**用 `FutureBuilder` 异步读 `PluginStorageService.getPluginJsPath(pluginId)`：
+  读取中 → `读取中…`；出错 → `读取失败`；`null` → `未安装（插件目录中找不到 .js 文件）`
+- **卸载**：`showDialog` 确认（"确定要卸载插件「X」吗？这会删除插件文件与本地数据。"）→
+  确认后 `await provider.removePlugin(id)` → `context.mounted` 检查 → `Navigator.pop()`
+- 辅助私有组件：`_InfoCard`（分区卡片）、`_InfoRow`（标签 : 值，值可换行）、
+  `_InstallPathRow`、`_ActionRow`
+
+> **注意（测试相关）**：`_InstallPathRow` 里的 `getPluginJsPath` 是**真实文件 I/O**，
+> `testWidgets` 默认的 fake-async **不会推进它**（会永远停在"读取中…"），
+> 相关断言必须放在 `tester.runAsync(...)` 里。
 
 ### `settings/workshop_page.dart` — WorkshopPage
 
@@ -1167,11 +1251,17 @@ var __plugin = {
 **数据交换约定**（沿用 3.2a 约束）：入参经 `JSON.parse` 进入 JS、返回值经
 JS 侧 `JSON.stringify` 出来、Dart 侧 `jsonDecode` 解析；**不使用 `convertValue`**。
 
-**插件文件从哪来**：Phase 3.2b.1 **只支持调用方给路径或直接给源码**，
-不接 UI、不做安装流程。真机验证用的是 `Directory.systemTemp` 临时目录。
-> 后续若要做"从文件安装插件"，需要 `path_provider` 取应用私有目录
-> （CONTEXT 技术栈里**没有**声明该依赖，引入前需先改 CONTEXT），
-> 或改用 assets 打包内置插件（需改 `pubspec.yaml` 的 assets 段）。两者都留待后续阶段决定。
+**插件文件从哪来**：Phase 3.4 起由 `PluginStorageService` 管理，插件文件位于应用私有目录
+`<appDocuments>/plugins/`；`PluginManager.defaultSourceResolver` 按 `meta.id` 现算路径。
+**Phase 3.5 起**还支持从 **assets** 安装内置 / 示例插件
+（`PluginStorageService.installFromAssets`，见该小节）——读出内容后同样落到插件目录，
+因为运行时只从文件系统加载。
+> **内置示例插件**：`assets/plugins/example.js`（`pubspec.yaml` 已声明 `assets/plugins/`），
+> 由 `PluginProvider.installExamplePluginForDemo()` 安装。**这是临时的**，
+> Phase 4 做出真实教务插件后连同该方法一起删除。
+>
+> **仍未做**："用户从任意文件导入插件"需要文件选择器（`file_picker` 等新依赖），
+> 属 Phase 6+，当前 UI 上是 SnackBar 占位。
 
 ### `plugin_manifest.dart` — PluginManifest
 

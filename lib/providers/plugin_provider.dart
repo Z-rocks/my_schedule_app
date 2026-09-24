@@ -9,7 +9,14 @@ import '../models/plugin_meta.dart';
 import '../runtime/js_sandbox.dart';
 import '../runtime/plugin_handle.dart';
 import '../runtime/plugin_manager.dart';
+import '../services/plugin_storage_service.dart';
 import '../services/storage_service.dart';
+
+/// 内置示例插件的 id（**临时**，Phase 4 完成后连同 `assets/plugins/example.js` 删除）。
+const String kExamplePluginId = 'example-plugin';
+
+/// 内置示例插件的 asset 路径（**临时**，同上）。
+const String kExamplePluginAssetPath = 'assets/plugins/example.js';
 
 /// 已安装插件状态。
 ///
@@ -222,6 +229,52 @@ class PluginProvider extends ChangeNotifier {
     _notify();
   }
 
+  // ─────────────────────── 示例插件（临时） ───────────────────────
+
+  /// 安装内置示例插件（**仅用于 Phase 3.5 UI 验证，Phase 4 完成后删除**）。
+  ///
+  /// 流程：从 assets 读 `example.js` → 落盘到插件目录 → 加入列表并落盘 →
+  /// **自动启用**（这样用户立刻能看到"已加载"的完整效果）。
+  ///
+  /// 任何一步失败都不抛异常：只 `debugPrint` + 返回 `false`，让 UI 用 SnackBar
+  /// 提示。成功返回 `true`。
+  ///
+  /// 重复调用是安全的：`addPlugin` 同 id 替换、`installPlugin` 覆盖文件。
+  Future<bool> installExamplePluginForDemo() async {
+    try {
+      await PluginStorageService.installFromAssets(
+        pluginId: kExamplePluginId,
+        assetPath: kExamplePluginAssetPath,
+      );
+    } catch (e) {
+      debugPrint('[PluginProvider] 安装示例插件失败：$e');
+      return false;
+    }
+
+    final PluginMeta existing = getById(kExamplePluginId) ??
+        PluginMeta(
+          id: kExamplePluginId,
+          name: '示例插件',
+          version: '1.0.0',
+          author: 'MySchedule',
+          description: '内置示例，用于验证插件管理页与运行时链路',
+          capabilities: const <String>['exam'],
+          source: 'builtin',
+          // 显式声明可卸载：示例插件来源虽是 builtin（随 App 打包），
+          // 但用户应当能把它卸掉。写成显式而非依赖默认值，是为了防止
+          // 将来有人改默认值时静默把示例插件变成"不可卸载"。
+          isRemovable: true,
+          enabled: false,
+          installedAt: DateTime.now(),
+        );
+    // 先落盘插件本体（enabled 仍为 false），再走 toggle 启用——
+    // 复用同一条启停链路，避免这里再写一遍"落盘 + 加载运行时"。
+    await addPlugin(existing.copyWith(enabled: false));
+    await togglePlugin(kExamplePluginId, true);
+    debugPrint('[PluginProvider] 示例插件已安装并启用：$kExamplePluginId');
+    return true;
+  }
+
   // ─────────────────────────── 增删 ───────────────────────────
 
   /// 新增插件（同 id 已存在则替换），并落盘。
@@ -239,19 +292,38 @@ class PluginProvider extends ChangeNotifier {
     _notify();
   }
 
-  /// 卸载插件（从列表移除并删存储）。
+  /// 卸载插件：**销毁运行时 + 删除磁盘上的插件文件 + 从列表与存储移除**。
   ///
-  /// 内置插件（[PluginMeta.isBuiltIn]）不可卸载，调用为空操作。
-  /// 会一并销毁其运行时沙箱。
+  /// **`isRemovable == false` 的插件不可卸载**，调用为空操作（留给硬编码的
+  /// 系统级插件）。注意这与"来源是 builtin"**不是一回事**：
+  /// 从 assets 安装的示例插件来源也是 `builtin`，但它可以卸载（Phase 3.5.1 修正）。
   Future<void> removePlugin(String id) async {
     final int index = _indexOf(id);
     if (index < 0) return;
-    if (_plugins[index].isBuiltIn) return;
+    if (!_plugins[index].isRemovable) {
+      debugPrint('[PluginProvider] 插件 $id 标记为不可卸载，忽略卸载请求');
+      return;
+    }
     _plugins.removeAt(index);
-    await _manager.unload(id);
     _loadErrors.remove(id);
-    await _persistRemove(id);
+    // 先通知：列表已经变了，UI 立刻反映，不等文件 I/O 与沙箱销毁。
+    // （与 togglePlugin 同一思路：先更新可观察状态，再做异步收尾。）
     _notify();
+
+    await _manager.unload(id);
+
+    // 删除磁盘上的 `<id>.js` 与 `<id>.manifest.json`。
+    //
+    // Phase 3.5.1 补上这一步：此前只删了元数据，**插件文件会留在磁盘上**
+    // （而确认框早已声称"插件文件与运行时都会被移除"，属于文案与实现不符）。
+    // 失败只记日志、不抛：元数据已移除，遗留文件不影响功能（下次安装会覆盖它）。
+    try {
+      await PluginStorageService.uninstallPlugin(id);
+    } catch (e) {
+      debugPrint('[PluginProvider] 删除插件 $id 的文件失败（元数据已移除）：$e');
+    }
+
+    await _persistRemove(id);
   }
 
   /// 清空插件列表（**仅内存**，测试 / 重置用；要连存储一起清用 [clearAll]）。

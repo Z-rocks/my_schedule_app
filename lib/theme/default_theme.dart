@@ -32,6 +32,12 @@ const Color _kExamHighlight = Color(0xFFE53935);
 /// 作业强调色。
 const Color _kHomeworkHighlight = Color(0xFFFB8C00);
 
+/// 成功 / 正常状态色：Material Green 600（Phase 3.5 新增，用于状态徽章）。
+const Color _kSuccess = Color(0xFF43A047);
+
+/// 警告状态色：Material Amber 800（Phase 3.5 新增，用于"已启用但未就绪"）。
+const Color _kWarning = Color(0xFFF9A825);
+
 /// 课程卡片配色池：Material 100 档的柔和色，保证深色文字可读。
 const List<Color> _kCourseCardColors = <Color>[
   Color(0xFFE3F2FD),
@@ -130,6 +136,8 @@ AppTheme defaultTheme() => const AppTheme(
       courseCardColors: _kCourseCardColors,
       examHighlight: _kExamHighlight,
       homeworkHighlight: _kHomeworkHighlight,
+      success: _kSuccess,
+      warning: _kWarning,
       fontFamily: _kFontFamily,
       titleSize: _kTitleSize,
       bodySize: _kBodySize,

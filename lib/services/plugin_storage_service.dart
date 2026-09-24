@@ -18,6 +18,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 
 import '../runtime/plugin_manifest.dart' show kPluginManifestSuffix;
@@ -111,6 +112,35 @@ class PluginStorageService {
       }
     }
     return jsPath;
+  }
+
+  /// 从 assets 安装插件（用于**随 App 打包**的内置插件 / 示例插件）。
+  ///
+  /// 与 [installPlugin] 的区别只在"源码从哪来"：这里用 `rootBundle` 读
+  /// Flutter asset（路径形如 `assets/plugins/example.js`），读出内容后
+  /// 走同一条安装路径落盘——因为**运行时只能从文件系统加载**
+  /// （`PluginManager.defaultSourceResolver` 取的是 `<id>.js` 文件路径），
+  /// 而 `rootBundle` 只能异步读、拿不到文件路径。
+  ///
+  /// asset 不存在或读取失败时抛 [FlutterError]（已记日志），
+  /// 由调用方决定是否降级——不要静默吞掉，否则用户会以为"装了但没效果"。
+  static Future<void> installFromAssets({
+    required String pluginId,
+    required String assetPath,
+  }) async {
+    _requireValidId(pluginId);
+    String source;
+    try {
+      source = await rootBundle.loadString(assetPath);
+    } catch (e) {
+      debugPrint('[PluginStorageService] 读取 asset 失败：$assetPath → $e');
+      throw FlutterError('读取内置插件 asset 失败：$assetPath');
+    }
+    if (source.trim().isEmpty) {
+      debugPrint('[PluginStorageService] asset 内容为空：$assetPath');
+      throw FlutterError('内置插件 asset 内容为空：$assetPath');
+    }
+    await installPlugin(pluginId: pluginId, jsSource: source);
   }
 
   /// 卸载插件：删除 `<id>.js` 与 `<id>.manifest.json`。文件不存在视为已卸载（幂等）。

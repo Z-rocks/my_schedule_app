@@ -80,6 +80,18 @@ class PluginMeta {
   /// 最近一次成功同步的时间，`null` 表示从未同步。
   final DateTime? lastSyncAt;
 
+  /// 该插件是否**允许用户卸载**（Phase 3.5.1 新增，默认 `true`）。
+  ///
+  /// 这是**策略**，与 [source]（来源）是两件事，刻意分开：
+  /// 从 assets 安装的示例插件来源确实是 `"builtin"`（随 App 打包），
+  /// 但它**应当可以卸载**；只有**硬编码在代码里的系统级插件**才该禁止卸载。
+  /// 之前用 `source == 'builtin'` 反推"不可卸载"，导致示例插件在详情页
+  /// 看不到卸载入口（Phase 3.5.1 修正的正是这个 bug）。
+  ///
+  /// 新增字段，**向后兼容**：旧数据没有这个键时 [PluginMeta.fromJson] 回落 `true`，
+  /// 因此无需迁移（CONTEXT 4.2.1 只要求"改名 / 改语义"时写迁移）。
+  final bool isRemovable;
+
   const PluginMeta({
     required this.id,
     required this.name,
@@ -98,6 +110,7 @@ class PluginMeta {
     this.enabled = false,
     required this.installedAt,
     this.lastSyncAt,
+    this.isRemovable = true,
   });
 
   /// 从 JSON 构造，缺失或类型异常的字段使用安全默认值，不抛异常。
@@ -120,10 +133,15 @@ class PluginMeta {
       enabled: _asBool(json['enabled']),
       installedAt: _asDateTime(json['installedAt']) ?? DateTime.now(),
       lastSyncAt: _asDateTime(json['lastSyncAt']),
+      // 旧数据没有该键 → 回落 true（向后兼容，无需迁移）。
+      isRemovable: _asBool(json['isRemovable'], fallback: true),
     );
   }
 
-  /// 是否为内置插件（不可卸载）。
+  /// 是否为**内置来源**的插件（`source == 'builtin'`，即随 App 打包）。
+  ///
+  /// **注意**：这是**来源**，不是"能否卸载"。从 assets 安装的示例插件来源也是
+  /// `"builtin"`，但它可以卸载。判断卸载请看 [isRemovable]。
   bool get isBuiltIn => source == 'builtin';
 
   /// 是否来自创意工坊。
@@ -173,6 +191,7 @@ class PluginMeta {
       'enabled': enabled,
       'installedAt': installedAt.toIso8601String(),
       'lastSyncAt': lastSyncAt?.toIso8601String(),
+      'isRemovable': isRemovable,
     };
   }
 
@@ -195,6 +214,7 @@ class PluginMeta {
     bool? enabled,
     DateTime? installedAt,
     DateTime? lastSyncAt,
+    bool? isRemovable,
     bool clearLastSyncAt = false,
   }) {
     return PluginMeta(
@@ -215,6 +235,7 @@ class PluginMeta {
       enabled: enabled ?? this.enabled,
       installedAt: installedAt ?? this.installedAt,
       lastSyncAt: clearLastSyncAt ? null : (lastSyncAt ?? this.lastSyncAt),
+      isRemovable: isRemovable ?? this.isRemovable,
     );
   }
 
@@ -225,7 +246,8 @@ class PluginMeta {
       'entryFile: $entryFile, assetPath: $assetPath, '
       'source: $source, downloadUrl: $downloadUrl, hasUpdate: $hasUpdate, '
       'latestVersion: $latestVersion, enabled: $enabled, '
-      'installedAt: $installedAt, lastSyncAt: $lastSyncAt)';
+      'installedAt: $installedAt, lastSyncAt: $lastSyncAt, '
+      'isRemovable: $isRemovable)';
 }
 
 /// 安全地把任意值转成 String。
@@ -236,14 +258,19 @@ String _asString(Object? value, {String fallback = ''}) {
 }
 
 /// 安全地把任意值转成 bool。
-bool _asBool(Object? value) {
+///
+/// [fallback] 是"值缺失或无法识别"时的结果。默认 `false`（`hasUpdate` / `enabled`
+/// 都该如此），但 `isRemovable` 传 `true`——它必须**向后兼容**：
+/// 旧数据没有这个键，语义上应当是"可卸载"。
+bool _asBool(Object? value, {bool fallback = false}) {
   if (value is bool) return value;
   if (value is num) return value != 0;
   if (value is String) {
     final String text = value.trim().toLowerCase();
     if (text == 'true' || text == '1') return true;
+    if (text == 'false' || text == '0') return false;
   }
-  return false;
+  return fallback;
 }
 
 /// 安全地把任意值转成 DateTime。
