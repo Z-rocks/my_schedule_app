@@ -9,9 +9,12 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import 'js_sandbox.dart';
+import 'plugin_context.dart';
+import 'plugin_ctx_script.dart';
 import 'plugin_handle.dart';
 import 'plugin_manifest.dart';
 
@@ -25,7 +28,10 @@ class PluginRuntime {
     this.executeTimeout = kDefaultJsTimeout,
     this.onLog,
     @visibleForTesting this.simulateSandboxFailure = false,
-  });
+    Dio? dio,
+    // 命名参数不能以下划线开头，故无法用 initializing formal 直接赋给私有字段。
+    // ignore: prefer_initializing_formals
+  }) : _dio = dio;
 
   /// 加载（读文件 + 顶层求值 + 格式校验）的单步超时。
   final Duration loadTimeout;
@@ -39,6 +45,9 @@ class PluginRuntime {
   /// 仅测试用：让沙箱创建失败，用于验证"沙箱不可用 → 插件降级"路径。
   @visibleForTesting
   final bool simulateSandboxFailure;
+
+  /// 注入给 `PluginContext` 的 dio（测试可用 mock adapter）；`null` 时自建。
+  final Dio? _dio;
 
   /// 本运行时创建过的所有 handle（含降级失败的），用于统一销毁。
   final List<PluginHandle> _handles = <PluginHandle>[];
@@ -137,7 +146,19 @@ class PluginRuntime {
       return handle;
     }
 
-    // ── 3. 顶层求值：把插件的全局定义装进沙箱 ──────────────────
+    // ── 3. 注入 ctx，再顶层求值把插件的全局定义装进沙箱 ─────────
+    //
+    // 顺序很重要：ctx 必须先定义好，插件的顶层代码才能引用它。
+    // （ctx 的"本轮状态"由 PluginContext 在每次执行前重置。）
+    final JsSandboxResult ctxResult =
+        await sandbox.execute(kPluginCtxScript, timeout: loadTimeout);
+    if (!ctxResult.isSuccess) {
+      return fail(
+        ctxResult.status,
+        reason: '注入插件上下文（ctx）失败：${ctxResult.message}',
+      );
+    }
+
     final JsSandboxResult loadResult =
         await sandbox.execute(source, timeout: loadTimeout);
     if (!loadResult.isSuccess) {
@@ -228,6 +249,8 @@ class PluginRuntime {
       entries: entries,
       sourcePath: path,
       sandbox: sandbox,
+      // 宿主侧 ctx：真正发网络 / 读写 Hive / 读凭证 + 驱动重放。
+      context: PluginContext(pluginId: manifest.id, dio: _dio),
     );
     _handles.add(handle);
     return handle;

@@ -16,5 +16,30 @@ var __plugin = {
   fetchExams: function (args) {
     // 真实插件这里会请求教务系统；示例只返回空列表。
     return { exams: [] };
+  },
+
+  // Phase 3.6：验证宿主注入的 ctx（日志 / 私有存储 / 凭证）。
+  // 注意：插件函数可能被宿主**执行多次**（ctx.http 需要重放），
+  // 所以这里只做幂等的读写，不做累加类副作用。
+  testCtx: function (args) {
+    ctx.log.info('测试 ctx.log：插件 ' + __plugin.id + ' 开始');
+    ctx.storage.set('counter', '42');
+    var v = ctx.storage.get('counter');
+    var missing = ctx.storage.get('never-set');
+    ctx.notify.schedule('测试提醒', '来自示例插件', '2026-09-25T08:00:00Z');
+    return {
+      counter: v,
+      missingIsEmpty: missing === '',
+      cookie: ctx.cookie,
+      cookieIsString: typeof ctx.cookie === 'string'
+    };
+  },
+
+  // Phase 3.6：验证 ctx.http（真发请求由宿主完成，插件侧看起来是同步的）。
+  // 默认打的是本机不存在的地址，因此会走到 ok=false；真机验证时会传入真实 URL。
+  testHttp: function (args) {
+    var url = (args && args.url) ? args.url : 'http://127.0.0.1:1/nope';
+    var r = ctx.http.get(url, { 'X-From': 'example-plugin' });
+    return { ok: r.ok, status: r.status, error: r.error, bodyLen: r.body ? r.body.length : 0 };
   }
 };

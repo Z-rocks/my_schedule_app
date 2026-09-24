@@ -12,6 +12,13 @@ const String kSettingsBoxName = 'settings';
 const String kPluginsBoxName = 'plugins';
 const String kSkinsBoxName = 'skins';
 
+/// 插件私有 KV 数据（Phase 3.6 新增）。
+///
+/// key 格式为 `"<pluginId>:<userKey>"`——**插件之间靠前缀隔离**，
+/// 见 `PluginContext`。插件 id 只允许字母数字下划线横线（见
+/// `PluginStorageService.isValidPluginId`），所以 `:` 作分隔符不会歧义。
+const String kPluginDataBoxName = 'plugin_data';
+
 /// `settings` Box 中的键名。与 Box 名一样属于契约（CONTEXT.md 4.2.1）。
 ///
 /// 集中放在这里，避免各 Provider 各自硬编码字符串导致拼写漂移。
@@ -59,6 +66,7 @@ class StorageService {
   static Box<String>? _settingsBox;
   static Box<String>? _pluginsBox;
   static Box<String>? _skinsBox;
+  static Box<String>? _pluginDataBox;
 
   static bool _initialized = false;
 
@@ -96,6 +104,7 @@ class StorageService {
     _settingsBox = await _openBox(kSettingsBoxName);
     _pluginsBox = await _openBox(kPluginsBoxName);
     _skinsBox = await _openBox(kSkinsBoxName);
+    _pluginDataBox = await _openBox(kPluginDataBoxName);
 
     _initialized = true;
   }
@@ -116,6 +125,7 @@ class StorageService {
     _settingsBox = null;
     _pluginsBox = null;
     _skinsBox = null;
+    _pluginDataBox = null;
     _initialized = false;
   }
 
@@ -144,6 +154,10 @@ class StorageService {
 
   /// 已安装皮肤包（key = 皮肤 ID）。
   static Box<String> get skinsBox => _require(_skinsBox, kSkinsBoxName);
+
+  /// 插件私有 KV（key = `"<pluginId>:<userKey>"`，见 [kPluginDataBoxName]）。
+  static Box<String> get pluginDataBox =>
+      _require(_pluginDataBox, kPluginDataBoxName);
 
   static Future<Box<String>?> _openBox(String name) async {
     try {

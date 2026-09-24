@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import 'js_sandbox.dart';
+import 'plugin_context.dart';
 import 'plugin_manifest.dart';
 
 /// 插件在 JS 里必须定义的全局对象名。
@@ -68,9 +69,12 @@ class PluginHandle {
     this.sourcePath,
     this.reason,
     JsSandbox? sandbox,
+    PluginContext? context,
     // 命名参数不能以下划线开头，故无法用 initializing formal 直接赋给私有字段。
     // ignore: prefer_initializing_formals
-  }) : _sandbox = sandbox;
+  })  : _sandbox = sandbox,
+        // ignore: prefer_initializing_formals
+        _context = context;
 
   /// 加载/运行状态，复用 [JsSandboxStatus] 四态。
   ///
@@ -98,6 +102,12 @@ class PluginHandle {
   /// 该插件独占的沙箱。降级过早时为 `null`。
   final JsSandbox? _sandbox;
 
+  /// 该插件的运行上下文（宿主服务 + 重放循环）。降级过早时为 `null`。
+  ///
+  /// 有它时 [execute] 会走"登记待办 → 宿主取数 → 重放"的 ctx 流程；
+  /// 没有它时退化为单次求值（兼容 Phase 3.5 之前的用法与测试）。
+  final PluginContext? _context;
+
   /// 插件当前是否可用。
   ///
   /// **动态判定**：除加载状态为 `success` 外，还要求底层沙箱仍然存活。
@@ -112,6 +122,10 @@ class PluginHandle {
   ///
   /// [args] 会经 JSON 传入 JS（插件侧收到一个普通对象）。
   /// 返回结果复用 [JsSandboxResult] 四态；**不抛异常**。
+  ///
+  /// **Phase 3.6 起走 ctx 流程**：若持有 [PluginContext]，会驱动
+  /// "登记 HTTP 待办 → 宿主取数 → 重放插件函数"直到没有待办为止
+  /// （因此插件函数可能被执行多次，见 `plugin_ctx_script.dart`）。
   Future<JsSandboxResult> execute(
     String entryFunction, {
     Map<String, dynamic>? args,
@@ -128,8 +142,14 @@ class PluginHandle {
       // 沙箱已被销毁（多半是上次执行超时），句柄随之不可用。
       return JsSandboxResult.unavailable(reason ?? '插件运行时已被销毁');
     }
-    return sandbox.execute(
-      buildPluginEntryCallScript(entryFunction, args),
+    final String script = buildPluginEntryCallScript(entryFunction, args);
+    final PluginContext? context = _context;
+    if (context == null) {
+      return sandbox.execute(script, timeout: timeout);
+    }
+    return context.execute(
+      sandbox: sandbox,
+      entryCallScript: script,
       timeout: timeout,
     );
   }

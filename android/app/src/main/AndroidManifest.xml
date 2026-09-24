@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 网络权限（Phase 3.6 补）：
+         Flutter 模板只在 src/debug 与 src/profile 的 manifest 里加了 INTERNET
+         （那是给 hot reload 用的），**main 里没有** —— 也就是说 release APK
+         默认没有网络权限，插件的 ctx.http 在正式包里会直接失败。
+         插件的核心能力就是拉教务数据，所以必须在 main 里声明。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="my_schedule_app"
         android:name="${applicationName}"

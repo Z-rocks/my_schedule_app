@@ -12,13 +12,19 @@
 
 > 给新会话 AI 用。每次阶段切换时更新。
 
-- **最新完成**：Phase 3.5.1（修正：示例插件无法卸载）
+- **最新完成**：Phase 3.6（PluginContext：`ctx.http` / `ctx.storage` / `ctx.log` / `ctx.notify` / `ctx.cookie`）
 - **代码状态**：dart analyze 全绿；真机验收通过（`getprop ro.product.model` = `2211133C`）
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
-- **Phase 3 全部完成**：插件运行时（沙箱 → 加载 → 多插件管理 → 文件持久化 → 管理 UI）
-- **下一步**：Phase 4（第一个真实插件：WebView 登录 + Cookie 提取 + NCST 教务插件）；
-  另外 3.5 遗留：`ctx.http` / `ctx.storage` 注入、ModuleProvider 改用 loadedCapabilities
-- **最近 commit**：feat(plugin): 插件文件持久化到应用私有目录
+- **Phase 3 全部完成**：插件运行时（沙箱 → 加载 → 多插件管理 → 文件持久化 → 管理 UI → **ctx**）
+- **下一步**：Phase 4（第一个真实插件：WebView 登录 + Cookie 提取 + NCST 教务插件）
+- **⚠️ Phase 4 完成后必须做**：跑一次 **`flutter build apk --release` 做发布包冒烟**。
+  到目前为止**所有网络相关验证都是在 debug 包里做的**（debug/profile manifest 自带 `INTERNET`
+  权限），release 包是否有其他权限 / 混淆（R8）问题**完全没有验证过**。3.6 刚发现
+  `src/main` 缺 `INTERNET` 就是同类问题——release 冒烟必须真正装到设备上跑通
+  "安装插件 → `ctx.http` 拉数据"这条链路。
+- **遗留**：ModuleProvider 改用 `loadedCapabilities`；`ctx.cookie` 写入（Phase 4）；
+  `ctx.notify` 接真实通知（Phase 7）；插件管理 UI 的"从文件导入"（Phase 6+）
+- **最近 commit**：fix(plugin): 修正示例插件无法卸载
 - **关键约束**：
   - testWidgets 不能触发 Hive 写（会卡死）
   - schema 已冻结（改字段要写迁移）
@@ -36,8 +42,16 @@
   - **UI 颜色一律从 AppTheme 读**（3.5 新增 `success` / `warning` 两个状态令牌，禁止硬编码绿/黄）
   - **"来源"与"策略"必须分开**：`source == 'builtin'` 只表示随 App 打包，**不代表不可卸载**；
     能否卸载只看 `PluginMeta.isRemovable`（3.5.1 修正了这个过度推断）
+  - ⚠️ **插件入口函数必须幂等**（Phase 3.6，写 Phase 4 插件时最常引用的一条）：
+    `ctx.http` 用"登记待办 + 宿主重放"实现 → **入口函数会被执行多次**；
+    `ctx.storage` 的修改**只在最终轮生效**；`ctx.*` **只应在入口函数里用**。
+    完整说明见 **CONTEXT.md 3.6**，速查见 **API.md 的 `plugin_ctx_script.dart` 小节**
   - **widget 测试里真实文件 I/O 不会推进**（fake-async），相关断言须放 `tester.runAsync`；
     且**不要在 `runAsync` 里用 `pumpAndSettle`**（会永不返回）
+  - **插件函数可能被执行多次**（`ctx.http` 用"重放"实现）：入口函数必须幂等；
+    `ctx.storage` 副作用**只在最终轮**提交；`ctx.*` 只应在入口函数里用
+  - **`testWidgets`/`TestWidgetsFlutterBinding` 会把 HTTP mock 成 400**：
+    要访问真实（含本机 loopback）服务必须 `HttpOverrides.global = null`
   - **禁止用 PowerShell 的 Get-Content/Set-Content 做文本往返**（会按控制台代码页解码，中文变乱码，见阻塞表）
   - **docs/PROGRESS.md 曾因编码问题损坏**，见阻塞表（编辑该文件时务必确认保存为 UTF-8）
 
@@ -1001,8 +1015,103 @@
 > 另外我当前模型**不能读图**，所以截图验证是靠像素分析（亮度差 / 偏蓝文字簇定位）完成的，
 > 反而比目视更客观。
 
-- [x] flutter_js 集成（Phase 3.1，仅验证可用性）
-- [x] JS 运行时沙箱与兜底（Phase 3.2a，`lib/runtime/js_sandbox.dart`）
+> **Phase 3.6**（PluginContext）：`dart analyze lib` 通过，**未加新依赖**。
+>
+> ⚠️ **任务书里的 `ctx.http` 设计在当前架构下不可能实现，我改用了"重放式同步外观"**
+> （你已在决策点确认选方案 B）。三条硬证据：
+>
+> 1. **沙箱在独立 isolate**（3.2a 的设计），`onMessage` 的 Dart 回调是**子 isolate 里的闭包**，
+>    而 dio / Hive / secure_storage 都在主 isolate——**闭包跨不了 isolate**。
+>    所以"Dart 暴露 `__dart_http_get`"这条路本身就断了。
+> 2. 就算能跨，`sendMessage` 通道要求 Dart 侧**同步**返回，而 dio 是异步的；
+>    JS 又**无法挂起**（本库唯一的异步路径 `fetch`/Promise 走 `callFunction`，
+>    而 QuickJS 后端该方法是 `UnimplementedError`，3.2a 实测）。
+> 3. 唯一可用的**同步** HTTP 客户端 `sync_http`（flutter_js 的传递依赖）用
+>    `RawSynchronousSocket`——**纯 TCP，import 列表里没有 `SecureSocket`**，
+>    **不能 HTTPS**。教务系统全是 HTTPS，等于没用；而且直接用要改 pubspec（违反"不加新依赖"）。
+>
+> **方案 B 的做法**（`plugin_ctx_script.dart` 顶部有完整说明）：
+> ctx **全部用 JS 实现**，宿主每轮注入"本轮状态"（HTTP 响应缓存 / storage 快照 / cookie）为 JS 全局；
+> `ctx.http.get` 命中缓存就同步返回，未命中只把请求 `push` 进待办并返回
+> `{ok:false,error:'pending'}`（**绝不发网络**）；宿主读回待办后用 **dio**（真超时）取回、
+> 并入缓存、**重放**插件函数；没有待办的那一轮就是最终轮，只提交**最终轮**的
+> storage / log / notify 副作用。
+> 好处：插件写的是自然同步代码（就是任务书想要的样子），而网络仍由 dio 发（可超时、可审计），
+> 且**不需要给 js_sandbox 加任何协议**。
+>
+> **改动**：
+> - 新建 `lib/runtime/plugin_ctx_script.dart`：`kPluginCtxScript`（JS 侧 `ctx` + primitive）、
+>   `buildCtxStateScript(...)`（本轮状态）、`kCtxDumpScript`（读回副作用）
+> - 新建 `lib/runtime/plugin_context.dart`：`PluginContext`（宿主侧五类能力 + 重放循环）+
+>   `PluginHttpRequest`
+> - `lib/runtime/plugin_runtime.dart`：构造加 `Dio? dio`；`loadPlugin` 在求值插件源码**之前**
+>   先注入 `kPluginCtxScript`；加载成功后创建 `PluginContext` 挂到 handle
+> - `lib/runtime/plugin_handle.dart`：新增私有 `_context`，`execute` 有 context 时走重放
+> - `lib/services/storage_service.dart`：**新增 `plugin_data` Box（8 → 9 个）**，
+>   key 格式 `<pluginId>:<userKey>`
+> - `assets/plugins/example.js`：新增 `testCtx` / `testHttp` 两个入口用于验证
+> - `android/app/src/main/AndroidManifest.xml`：**补 INTERNET 权限**（见下）
+>
+> **顺带发现并修掉一个真 bug（会影响 Phase 4 与发布）**：
+> Flutter 模板只在 `src/debug` 与 `src/profile` 的 manifest 里声明了 `INTERNET`
+> （那是给 hot reload 用的），**`src/main` 里没有**——也就是说 **release APK 默认没有网络权限**，
+> 插件的 `ctx.http` 在正式包里会直接失败。已在 `src/main/AndroidManifest.xml` 补上。
+>
+> **7 个设计决策**：
+> 1. **ctx 是全局变量**（不是参数传入）：每个插件独占沙箱，全局不会冲突；
+>    而且参数传入会破坏现有 `function(args)` 签名与 `buildPluginEntryCallScript`。
+> 2. **HTTP 在 Dart 侧代理**：沙箱内**完全没有网络能力**，JS 只能"登记待办"。
+> 3. **storage 用一个 Box + `<pluginId>:<userKey>` 前缀隔离**：不用"每插件一个 Box"，
+>    因为 `StorageService` 是固定 Box 列表、动态开 Box 会打乱它；而插件 id 只允许
+>    `[A-Za-z0-9_-]`（3.4 的路径安全校验），所以 `:` 作分隔符不会歧义。
+> 4. **HTTP 超时**：dio `connectTimeout 10s` / `receiveTimeout 15s` / `sendTimeout 10s`，
+>    并映射成 `error:'timeout'` 返回（不是抛异常）——**这条任务书要的 dio 超时做到了**。
+> 5. **错误返回格式**：统一 `{ok:true,status,body,headers}` / `{ok:false,error}`；
+>    **任何状态码都算拿到响应**（4xx/5xx 正文对插件有用），由插件判断 `status`。
+> 6. **cookie 从 `flutter_secure_storage` 读 `<pluginId>:cookie`**，不存在/失败返回空串；
+>    本阶段只读不写（Phase 4 由 WebView 登录写入）。
+> 7. **notify 只 debugPrint**，但签名保持最终形态 `schedule(title, body, triggerAtIso)`。
+>
+> **验证**：临时 `flutter test` 脚本 **26 组全部通过**，脚本已删除。覆盖：
+> `ctx.log.info/error` → debugPrint、**重放时只输出最终轮日志**（不刷屏）、
+> `storage` set→get 同轮可见且未设置键返回空串、**set 真的落到 Hive**（key 格式正确）、
+> `remove` 真的删键、**两个插件 storage 命名空间隔离**、storage 跨执行持久化、
+> 值被转成字符串、
+> `ctx.http.get` 成功（本机 loopback 服务，ok/status/body 正确）、`post` 带 body 原样送达、
+> `post` 传对象自动 JSON 序列化、**4xx/5xx 也算拿到响应**、
+> **多个不同请求都被取回且去重**（服务端只收到 2 次）、
+> **超时 → `error:'timeout'` 且确认超时配置真的传给了 dio**、连接失败 → `error:'connection'`、
+> 真失败时 `ctx.http.get` 抛错（插件可 try/catch 接住）、
+> **插件 try/catch 吞掉中间轮也不影响重放正确性**、不碰 http 时只跑一轮、
+> `ctx.cookie` 未设置返回空串且是字符串、`ctx.notify.schedule` 只记日志不崩、
+> **沙箱被 kill 后 ctx 调用降级为 unavailable**、ctx 抛错不影响沙箱存活、
+> 无 Hive 时 storage 读写不崩、example.js 的 `testCtx` / `testHttp` 端到端、
+> `PluginHttpRequest.tryParse` 容错。
+>
+> **测试踩到的两个坑（已写进关键约束）**：
+> ① `TestWidgetsFlutterBinding` 会安装 `HttpOverrides` 把**所有 HTTP mock 成 400**——
+> 一开始 6 个 HTTP 用例全挂在"status 400"，排查后加 `HttpOverrides.global = null` 解决；
+> ② 同一轮内对同一 URL 重复请求会被登记两次（缓存只在轮与轮之间填充），
+> 已改为**同时对"待办列表"去重**。
+>
+> **真机验证（✅ 通过）**：Redmi K60（`getprop ro.product.model` = `2211133C`，
+> Android 16 / arm64-v8a）：
+> ```
+> [CTX-VERIFY] 插件: id=example-plugin isUsable=true entries=[fetchExams, testCtx, testHttp]
+> [Plugin:example-plugin] 测试 ctx.log：插件 example-plugin 开始
+> [Plugin:example-plugin][notify] 计划提醒「测试提醒」（2026-09-25T08:00:00Z）：来自示例插件 —— Phase 7 接真实通知
+> [CTX-VERIFY] testCtx: status=success value={"counter":"42","missingIsEmpty":true,"cookie":"","cookieIsString":true}
+> [Plugin:example-plugin] 第 1 轮登记了 1 个 HTTP 请求，取回后重放
+> [CTX-VERIFY] testHttp(https://example.com/): status=success value={"ok":true,"status":200,"bodyLen":559}
+> [CTX-VERIFY] Hive example-plugin:counter = 42
+> ```
+> 这一次**真的发了 HTTPS**（`https://example.com/`，200 / 559 字节），
+> 一次性验证了：Android 网络权限、TLS、dio、以及**重放链路**（日志里那句"取回后重放"）；
+> `ctx.storage` 也确实落到了 Hive。**这是 Phase 4 能跑通的前置条件。**
+>
+> **测试注意**：JS 相关用例需 `quickjs_c_bridge.dll`（见 `docs/ENV.md`），已拷到项目根目录、跑完已删。
+
+- [x] flutter_js 集成（Phase 3.1，仅验证可用性）- [x] JS 运行时沙箱与兜底（Phase 3.2a，`lib/runtime/js_sandbox.dart`）
 - [x] 插件文件加载 + PluginRuntime 骨架（Phase 3.2b.1：`plugin_manifest.dart` /
       `plugin_handle.dart` / `plugin_runtime.dart`）
 - [x] 多插件管理（Phase 3.3：`plugin_manager.dart` + `PluginProvider` 接线 + 持久化）
@@ -1011,17 +1120,23 @@
       `plugin_detail_page.dart` + 示例插件 + `AppTheme` 状态色）
 - [x] 修正示例插件无法卸载（Phase 3.5.1：`PluginMeta.isRemovable` +
       真正删除插件文件）
-- [ ] `lib/runtime/plugin_context.dart`（`ctx.http` / `ctx.storage` 注入）—— 留给 Phase 4/3.5 后续
+- [x] `lib/runtime/plugin_context.dart`（Phase 3.6：`ctx.http` / `ctx.storage` /
+      `ctx.log` / `ctx.notify` / `ctx.cookie`，含重放机制）
 
 ---
 
 ## Phase 4：第一个插件（未开始）
+
+> ⚠️ **写 NCST 插件前先读 `CONTEXT.md` 3.6「插件入口函数幂等约定」**——
+> 入口函数会被执行多次，必须幂等；`ctx.storage` 只在最终轮生效。
 
 - [ ] WebView 登录页
 - [ ] Cookie 提取
 - [ ] NCST 插件（`ncst-jwxt.js`）
 - [ ] 数据同步打通
 - [ ] 从插件拉取课程并存入 Hive
+- [ ] **⚠️ 收尾必做：`flutter build apk --release` 发布包冒烟**
+      （装到设备上跑通"安装插件 → `ctx.http` 拉数据"；此前所有网络验证都在 debug 包）
 
 ---
 
@@ -1122,7 +1237,13 @@
 | 2026-09-23 | `assets/plugins/example.js` 与 `PluginProvider.installExamplePluginForDemo()` 是**临时**验证代码，**Phase 4 完成后必须删除**（已在该文件、方法注释、API.md 三处标注） | 待处理 |
 | 2026-09-23 | 3.5.1 修正了"示例插件无法卸载"：根因是把 `source == 'builtin'`（来源）当成卸载策略。现由 `PluginMeta.isRemovable` 独立决定；**目前没有任何插件设为 `false`**（留给将来的硬编码系统级插件） | ✅ 已完成 |
 | 2026-09-23 | 3.5.1 顺带修掉：`removePlugin` 此前**不删磁盘插件文件**，与确认框文案不符。现已真正删除 `<id>.js` / `<id>.manifest.json` | ✅ 已完成 |
+| 2026-09-23 | **3.6 发现：release APK 没有网络权限**。Flutter 模板只在 `src/debug` / `src/profile` 声明 `INTERNET`，`src/main` 没有 → 正式包里插件的 `ctx.http` 会直接失败。已在 `src/main/AndroidManifest.xml` 补上 | ✅ 已完成 |
+| 2026-09-23 | 3.6 的 `ctx.http` 用**重放**实现，因此**插件入口函数会被执行多次**：插件必须是幂等的纯计算，`ctx.storage` 副作用只在最终轮提交。这是写 Phase 4 插件时必须遵守的约定 | 已决定 |
+| 2026-09-23 | `plugin_data` Box（key = `<pluginId>:<userKey>`）此后即**契约**，改动需写迁移 | 已决定 |
+| 2026-09-23 | 3.6 未做：权限系统（所有插件都能用全部 ctx）、网络白名单；`ctx.notify` 仍是占位（Phase 7）；`ctx.cookie` 只读（Phase 4 才写入） | 待处理 |
 | 2026-09-23 | `PluginStorageService` 的目录布局（`<appDocuments>/plugins/<id>.js` + `<id>.manifest.json`）此后即**契约**：已装插件的文件名/后缀改动需写迁移（重命名旧文件） | 已决定 |
 | 2026-09-23 | PluginProvider 用 allCapabilities（enabled）驱动模块可用性，插件加载失败时模块仍在——Phase 3.5 在插件详情页显示 loadErrors | 待处理 |
 | 2026-09-24 | 插件安装 UI（文件选择器）暂不做，Phase 4 从 assets 内置插件加载 | 已决定 |
 | 2026-09-24 | 插件目录布局 `<id>.js` / `<id>.manifest.json` 是契约，改动需写迁移 | 已决定 |
+| 2026-09-24 | 示例插件 Phase 4 完成后删除（assets/plugins/example.js + installExamplePluginForDemo） | 待处理 |
+| 2026-09-24 | isRemovable 当前无 false 使用者，留给将来系统级插件 | 已决定 |

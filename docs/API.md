@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-23（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService；3.5 插件管理 UI 接入；3.5.1 插件可卸载性 isRemovable）
+- 最后更新：2026-09-23（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService；3.5 插件管理 UI 接入；3.5.1 插件可卸载性 isRemovable；3.6 插件上下文 ctx）
 
 ---
 
@@ -513,14 +513,14 @@ App 的全部视觉令牌集合，不可变（**30 个字段**，Phase 3.5 由 2
 
 统一管理 Hive 初始化与 Box 访问。纯静态类（`StorageService._()` 禁止实例化）。
 
-常量（Box 名，落盘后即契约，见 CONTEXT 4.2.1）：`kCoursesBoxName = 'courses'`、`kExamsBoxName = 'exams'`、`kHomeworksBoxName = 'homeworks'`、`kMessagesBoxName = 'messages'`、`kOverridesBoxName = 'overrides'`、`kSettingsBoxName = 'settings'`、`kPluginsBoxName = 'plugins'`、`kSkinsBoxName = 'skins'`
+常量（Box 名，落盘后即契约，见 CONTEXT 4.2.1）：`kCoursesBoxName = 'courses'`、`kExamsBoxName = 'exams'`、`kHomeworksBoxName = 'homeworks'`、`kMessagesBoxName = 'messages'`、`kOverridesBoxName = 'overrides'`、`kSettingsBoxName = 'settings'`、`kPluginsBoxName = 'plugins'`、`kSkinsBoxName = 'skins'`、**`kPluginDataBoxName = 'plugin_data'`（Phase 3.6 新增）**
 
 常量（`settings` Box 内的键名，同样属于契约）：`kModuleEnabledStateKey = 'module_enabled_state'`（值为 JSON 对象 `{"<capabilityId>": bool}`）、`kThemeBrightnessKey = 'theme_brightness'`（值为 `light` / `dark`）、`kSemesterConfigKey = 'semester_config'`（值为 `SemesterConfig` 的 JSON 字符串；单学期故为单值键）、`kGestureSwitchWeekKey = 'gesture_switch_week'`（值为 JSON `true` / `false`）
 
-- `static Future<void> init({String? path})` — 初始化 Hive 并依次打开 8 个 `Box<String>`。`path == null` 时走 `Hive.initFlutter()`（生产）；传 `path` 时走 `Hive.init(path)`（测试，免去 `path_provider` 平台依赖）。重复调用安全。初始化失败只 `debugPrint` 不抛
+- `static Future<void> init({String? path})` — 初始化 Hive 并依次打开 **9** 个 `Box<String>`。`path == null` 时走 `Hive.initFlutter()`（生产）；传 `path` 时走 `Hive.init(path)`（测试，免去 `path_provider` 平台依赖）。重复调用安全。初始化失败只 `debugPrint` 不抛
 - `static Future<void> close()` — 关闭 Hive 并清空缓存的 Box 引用（测试收尾 / App 退出）
 - `static bool get isInitialized`
-- `static Box<String> get coursesBox` / `examsBox` / `homeworksBox` / `messagesBox` / `overridesBox` / `settingsBox` / `pluginsBox` / `skinsBox` — 未初始化或该 Box 打开失败时抛 `StateError`（由调用方 try-catch 兜住，不静默返回坏数据）
+- `static Box<String> get coursesBox` / `examsBox` / `homeworksBox` / `messagesBox` / `overridesBox` / `settingsBox` / `pluginsBox` / `skinsBox` / **`pluginDataBox`** — 未初始化或该 Box 打开失败时抛 `StateError`（由调用方 try-catch 兜住，不静默返回坏数据）
 
 > 设计：所有 Box 统一 `Box<String>` 存 JSON 字符串，**不注册任何 `TypeAdapter`**（CONTEXT 禁止 `build_runner`），模型的 `toJson`/`fromJson` 是唯一序列化途径。
 
@@ -1148,6 +1148,112 @@ const EmptyState({
 
 ## lib/runtime/
 
+### 插件上下文（`ctx`）——Phase 3.6
+
+插件在沙箱里拿到的宿主能力，**五类**：
+
+| 面 | API | 本阶段状态 |
+|----|-----|-----------|
+| HTTP | `ctx.http.get(url, headers)` / `ctx.http.post(url, body, headers)` | ✅ 真发（dio 代理） |
+| 私有存储 | `ctx.storage.get(key)` / `set(key, value)` / `remove(key)` | ✅ 真存（Hive `plugin_data`） |
+| 日志 | `ctx.log.info(msg)` / `ctx.log.error(msg)` | ✅ → `debugPrint` |
+| 通知 | `ctx.notify.schedule(title, body, triggerAtIso)` | ⏳ 占位（只记日志，Phase 7 接真实通知） |
+| 凭证 | `ctx.cookie`（属性） | ⏳ 只读；Phase 4 由 WebView 登录写入 |
+
+**不做**：权限系统（所有插件都能用全部 ctx）、网络白名单。
+
+#### ⚠️ 为什么 `ctx.http` 是"登记待办 + 宿主重放"而不是直接同步请求
+
+任务书原设想"Dart 暴露 `__dart_http_get(url, headers) → responseJson`"，但**在当前架构下不可能**：
+
+1. 沙箱跑在**独立 isolate**，`onMessage` 的 Dart 回调是在子 isolate 里执行的闭包，
+   而 dio / Hive / secure_storage 都在主 isolate——**闭包跨不了 isolate**；
+2. 就算能跨，`sendMessage` 通道要求 Dart 侧**同步**返回，而 dio 是异步的；
+3. JS 又**无法挂起**：本库唯一的异步路径（`fetch`/Promise）走 `callFunction`，
+   而 QuickJS 后端该方法是 `UnimplementedError`（Phase 3.2a 实测）；
+4. 唯一可用的**同步** HTTP 客户端 `sync_http` 用 `RawSynchronousSocket`（**纯 TCP，无 TLS**），
+   不能 HTTPS——教务系统全是 HTTPS，等于没用（而且它是 flutter_js 的传递依赖，直接用要改 pubspec）。
+
+因此采用**重放式同步外观**（Phase 3.6 决策 B）：
+
+```
+1. 宿主每轮先注入"本轮状态"（HTTP 响应缓存 / storage 快照 / cookie）为 JS 全局
+2. 插件照常写 var r = ctx.http.get(url) —— 命中缓存就同步拿到响应
+3. 未命中时 ctx.http.get 只把请求登记进待办并返回 {ok:false,error:'pending'}，绝不发网络
+4. 宿主读回本轮的待办与副作用
+5. 有待办 → 用 dio 取回（真超时）→ 并入缓存 → 重放插件函数
+6. 没有待办的那一轮 = 最终轮：提交其 storage / log / notify 副作用并返回
+```
+
+**代价与约束（写进文档）**：
+- 插件函数会被**执行多次**，所以它必须是幂等的纯计算；
+- 副作用**只在最终轮生效**（每轮都从同一 storage 快照开始），中间轮次的 `ctx.storage` 修改被丢弃；
+- 顶层（`__plugin` 定义处）调用 `ctx.*` 无意义——那时还没有"轮"，副作用不会被提交；
+- 同一轮内对同一 `(method,url,body,headers)` 重复请求只登记一次；跨轮命中缓存。
+
+### `plugin_ctx_script.dart` — ctx 的 JS 侧契约
+
+> # ⚠️ 写插件前必读：入口函数必须幂等
+>
+> **`ctx.http` 用"登记待办 + 宿主重放"实现，因此插件的入口函数会被宿主执行多次。**
+> 三条硬约束（完整说明见 `CONTEXT.md` 3.6）：
+>
+> 1. **入口函数必须是幂等的纯计算** —— 不要做自增 / 累加 / 发消息这类重复执行会出错的副作用；
+> 2. **`ctx.storage` 的修改只在最终轮生效** —— 每轮都从同一快照开始，
+>    中间轮次的修改会被丢弃（**同一轮内** `set` 后 `get` 仍然可见）；
+> 3. **`ctx.*` 只应在入口函数里使用** —— 顶层（`__plugin` 定义处）调用不会被提交。
+>
+> 请求去重：同一轮内对同一 `(method, url, body, headers)` 只登记一次，跨轮命中缓存，
+> 所以"循环请求同一个 URL"是安全的。轮数上限 8（`PluginContext.kMaxReplayRounds`）。
+
+- `const String kPluginCtxScript` — 预置脚本，定义全局 `ctx` 与内部 primitive
+  （`__ctx_http` / `__ctx_storage_get|set|remove`）及本轮状态变量。
+  **全部在 JS 侧实现**：未命中缓存只是 `push` 进 `__ctx_http_pending`，不发任何 Dart 通道
+- `String buildCtxStateScript({required Map<String,String> httpCache, required Map<String,String> storage, required String cookie})`
+  — 构造"本轮状态"脚本，宿主每轮执行插件函数前求值；同时清空待办/日志
+- `const String kCtxDumpScript` — 读回本轮副作用，返回
+  `{pending, storage, touched, logs, notifies}` 的 JSON
+- Dart ↔ JS 边界**只传字符串**：状态与副作用都用 `jsonEncode` 嵌成 JS 字面量 / 用 `jsonDecode` 解析
+
+### `plugin_context.dart` — PluginContext（Phase 3.6）
+
+宿主侧 ctx 实现 + 重放循环。
+
+构造：`PluginContext({required String pluginId, Dio? dio, FlutterSecureStorage? secureStorage})`
+（`dio` 可注入，测试用自定义 `HttpClientAdapter` 即可不打真网络）
+
+常量：`kHttpConnectTimeout = 10s`、`kHttpReceiveTimeout = 15s`、`kMaxReplayRounds = 8`、
+`kUserAgent = 'MySchedule/0.1'`、`kCookieKeySuffix = ':cookie'`、`kStorageKeySeparator = ':'`
+
+- `Future<JsSandboxResult> execute({required JsSandbox sandbox, required String entryCallScript, Duration timeout = kDefaultJsTimeout})`
+  — 驱动重放循环。**只要本轮登记了待办就重放**（无论本轮是成功、抛错还是 `pending`），
+  这样插件写不写 `try/catch` 都正确；轮数超过 `kMaxReplayRounds` 返回 `error` 防死循环
+- `Future<String> loadCookie()` — 读 `flutter_secure_storage` 的 `<pluginId>:cookie`；
+  不存在 / 读取失败（含测试环境无平台通道）一律返回空串，不抛异常
+- `Future<Map<String, String>> loadStorageSnapshot()` — 用 `pluginDataBox.toMap()` 一次读整表再按前缀过滤
+- `Future<void> commitStorageChanges({required Map<String,String> storage, required List<String> touched})`
+  — 只写 `touched` 里的键（存在于 `storage` 则写，否则删）
+- `Future<Map<String, String>> performHttpRequests(List<PluginHttpRequest> requests)` — **串行**执行（插件的请求常有先后依赖，且对教务系统更友好）
+
+`PluginHttpRequest`（`@immutable`）：`method` / `url` / `key` / `body` / `headers`，
+另有 `static PluginHttpRequest? tryParse(Object? raw)`（缺字段/类型不符返回 `null`，跳过该条）。
+
+**HTTP 响应 JSON（Dart → JS 统一格式）**：
+
+```json
+{ "ok": true,  "status": 200, "body": "...", "headers": {"content-type": "..."} }
+{ "ok": false, "error": "timeout" }
+```
+
+`error` 取值：`timeout`（连接/发送/接收/转换超时）、`connection`、`bad_certificate`、
+`cancelled`、`bad_response`、`unknown`；另有内部标记 `pending`（插件在最终轮不会看到）。
+
+- **任何状态码都算"拿到响应"**（`validateStatus: (_) => true`）：4xx/5xx 的正文对插件往往有用
+  （教务系统常用 500 返回错误页），由插件自己判断 `status`
+- 固定加 `User-Agent: MySchedule/0.1`，便于教务系统识别
+- **真失败时 `ctx.http.get` 会抛错**（`error !== 'pending'`），插件可用 `try/catch` 接住；
+  也可以不接——那这一轮就是 error 结果
+
 ### `js_sandbox.dart` — JsSandbox（Phase 3.2a）
 
 把 flutter_js（QuickJS）包成**不会拖死 UI 线程、不会因插件乱来而崩溃**的执行环境。JS 在**独立 isolate** 里跑，父 isolate 只管计时。
@@ -1251,6 +1357,12 @@ var __plugin = {
 **数据交换约定**（沿用 3.2a 约束）：入参经 `JSON.parse` 进入 JS、返回值经
 JS 侧 `JSON.stringify` 出来、Dart 侧 `jsonDecode` 解析；**不使用 `convertValue`**。
 
+**可用能力（Phase 3.6 起）**：入口函数里可以直接用全局 `ctx`
+（`ctx.http` / `ctx.storage` / `ctx.log` / `ctx.notify` / `ctx.cookie`，见下方「插件上下文」一节）。
+> ⚠️ 因为 `ctx.http` 用"重放"实现，**入口函数会被执行多次**：
+> 它必须是幂等的纯计算；`ctx.storage` 的修改只在最终轮生效。
+> 另外 `ctx.*` 只应在**入口函数里**用，顶层调用不会被提交。
+
 **插件文件从哪来**：Phase 3.4 起由 `PluginStorageService` 管理，插件文件位于应用私有目录
 `<appDocuments>/plugins/`；`PluginManager.defaultSourceResolver` 按 `meta.id` 现算路径。
 **Phase 3.5 起**还支持从 **assets** 安装内置 / 示例插件
@@ -1314,7 +1426,7 @@ JS 侧 `JSON.stringify` 出来、Dart 侧 `jsonDecode` 解析；**不使用 `con
 方法：
 - `bool get isUsable` — **动态判定**：`status == success` **且**底层沙箱仍存活。因此插件某次执行超时（沙箱被 kill）后会自动变 `false`，无需改字段——这也是本类能保持完全不可变的原因
 - `bool get isLoaded` — 只看加载结果（不含沙箱后续存活状态）
-- `Future<JsSandboxResult> execute(String entryFunction, {Map<String, dynamic>? args, Duration timeout = kDefaultJsTimeout})` — 调用入口函数，返回沙箱四态，**不抛异常**
+- `Future<JsSandboxResult> execute(String entryFunction, {Map<String, dynamic>? args, Duration timeout = kDefaultJsTimeout})` — 调用入口函数，返回沙箱四态，**不抛异常**。**Phase 3.6 起**：若句柄持有 `PluginContext`（私有字段 `_context`），会走 `context.execute(...)` 的**重放**流程；否则退化为单次求值（兼容 Phase 3.5 之前的用法与测试）
 - `Future<void> dispose()` — 销毁独占沙箱，幂等
 
 > **为什么每插件一个沙箱**：`__plugin` 是全局变量，共用沙箱会让两个插件互相覆盖；
@@ -1325,7 +1437,11 @@ JS 侧 `JSON.stringify` 出来、Dart 侧 `jsonDecode` 解析；**不使用 `con
 插件运行时骨架：把「插件文件」变成「可执行的 JS」。**不做** `ctx.http` / `ctx.storage`
 注入（留给 3.2b.2 / 3.2b.3），**不接 UI**。
 
-构造：`PluginRuntime({Duration loadTimeout = kDefaultJsTimeout, Duration executeTimeout = kDefaultJsTimeout, void Function(String message)? onLog, @visibleForTesting bool simulateSandboxFailure = false})`
+构造：`PluginRuntime({Duration loadTimeout = kDefaultJsTimeout, Duration executeTimeout = kDefaultJsTimeout, void Function(String message)? onLog, @visibleForTesting bool simulateSandboxFailure = false, Dio? dio})`
+
+- `dio` 透传给 `PluginContext`（测试注入自定义 adapter 即可不打真网络）
+- `loadPlugin` 流程：取源码 → 起沙箱 → **注入 `kPluginCtxScript`（定义全局 `ctx`）** → 顶层求值插件源码 → 校验 `__plugin` → 收集入口函数 → 取/推导 manifest → 创建 `PluginContext` 挂到 handle。
+  **注入顺序很重要**：`ctx` 必须先定义好，插件的顶层代码才能引用它
 
 - `Future<PluginHandle> loadPlugin({String? path, String? jsSource, String? manifestPath})` — 加载插件。
   - 源码来源优先级：`jsSource` → `path` 读文件 → 都没有则降级
