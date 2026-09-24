@@ -12,11 +12,11 @@
 
 > 给新会话 AI 用。每次阶段切换时更新。
 
-- **最新完成**：Phase 3.3（多插件管理 PluginManager + PluginProvider 接线）
-- **代码状态**：dart analyze 全绿，真机验收通过（`getprop ro.product.model` = `2211133C`）
+- **最新完成**：Phase 3.4（插件文件持久化 PluginStorageService + path_provider）
+- **代码状态**：dart analyze 全绿；真机验收通过（`getprop ro.product.model` = `2211133C`）
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
-- **下一步**：Phase 3.4（插件文件来源：`path_provider` 接入 + 插件安装流程；并做 `ctx.http` / `ctx.storage` 注入）
-- **最近 commit**：feat(plugin): 新增插件文件加载与 PluginRuntime 骨架
+- **下一步**：Phase 3.5（`ctx.http` / `ctx.storage` 注入；并处理 3.3 遗留的 ModuleProvider 用 allCapabilities 问题）
+- **最近 commit**：feat(plugin): 新增多插件管理 PluginManager 并接线 PluginProvider
 - **关键约束**：
   - testWidgets 不能触发 Hive 写（会卡死）
   - schema 已冻结（改字段要写迁移）
@@ -29,6 +29,8 @@
   - **每插件独占一个 JsSandbox**（`__plugin` 是全局变量，共用会互相覆盖）
   - **PluginManager 不继承 ChangeNotifier**（无状态服务），通知 UI 是 PluginProvider 的职责
   - **加载失败原因不落盘**（运行时瞬时状态），只存 `PluginProvider.loadErrors` 内存
+  - **插件 id 只允许字母/数字/下划线/横线**（防 `../` 路径穿越），点号也禁止
+  - **不把安装绝对路径存进 meta**（iOS 容器 UUID 每次更新会变），一律按 id 现算
   - **docs/PROGRESS.md 曾因编码问题损坏**，见阻塞表（编辑该文件时务必确认保存为 UTF-8）
 
 ---
@@ -757,13 +759,108 @@
 >
 > **测试注意**：JS 相关测试需 `quickjs_c_bridge.dll`（见 `docs/ENV.md`），已拷到项目根目录、跑完已删。
 
+> **Phase 3.4**（插件文件持久化 PluginStorageService + path_provider）：`dart analyze lib` 通过。
+> **只加了 `path_provider` 一个依赖**（2.1.6；它原本就是 `hive_flutter` 的传递依赖，本次提升为直接依赖）。
+> 未接 UI（插件管理页仍是占位）。
+>
+> 改动：
+> - `docs/CONTEXT.md`：技术栈表加 `| 路径获取 | path_provider | ^2.1.4 |`；
+>   3.5 存储分离表加"插件文件 → `<appDocuments>/plugins/`"；版本记录加 v1.2；头部版本号改 v1.2
+> - `pubspec.yaml`：加 `path_provider: ^2.1.4`
+> - 新建 `lib/services/plugin_storage_service.dart`：`PluginStorageService`（纯静态）
+>   - 常量 `kPluginsSubdirName`('plugins') / `kPluginJsSuffix`('.js') /
+>     `kPluginIdPattern` / `kMaxPluginIdLength`(64)
+>   - `getPluginsDir` / `installPlugin` / `uninstallPlugin` / `isInstalled` /
+>     `listInstalled` / `getPluginJsPath` / `getPluginManifestPath` / `clearAll` /
+>     `isValidPluginId` / `setRootDirForTesting`
+> - 改 `lib/runtime/plugin_manager.dart`：`PluginSourceResolver` **改为异步**
+>   （`Future<PluginSource> Function(PluginMeta)`）；`defaultSourceResolver`
+>   改为从安装目录取 `<id>.js`（不再读 `meta.assetPath`）；解析器调用包 try-catch；
+>   降级原因改为"插件未安装（在插件目录中找不到 .js 文件），或插件 id 非法"
+> - 改 `lib/models/plugin_meta.dart`：**收窄 `assetPath` 的文档语义**（见下），**代码零改动**
+> - `lib/main.dart`：**未改动**（懒加载已足够，理由见下）
+>
+> **三个需要判断的点，我的决定与理由**：
+>
+> 1. **`PluginSourceResolver` 改为异步**（而非"保持同步 + 预热全局缓存"）：
+>    解析默认要查"文件在不在"，本身就是异步 I/O。同步签名只能靠"必须先预热缓存、
+>    否则静默返回 null"来伪装，那是个容易踩的坑（忘了预热 = "插件莫名不可用"，
+>    而且失败是静默的）。`PluginManager.load()` 本来就是 `async`，await 解析器零额外成本。
+>
+> 2. **`PluginMeta.assetPath`：保留键名、不改名、不新增 `installedPath`**。理由：
+>    - 安装路径是 **`pluginId` 的纯函数**（`<pluginsDir>/<id>.js`），**不需要持久化**；
+>    - 持久化绝对路径反而**会过期**：iOS 应用容器 UUID 每次 App 更新都变，
+>      Android 虽稳定但没必要冒这个险。存了就是引入一个 bug。
+>    - CONTEXT 4.2.1 规定序列化键名已冻结，改名要写迁移；**收窄语义（只改注释）零迁移成本**。
+>    - `assetPath` 的新语义：**打包内置插件**的 asset 路径（相对 `assets/` 根）。
+>      那类插件要用 `rootBundle` 读，与文件系统路径是**两种加载方式**，因此保留该字段是合理的，
+>      不是"留了个没用的字段"。
+>
+> 3. **`PluginStorageService` 懒加载，`main.dart` 不改**：首次调用才向 path_provider
+>    要目录并缓存。好处是 **path_provider 不可用时只影响插件功能，不影响 App 启动**
+>    （与 `StorageService.init()` 失败不崩的原则一致）。预热只会把失败提前到启动路径上，
+>    没有实际收益。
+>
+> **路径安全（重点）**：插件 id 会被直接拼进文件名，因此 `isValidPluginId` 只允许
+> **字母、数字、下划线、横线**（`^[A-Za-z0-9_-]+$`，长度 1–64）。**点号也在禁止之列**
+> ——`..` 正是路径穿越的核心。约定：**查询类方法**（`isInstalled` / `getPluginJsPath` /
+> `getPluginManifestPath`）对非法 id 返回"找不到"（`false` / `null`）；
+> **命令类方法**（`installPlugin` / `uninstallPlugin`）抛 `ArgumentError`——非法 id 是
+> 调用方的编程错误，不该静默成功。
+>
+> **两个额外的稳健性设计**：
+> - **原子写**：`installPlugin` 先写 `<name>.js.tmp` 再 rename 覆盖，避免写到一半被中断时
+>   留下半个文件、把原本能用的插件覆盖成坏文件。
+> - **重复安装整体覆盖**：`manifestJson` 为 `null` 时**主动删掉旧的 `.manifest.json`**，
+>   否则加载器会读到上次的过期声明。
+>
+> **验证**：临时 `flutter test` 脚本 **23 组全部通过**，脚本已删除。覆盖：
+> 合法 id 接受（含 64 字符边界）、非法 id 拒绝（`../evil` / `..` / `.` / `a/b` / `a\b` /
+> `a.b` / `a b` / `a;b` / 空串 / 超长）、**installPlugin 对非法 id 抛 ArgumentError 且不落盘**
+> （并确认根目录外没有写出文件）、uninstallPlugin 对非法 id 抛、查询类方法对非法 id 返回
+> false/null、install 后 `listInstalled`/`isInstalled` 正确且路径含 `<root>/plugins/`、
+> **`getPluginJsPath` 内容 == 传入的 jsSource**、重复安装覆盖、**重复安装无 manifest 时删掉旧 manifest**、
+> 带 manifest 安装可读回且 manifest 不计入 `listInstalled`、卸载后文件消失、
+> 卸载未安装的是幂等、多插件安装不冲突且 `listInstalled` 升序、
+> `clearAll` 后目录为空、**无 `.tmp` 残留**、`getPluginsDir` 缓存、
+> `defaultSourceResolver` 已安装→有路径 / 未安装→null、非法 id→返回 null 不抛、
+> **解析器不读 `meta.assetPath`**（故意给错路径仍指向真实安装位置）、
+> 未安装时 `load` 降级且原因含"未安装"、
+> **端到端：installPlugin → 默认解析 → 沙箱执行成功**、
+> 覆盖安装后重新加载拿到新版本行为、卸载文件后 load 降级为"未安装"。
+>
+> **真机验证（✅ 已完成）**：Redmi K60（`adb shell getprop ro.product.model` 原始输出 = `2211133C`，
+> Android 16 / arm64-v8a）。**实际插件目录正是预期路径**：
+> ```
+> [STORAGE-VERIFY] 插件目录: /data/user/0/com.example.my_schedule_app/app_flutter/plugins
+> [STORAGE-VERIFY] 目录已创建: true
+> [STORAGE-VERIFY] 安装路径: /data/user/0/com.example.my_schedule_app/app_flutter/plugins/verify-storage.js
+> [STORAGE-VERIFY] isInstalled=true listInstalled=[verify-storage]
+> [PluginRuntime] 插件加载成功：verify-storage，入口函数 [run]
+> [STORAGE-VERIFY] 加载: isUsable=true entries=[run] sourcePath=.../app_flutter/plugins/verify-storage.js
+> [STORAGE-VERIFY] 执行: status=success value={"ok":true,"from":"device"}
+> [STORAGE-VERIFY] 路径安全: 已拒绝非法 id（pluginId）
+> [STORAGE-VERIFY] 非法 id 查询: isInstalled=false getPluginJsPath=null
+> [STORAGE-VERIFY] 卸载后: isInstalled=false listInstalled=[]
+> ```
+> 并用 `adb shell run-as com.example.my_schedule_app ls -la app_flutter/plugins` **独立确认**
+> 该目录真实存在于设备上（验证代码已卸载插件，故目录为空）。
+> 过程中手机曾掉线一段时间，`adb reconnect offline` + 轮询重试后恢复。
+>
+> **桌面端交叉印证**：同一份验证代码在 Windows 桌面端也跑通
+> （`C:\Users\adm\Documents\plugins`，`path_provider` 在桌面同样可用，代码路径完全一致），
+> 说明实现不依赖 Android 特性；桌面验证遗留的空目录已删除。
+>
+> **测试注意**：JS 相关测试需 `quickjs_c_bridge.dll`（见 `docs/ENV.md`），已拷到项目根目录、跑完已删。
+> 文件存储测试用 `PluginStorageService.setRootDirForTesting(临时目录)` 绕过 path_provider 平台通道。
+
 - [x] flutter_js 集成（Phase 3.1，仅验证可用性）
 - [x] JS 运行时沙箱与兜底（Phase 3.2a，`lib/runtime/js_sandbox.dart`）
 - [x] 插件文件加载 + PluginRuntime 骨架（Phase 3.2b.1：`plugin_manifest.dart` /
       `plugin_handle.dart` / `plugin_runtime.dart`）
 - [x] 多插件管理（Phase 3.3：`plugin_manager.dart` + `PluginProvider` 接线 + 持久化）
+- [x] 插件文件持久化（Phase 3.4：`plugin_storage_service.dart` + `path_provider`）
 - [ ] `lib/runtime/plugin_context.dart`（`ctx.http` / `ctx.storage` 注入）
-- [ ] `lib/runtime/package_manager.dart`
 - [ ] 插件管理 UI 接入真实数据
 
 ---
@@ -869,4 +966,9 @@
 | 2026-09-23 | **`ModuleProvider` 仍由 `allCapabilities`（按"已启用"算）驱动，未改用 `loadedCapabilities`（按"加载成功"算）**：结果是"插件启用了但加载失败"时，其声明的模块仍会变成可用。改用后者语义更正确，但会改变模块可用性行为，属独立决策 | ⚠️ 待处理 |
 | 2026-09-23 | 3.3 给 `PluginProvider` 加了 `plugins` Box 持久化（一 id 一 key，值为 `PluginMeta` JSON）。**该存储格式此后即契约**，改动需写迁移 | 已决定 |
 | 2026-09-23 | 3.3 未做插件管理 UI 接线（`PluginManagePage` 仍是占位页），`togglePlugin` 等新方法暂无 UI 调用方 | 待处理 |
+| 2026-09-23 | 3.4 的真机验证**已完成**：Redmi K60（`2211133C`）上 `installPlugin` → 默认解析 → 沙箱执行 → 路径安全 → 卸载全部通过，实际目录 `/data/user/0/com.example.my_schedule_app/app_flutter/plugins` 已用 adb 独立确认 | ✅ 已完成 |
+| 2026-09-23 | 3.4 未做"插件安装 UI / 安装流程"：`PluginStorageService.installPlugin` 目前只有测试与验证代码在调，用户还不能导入插件文件（需要文件选择器，属新依赖） | 待处理 |
+| 2026-09-23 | `PluginStorageService` 的目录布局（`<appDocuments>/plugins/<id>.js` + `<id>.manifest.json`）此后即**契约**：已装插件的文件名/后缀改动需写迁移（重命名旧文件） | 已决定 |
 | 2026-09-23 | PluginProvider 用 allCapabilities（enabled）驱动模块可用性，插件加载失败时模块仍在——Phase 3.5 在插件详情页显示 loadErrors | 待处理 |
+| 2026-09-24 | 插件安装 UI（文件选择器）暂不做，Phase 4 从 assets 内置插件加载 | 已决定 |
+| 2026-09-24 | 插件目录布局 `<id>.js` / `<id>.manifest.json` 是契约，改动需写迁移 | 已决定 |

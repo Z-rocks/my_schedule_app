@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-23（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager）
+- 最后更新：2026-09-23（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService）
 
 ---
 
@@ -287,7 +287,7 @@
 | `capabilities` | `List<String>` | **数据能力 ID 列表**，如 `['exam', 'homework']`（扁平声明，无 UI 信息） |
 | `modules` | `List<ModuleInfo>` | 插件贡献的导航栏模块（含标题/图标/排序等 UI 元数据） |
 | `entryFile` | `String` | 入口文件名 |
-| `assetPath` | `String` | 本地路径 |
+| `assetPath` | `String` | **打包内置插件**的 asset 路径（相对 `assets/` 根）。**Phase 3.4 起不再用于定位已安装插件**——那由 `PluginStorageService.getPluginJsPath(id)` 现算。键名保持不变（schema 已冻结，改名要写迁移；收窄语义零迁移成本） |
 | `source` | `String` | `"builtin"` / `"workshop"` / `"local"` |
 | `downloadUrl` | `String` | 商店原始 URL |
 | `hasUpdate` | `bool` | 是否有更新 |
@@ -519,6 +519,52 @@ App 的全部视觉令牌集合，不可变（28 个字段）。UI 必须经 `Ap
 - `static Box<String> get coursesBox` / `examsBox` / `homeworksBox` / `messagesBox` / `overridesBox` / `settingsBox` / `pluginsBox` / `skinsBox` — 未初始化或该 Box 打开失败时抛 `StateError`（由调用方 try-catch 兜住，不静默返回坏数据）
 
 > 设计：所有 Box 统一 `Box<String>` 存 JSON 字符串，**不注册任何 `TypeAdapter`**（CONTEXT 禁止 `build_runner`），模型的 `toJson`/`fromJson` 是唯一序列化途径。
+
+### `plugin_storage_service.dart` — PluginStorageService（Phase 3.4）
+
+插件**物理文件**的存储服务（纯静态类）：管理插件在应用私有目录下的安装 / 卸载 / 查询。
+这是"插件文件从哪来"的答案——3.2b.1 起的临时目录方案到此结束。
+
+**目录布局**（`<appDocuments>` 由 `path_provider` 给出）：
+
+```
+<appDocuments>/plugins/
+  <pluginId>.js               插件脚本（必需）
+  <pluginId>.manifest.json    元数据（可选）
+```
+
+Android 上 `<appDocuments>` 是 `/data/user/0/<package>/app_flutter`，
+因此插件目录为 `/data/user/0/<package>/app_flutter/plugins/`。
+
+常量：`kPluginsSubdirName = 'plugins'`、`kPluginJsSuffix = '.js'`、
+`kPluginIdPattern = RegExp(r'^[A-Za-z0-9_-]+$')`、`kMaxPluginIdLength = 64`
+
+**`pluginId` 校验（路径安全）**
+
+- `static bool isValidPluginId(String pluginId)` — 非空、长度 ≤ 64、**只含字母 / 数字 / 下划线 / 横线**
+- 点号也在禁止之列：id 会被直接拼进文件名，若允许 `.`、`/`、`\`，攻击者可用 `../../` 做**路径穿越**把文件写到插件目录之外
+- **约定**：查询类方法对非法 id 返回"找不到"（`false` / `null`）；命令类方法（`installPlugin` / `uninstallPlugin`）抛 `ArgumentError`——非法 id 是调用方的编程错误，不该静默成功
+
+**方法**
+
+- `static Future<Directory> getPluginsDir()` — 取插件根目录（不存在则创建）。结果**缓存**，重复调用不反复访问平台通道
+- `static Future<String> installPlugin({required String pluginId, required String jsSource, String? manifestJson})` — 安装，返回 JS 文件绝对路径
+  - **重复安装整体覆盖**；`manifestJson` 为 `null` 时**删掉旧的 `.manifest.json`**，避免上次元数据残留让加载器读到过期声明
+  - **写文件用"临时文件 + 重命名"**（`<name>.js.tmp` → rename），避免写到一半被中断时留下半个文件、把原本能用的插件覆盖成坏文件
+  - 非法 id 抛 `ArgumentError`；I/O 失败记日志后 rethrow（不让调用方误以为安装成功）
+- `static Future<void> uninstallPlugin(String pluginId)` — 删除两个文件；**不存在视为已卸载（幂等）**
+- `static Future<bool> isInstalled(String pluginId)` — `<id>.js` 是否存在
+- `static Future<List<String>> listInstalled()` — 扫描目录里的 `*.js`，返回 id 列表（升序）。`*.js.tmp` 与 `*.json` 都不计入
+- `static Future<String?> getPluginJsPath(String pluginId)` — JS 文件绝对路径；**未安装返回 `null`**
+- `static Future<String?> getPluginManifestPath(String pluginId)` — manifest 绝对路径；不存在返回 `null`
+- `static Future<void> clearAll()` — 清除目录内全部文件（测试用），目录本身保留
+- `static void setRootDirForTesting(String? rootDir)`（`@visibleForTesting`）— 把根目录指向临时路径并清缓存，**测试免去 `path_provider` 平台通道**（与 `StorageService.init({String? path})` 同思路）
+
+> **为什么不把安装路径存进 `PluginMeta`**：路径是 `pluginId` 的**纯函数**，存下来既冗余又危险——
+> iOS 的应用容器 UUID 每次 App 更新都会变，存下的绝对路径会在更新后失效。因此一律现算。
+>
+> **懒加载**：首次调用才向 `path_provider` 要目录，故 `main.dart` **无需预热**；
+> path_provider 不可用时也只影响插件功能，不影响 App 启动。
 
 ### `override_engine.dart` — OverrideEngine
 用户覆盖层的读写入口（纯静态类）。覆盖层与原始数据分离存储，两边都以**课程 ID** 为 key。
@@ -1227,13 +1273,13 @@ JS 侧 `JSON.stringify` 出来、Dart 侧 `jsonDecode` 解析；**不使用 `con
 
 类型别名：
 - `typedef PluginSource = ({String? path, String? jsSource})` — "从哪读插件的 JS"，二者给其一
-- `typedef PluginSourceResolver = PluginSource Function(PluginMeta meta)` — 把 meta 解析成来源
+- `typedef PluginSourceResolver = Future<PluginSource> Function(PluginMeta meta)` — 把 meta 解析成来源。**Phase 3.4 起改为异步**（原为同步 `PluginSource Function(PluginMeta)`）：解析默认要查"插件文件在不在"，本身就是异步 I/O；同步签名只能靠"必须先预热全局缓存、否则静默返回 null"来伪装，那是个容易踩的坑（忘了预热就变成"插件莫名不可用"）。而 `load()` 本来就是 `async`，await 解析器零额外成本
 
 构造：`PluginManager({PluginRuntime? runtime, PluginSourceResolver? sourceResolver})`
 - 都不传时自建 `PluginRuntime()` 并使用 [defaultSourceResolver]
-- 抽成可注入是为了：① 测试可绕过文件系统直接给 `jsSource`（否则必须往磁盘写 .js 文件）；② Phase 3.4 接入 `path_provider` 后只换解析器，本类不用改
+- 抽成可注入是为了：① 测试可绕过文件系统直接给 `jsSource`（否则必须往磁盘写 .js 文件）；② 将来换安装位置或加内置插件时只换解析器，本类不用改
 
-- `static PluginSource defaultSourceResolver(PluginMeta meta)` — 用 `PluginMeta.assetPath` 作为文件路径；`assetPath` 为空时两者给 `null`，由 `load` 降级为"没有可加载的本地文件"
+- `static Future<PluginSource> defaultSourceResolver(PluginMeta meta)` — **Phase 3.4 起从插件安装目录取 `<id>.js`**（`PluginStorageService.getPluginJsPath(meta.id)`），**不再读 `meta.assetPath`**（安装路径是 id 的纯函数，存进 meta 既冗余、又会在应用容器路径变化后失效）。id 非法或未安装时两者给 `null`，由 `load` 降级为"插件未安装"，**不抛异常**
 - `Map<String, PluginHandle> get loadedHandles` — `meta.id → handle`，**不可变视图**。**包含加载失败的降级 handle**（`isUsable == false`），这样调用方既能查到"尝试过"，也能读到失败原因
 - `int get loadedCount` — 已成功加载（沙箱可用）的数量
 - `int get handleCount` — 全部 handle 数（含降级）
@@ -1241,7 +1287,8 @@ JS 侧 `JSON.stringify` 出来、Dart 侧 `jsonDecode` 解析；**不使用 `con
   - **已加载且可用** → 直接返回既有 handle（跳过，不重复建沙箱）
   - 既有 handle 是**降级**的（上次失败）→ 先 `dispose` 再重试（降级不算"已加载"）
   - `jsSource` 优先于 `sourceResolver`
-  - 没有可加载来源时**不白起沙箱**，直接降级并给出明确原因（含"待 Phase 3.4 接入 path_provider"）
+  - 没有可加载来源时**不白起沙箱**，直接降级为"插件未安装（在插件目录中找不到 `.js` 文件），或插件 id 非法"
+  - 解析器抛异常会被兜住并降级（默认解析器走文件系统，可能因权限失败）
   - 插件自报 `id` 与安装 `id` 不一致时 `debugPrint` 提示，**仍按安装 id 管理**
   - **不抛异常**：任何失败都返回降级 handle
 - `Future<void> unload(String pluginId)` — 销毁沙箱并移出映射；找不到该 id 为空操作

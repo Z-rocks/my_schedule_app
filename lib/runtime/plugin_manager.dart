@@ -10,6 +10,7 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 
 import '../models/plugin_meta.dart';
+import '../services/plugin_storage_service.dart';
 import 'js_sandbox.dart';
 import 'plugin_handle.dart';
 import 'plugin_runtime.dart';
@@ -19,10 +20,16 @@ typedef PluginSource = ({String? path, String? jsSource});
 
 /// 把 [PluginMeta] 解析成实际可加载的来源。
 ///
+/// **Phase 3.4 起改为异步**（原为同步 `PluginSource Function(PluginMeta)`）：
+/// 解析默认要查"插件文件在不在"（`PluginStorageService.getPluginJsPath`），
+/// 这本身就是异步 I/O。同步签名只能靠"必须先预热一个全局缓存、否则静默返回
+/// null"来伪装，那是个很容易踩的坑（忘了预热就变成"插件莫名不可用"）。
+/// 而 [PluginManager.load] 本来就是 `async`，await 解析器零额外成本。
+///
 /// 抽成可注入的函数是为了两件事：
 /// 1. **测试**可以绕过文件系统，直接给 `jsSource`（否则必须往磁盘写 .js 文件）；
-/// 2. Phase 3.4 接入 `path_provider` 后，只需换一个解析器，本类不用改。
-typedef PluginSourceResolver = PluginSource Function(PluginMeta meta);
+/// 2. 将来换安装位置或加内置插件时，只换解析器，本类不用改。
+typedef PluginSourceResolver = Future<PluginSource> Function(PluginMeta meta);
 
 /// 多插件管理器：`id → PluginHandle` 的映射 + 生命周期管理。
 ///
@@ -35,13 +42,21 @@ class PluginManager {
   })  : _runtime = runtime ?? PluginRuntime(),
         _resolveSource = sourceResolver ?? defaultSourceResolver;
 
-  /// 默认来源解析器：用 [PluginMeta.assetPath] 作为文件路径。
+  /// 默认来源解析器：从**插件安装目录**取 `<id>.js`（Phase 3.4 起）。
   ///
-  /// `assetPath` 为空时两者都给 `null`，由 [load] 降级为"没有可加载的本地文件"
-  /// （Phase 3.4 接入 `path_provider` 后才会真正有值）。
-  static PluginSource defaultSourceResolver(PluginMeta meta) {
-    final String path = meta.assetPath.trim();
-    return (path: path.isEmpty ? null : path, jsSource: null);
+  /// 路径由 `PluginStorageService` 按 `meta.id` 现算，不读 `meta.assetPath`：
+  /// 安装路径是 id 的纯函数，存进 meta 既冗余、又会在应用容器路径变化后失效。
+  ///
+  /// 插件未安装（文件不存在）时两者都给 `null`，由 [load] 降级为"插件未安装"。
+  static Future<PluginSource> defaultSourceResolver(PluginMeta meta) async {
+    // id 非法（如含 `../`）时不抛异常，直接当作"没有可加载的文件"，
+    // 让降级路径统一处理；非法 id 本身由 PluginStorageService 拒绝。
+    if (!PluginStorageService.isValidPluginId(meta.id)) {
+      debugPrint('[PluginManager] 插件 id 非法，无法定位文件：${meta.id}');
+      return (path: null, jsSource: null);
+    }
+    final String? path = await PluginStorageService.getPluginJsPath(meta.id);
+    return (path: path, jsSource: null);
   }
 
   final PluginRuntime _runtime;
@@ -95,19 +110,28 @@ class PluginManager {
       _handles.remove(meta.id);
     }
 
-    final PluginSource source = jsSource != null
-        ? (path: null, jsSource: jsSource)
-        : _resolveSource(meta);
+    PluginSource source;
+    if (jsSource != null) {
+      source = (path: null, jsSource: jsSource);
+    } else {
+      try {
+        source = await _resolveSource(meta);
+      } catch (e) {
+        // 解析器（默认走文件系统）可能因权限/插件异常失败，兜住并降级。
+        debugPrint('[PluginManager] 解析插件 ${meta.id} 的来源失败：$e');
+        source = (path: null, jsSource: null);
+      }
+    }
 
     // 没有可加载的来源：直接降级，不必白起一个沙箱。
     if (source.path == null && source.jsSource == null) {
-      debugPrint('[PluginManager] 插件 ${meta.id} 没有可加载的本地文件');
+      debugPrint('[PluginManager] 插件 ${meta.id} 没有可加载的文件');
       return _record(
         meta,
         PluginHandle(
           status: JsSandboxStatus.unavailable,
-          reason: '插件 "${meta.id}" 没有可加载的本地文件（assetPath 为空）；'
-              '文件定位待 Phase 3.4 接入 path_provider',
+          reason: '插件 "${meta.id}" 未安装（在插件目录中找不到 '
+              '$kPluginJsSuffix 文件），或插件 id 非法',
         ),
       );
     }

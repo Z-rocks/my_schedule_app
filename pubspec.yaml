@@ -41,6 +41,9 @@ dependencies:
   hive: ^2.2.3
   hive_flutter: ^1.1.0
 
+  # 路径获取（应用私有目录，用于插件文件持久化）
+  path_provider: ^2.1.4
+
   # 安全存储（存 Cookie）
   flutter_secure_storage: ^9.0.0
 

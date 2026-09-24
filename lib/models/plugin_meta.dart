@@ -4,7 +4,8 @@ import 'module.dart';
 /// 一个插件（`.js` 文件）的元数据。
 ///
 /// 由插件头部声明解析而来，用于插件管理页展示与运行时加载校验。
-/// 插件代码本身不在这里，只在 [assetPath] / [downloadUrl] 中记录位置。
+/// 插件代码本身不在这里——已安装插件的文件位置由 `PluginStorageService`
+/// 按 [id] 现算（见 [assetPath] 的说明）。
 class PluginMeta {
   /// 插件唯一 ID，如 `"ncst-jwxt"`。
   final String id;
@@ -43,7 +44,19 @@ class PluginMeta {
   /// 插件入口文件名，如 `"ncst-jwxt.js"`。
   final String entryFile;
 
-  /// 本地文件路径（相对插件目录）；未安装或来自商店时为原始 URL。
+  /// **打包内置插件**的 asset 路径（相对 `assets/` 根，如 `plugins/ncst.js`）。
+  ///
+  /// **Phase 3.4 起不再用于定位已安装插件**：已安装插件的文件位置由
+  /// `PluginStorageService.getPluginJsPath(id)` 按 [id] 现算（目录布局
+  /// `<appDocuments>/plugins/<id>.js` 是 id 的纯函数）。
+  ///
+  /// 为什么不把安装路径存进这个字段：① 冗余（路径可由 id 推出）；
+  /// ② **危险**——iOS 的应用容器 UUID 每次 App 更新都会变，存下的绝对路径
+  /// 会在更新后失效。所以该字段只保留给"随 App 打包"的内置插件
+  /// （那类插件要用 `rootBundle` 读，与文件系统路径是**两种加载方式**）。
+  ///
+  /// 键名保持 `assetPath` 不变：CONTEXT 4.2.1 规定序列化键名已冻结，
+  /// 改名要写迁移，而收窄语义（本注释）零迁移成本。
   final String assetPath;
 
   /// 安装来源：`"local"`（本地导入）、`"workshop"`（创意工坊）、`"builtin"`（内置）。

@@ -4,8 +4,8 @@
 > 每次生成代码前，必须把本文件内容作为前置上下文提供给 AI。
 > 本文件一旦确定，不轻易改动；如需修改，请更新版本号并说明原因。
 
-- 版本：v1.1
-- 最后更新：2026-09-22
+- 版本：v1.2
+- 最后更新：2026-09-23
 
 ---
 
@@ -42,6 +42,7 @@
 | 语言 | Dart | 3.x |
 | 状态管理 | provider | ^6.1.1 |
 | 本地存储 | hive / hive_flutter | ^2.2.3 / ^1.1.0 |
+| 路径获取 | path_provider | ^2.1.4 |
 | 安全存储 | flutter_secure_storage | ^9.0.0 |
 | 网络 | dio | ^5.4.0 |
 | 路由 | go_router | ^13.0.0 |
@@ -91,6 +92,7 @@
 | 模块配置/用户偏好 | Hive Box `settings` |
 | Cookie / Token | flutter_secure_storage（按插件 ID 分 key） |
 | 当前皮肤 ID | Hive Box `settings` |
+| 插件文件（`.js` / `.manifest.json`） | 应用私有目录 `<appDocuments>/plugins/`（`PluginStorageService` 管理） |
 
 ---
 
@@ -184,3 +186,4 @@
 |------|------|------|
 | v1.0 | 2026-09-21 | 初始版本 |
 | v1.1 | 2026-09-22 | 4.1 常量命名改为 `k` 前缀小驼峰（避免 `constant_identifier_names` lint）；新增 4.2.1 序列化字段冻结 |
+| v1.2 | 2026-09-23 | Phase 3.4 引入 path_provider，支持插件文件持久化 |
