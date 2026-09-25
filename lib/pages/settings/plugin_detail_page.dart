@@ -1,11 +1,17 @@
 // 插件详情页：展示单个插件的元信息、运行时状态与操作入口
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/course.dart';
 import '../../models/plugin_meta.dart';
+import '../../providers/course_provider.dart';
 import '../../providers/plugin_provider.dart';
+import '../../runtime/js_sandbox.dart';
 import '../../runtime/plugin_handle.dart';
 import '../../runtime/plugin_manifest.dart';
+import '../../services/cookie_service.dart';
 import '../../services/plugin_storage_service.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
@@ -16,6 +22,12 @@ import 'plugin_manage_page.dart'
         pluginUiStatusColor,
         pluginUiStatusLabel,
         pluginUiStatusOf;
+
+/// 同步时单次 JS 执行的墙钟上限。
+///
+/// 比默认的 1s 宽：一次同步要解析整学期课表（几十门课 + 上百条时间地点），
+/// 而 HTTP 请求本身发生在宿主侧（dio），**不受这个超时约束**。
+const Duration kSyncJsTimeout = Duration(seconds: 5);
 
 /// 插件详情页。
 ///
@@ -160,11 +172,11 @@ class PluginDetailPage extends StatelessWidget {
                 label: '登录',
                 onTap: () => _openLogin(context, provider, meta, handle),
               ),
-              // 以下两项留给后续阶段，先占位（CONTEXT 要求用户可见错误用 SnackBar）。
+              // "立即同步" Phase 4.2 起接真实同步（见 _syncNow）。
               _ActionRow(
                 icon: Icons.sync,
                 label: '立即同步',
-                onTap: () => _snack(context, '立即同步（Phase 4.2/4.3 实现）'),
+                onTap: () => _syncNow(context, provider, meta, handle),
               ),
               _ActionRow(
                 icon: Icons.article_outlined,
@@ -216,6 +228,162 @@ class PluginDetailPage extends StatelessWidget {
       return;
     }
     _snack(context, '登录成功（已保存 ${cookie.length} 字符的 Cookie）');
+  }
+
+  /// 把同步请求收窄成一次（防重复点击的简单闩锁）。
+  ///
+  /// 本页是 `StatelessWidget`（Phase 4.1 起就没引状态），为一次防抖而改造成
+  /// StatefulWidget 不划算；用一个 `try/finally` 保证必被复位的静态闩锁即可。
+  /// Phase 4.4 做同步进度 UI 时再改成页内状态。
+  static bool _syncing = false;
+
+  /// 「立即同步」：读 Cookie → 调插件 `fetchCourses` → 解析 → 落盘（Phase 4.2）。
+  ///
+  /// **关键点**：
+  /// - 插件负责"拉数据 + 转成内核的 Course JSON"（各校字段不同，内核不认识，见 CONTEXT 3.1）；
+  /// - Dart 侧只做**容错解析 + 落盘**：单条课程字段缺失/类型不符就跳过并 `debugPrint`，
+  ///   不让一条坏数据毁掉整次同步；
+  /// - `fetchCourses` 可能被执行多次（`ctx.http` 重放，见 CONTEXT 3.6），
+  ///   但插件是幂等的、宿主只在最终轮提交副作用，所以这里不需要去重。
+  Future<void> _syncNow(
+    BuildContext context,
+    PluginProvider provider,
+    PluginMeta meta,
+    PluginHandle? handle,
+  ) async {
+    if (_syncing) return;
+    final CourseProvider courses = context.read<CourseProvider>();
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+
+    // 1) 先看登录态：没有 Cookie 就别白跑一趟网络
+    final String cookie = await CookieService.loadCookie(meta.id);
+    if (cookie.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('请先登录，再点「立即同步」')),
+      );
+      return;
+    }
+    if (handle == null || !handle.isUsable) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('插件未加载，无法同步：${handle?.reason ?? '未加载'}')),
+      );
+      return;
+    }
+
+    _syncing = true;
+    messenger.showSnackBar(const SnackBar(content: Text('正在同步，请稍候…')));
+    try {
+      final JsSandboxResult result = await handle.execute(
+        'fetchCourses',
+        timeout: kSyncJsTimeout,
+      );
+
+      if (result.status == JsSandboxStatus.timeout) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('同步超时（插件执行过久）')),
+        );
+        return;
+      }
+      if (result.status == JsSandboxStatus.unavailable) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('同步失败：${result.message ?? '插件不可用'}')),
+        );
+        return;
+      }
+      if (!result.isSuccess || result.value == null) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('同步失败：${result.message ?? '插件返回异常'}')),
+        );
+        return;
+      }
+
+      final Object? decoded = _tryDecode(result.value!);
+      if (decoded is! Map) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('同步失败：插件返回值不是 JSON 对象')),
+        );
+        return;
+      }
+
+      // 插件约定：失败返回 {error: '...'}，成功返回 {courses: [...]}
+      final String? pluginError = decoded['error']?.toString();
+      if (pluginError != null && pluginError.isNotEmpty) {
+        messenger.showSnackBar(SnackBar(content: Text('同步失败：$pluginError')));
+        return;
+      }
+
+      final List<Course> parsed = _parseCourses(decoded['courses']);
+      if (parsed.isEmpty) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('同步完成，但没有解析到任何课程')),
+        );
+        return;
+      }
+
+      for (final Course course in parsed) {
+        await courses.saveCourse(course);
+      }
+
+      final List<String> warnings = _stringList(decoded['warnings']);
+      debugPrint('[PluginDetailPage] 同步完成：写入 ${parsed.length} 门课程'
+          '${warnings.isEmpty ? '' : '，警告：${warnings.join('；')}'}');
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            '已同步 ${parsed.length} 门课程'
+            '${warnings.isEmpty ? '' : '（${warnings.length} 条警告，详见日志）'}',
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('[PluginDetailPage] 同步异常：$e');
+      messenger.showSnackBar(SnackBar(content: Text('同步异常：$e')));
+    } finally {
+      _syncing = false;
+    }
+  }
+
+  /// 逐条把插件返回的课程 JSON 解析成 [Course]；坏数据跳过，不抛异常。
+  static List<Course> _parseCourses(Object? raw) {
+    if (raw is! List) return const <Course>[];
+    final List<Course> result = <Course>[];
+    for (int i = 0; i < raw.length; i++) {
+      final Object? item = raw[i];
+      if (item is! Map) {
+        debugPrint('[PluginDetailPage] 第 $i 条课程不是对象，已跳过');
+        continue;
+      }
+      final Map<String, dynamic> json = <String, dynamic>{};
+      item.forEach((dynamic k, dynamic v) {
+        if (k != null) json['$k'] = v;
+      });
+      try {
+        final Course course = Course.fromJson(json);
+        if (course.id.isEmpty) {
+          debugPrint('[PluginDetailPage] 第 $i 条课程缺少 id，已跳过');
+          continue;
+        }
+        result.add(course);
+      } catch (e) {
+        // Course.fromJson 本身已经很宽容，这里只是最后一道保险。
+        debugPrint('[PluginDetailPage] 第 $i 条课程解析失败，已跳过：$e');
+      }
+    }
+    return result;
+  }
+
+  static Object? _tryDecode(String raw) {
+    try {
+      return jsonDecode(raw);
+    } catch (e) {
+      debugPrint('[PluginDetailPage] 解析插件返回值失败：$e');
+      return null;
+    }
+  }
+
+  static List<String> _stringList(Object? raw) {
+    if (raw is! List) return const <String>[];
+    return raw.whereType<Object?>().map((Object? e) => '$e').toList();
   }
 
   /// 卸载：先确认，再移除（会销毁运行时沙箱并删存储），最后退回列表页。

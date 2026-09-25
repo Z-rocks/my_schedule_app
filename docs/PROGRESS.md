@@ -12,23 +12,37 @@
 
 > 给新会话 AI 用。每次阶段切换时更新。
 
-- **最新完成**：Phase 4.1（WebView 登录页 + Cookie 提取）
-- **代码状态**：dart analyze 全绿；真机验收通过（`getprop ro.product.model` = `2211133C`）
+- **最新完成**：Phase 4.2（NCST 教务插件 + 登录/同步接线）—— **代码完成，真机验收待人工**
+- **代码状态**：dart analyze 全绿；**真机验证卡在网络可达性**（见 4.2 备注块）
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
 - **Phase 3 全部完成**：插件运行时（沙箱 → 加载 → 多插件管理 → 文件持久化 → 管理 UI → **ctx**）
-- **下一步**：Phase 4.2（NCST 插件本体：在 `__plugin` 里声明 `loginUrl` / `checkUrl` + 写抓取逻辑）
+- **Phase 4 进度**：4.1 ✅（WebView 登录 + Cookie，已真机验收）→
+  **4.2 代码完成、待人工验收** → 4.3 未开始 → 4.4 未开始
+- **新会话请先做这一件事**：在**校园网/VPN** 下用真机跑通
+  「安装 NCST 插件 → 登录（人工输学号密码）→ 立即同步」。
+  这一步过不了，4.3 / 4.4 都没有意义。若报 `响应结构异常：…`，
+  把 error 文案发出来即可定位（插件已按"结构不符就报错"实现）。
+- **下一步**：Phase 4.3（数据同步打通：增量/覆盖策略、覆盖层保留、失败重试）
+- **⚠️ 4.2 真机验证卡住（需要人工操作）**：NCST 教务主机 `xjw1.ncst.edu.cn` 解析到
+  **校园内网地址 `172.20.13.4`**，手机经"PC 热点"上网时**完全不可达**
+  （手机 ping 该地址 100% 丢包，而 example.com 正常）。**需要让手机连上校园 WiFi
+  或校园 VPN**，并**人工输入学号密码**完成登录，才能验证登录 → 同步 → 课表渲染这条链路。
+  代码侧已验证就绪（见 4.2 备注块的真机结论）。
+- **⚠️ 4.2 未验证：真实教务响应结构**。插件字段名全部来自用户提供的抓包结构，
+  未登录状态下无法验证。**这不算 bug，但属于"未经真机数据验证的假设"**。
 - **⚠️ Phase 4 完成后必须做**：跑一次 **`flutter build apk --release` 做发布包冒烟**。
   到目前为止**所有网络相关验证都是在 debug 包里做的**（debug/profile manifest 自带 `INTERNET`
   权限），release 包是否有其他权限 / 混淆（R8）问题**完全没有验证过**。3.6 刚发现
   `src/main` 缺 `INTERNET` 就是同类问题——release 冒烟必须真正装到设备上跑通
   "安装插件 → `ctx.http` 拉数据"这条链路。
-- **⚠️ Phase 4.2 首先要定的事**：拿到真实教务地址后确认它是 `http://` 还是 `https://`。
-  若是 **http**，必须配 `networkSecurityConfig`（定向放行）或 `usesCleartextTraffic`，
-  否则 WebView 登录与 `ctx.http` 都会被 Android 拦掉（4.1 已在真机确认
+- **cleartext 问题已定案（4.2）**：NCST 是 **https**，不需要 cleartext 配置。
+  但**其他学校若仍是 http**，仍需 `networkSecurityConfig`（4.1 已在真机确认
   `net::ERR_CLEARTEXT_NOT_PERMITTED`）。
 - **遗留**：ModuleProvider 改用 `loadedCapabilities`；`ctx.notify` 接真实通知（Phase 7）；
-  插件管理 UI 的"从文件导入"（Phase 6+）
-- **最近 commit**：fix(plugin): 修正示例插件无法卸载
+  插件管理 UI 的"从文件导入"（Phase 6+）；同步进度 UI（Phase 4.4）；
+  课表显示节次时间（数据已落 `plugin_data`，UI 未做，留 4.4）；
+  单页/AJAX 登录（URL 不变）无法自动判定成功（4.1）
+- **最近 commit**：feat(plugin): 新增 NCST 教务插件与同步接线
 - **关键约束**：
   - testWidgets 不能触发 Hive 写（会卡死）
   - schema 已冻结（改字段要写迁移）
@@ -61,6 +75,16 @@
     单测覆盖其**纯函数**（`isLoginSuccessUrl`）与构造契约
   - **登录地址/成功判定由插件声明**（`PluginManifest.loginUrl` / `checkUrl`），
     内核**不得硬编码任何学校 URL**（CONTEXT 3.1）
+  - **`assets/plugins/` 是目录声明** → 新增插件文件**不用改 pubspec**（4.2）
+  - **插件里的工具函数必须放 `__plugin` 外面**：运行时用
+    `Object.keys(__plugin).filter(typeof === 'function')` 收集入口函数，
+    放进对象会被误报成"入口函数"（4.2 踩到过）
+  - **沙箱里调不到 Dart，所以 JS 侧复刻的算法必须逐样本对拍**：
+    `ncst-jwxt.js` 的 `__ncst_parseWeeks` 与 `TimetableLogic.parseWeeks`
+    用 24 组样本对拍（含全角标点 / 反向区间 / 超大区间 / 乱码）。对拍方式是
+    **裸 `JsSandbox` 直接调 JS 函数**，不必为测试往插件里塞调试入口（4.2）
+  - **教务系统可能是校园内网地址**（NCST 的 `xjw1.ncst.edu.cn` → `172.20.13.4`）：
+    真机验收必须在**校园网 / VPN** 下做，普通外网（含手机热点）不可达（4.2）
   - **禁止用 PowerShell 的 Get-Content/Set-Content 做文本往返**（会按控制台代码页解码，中文变乱码，见阻塞表）
   - **docs/PROGRESS.md 曾因编码问题损坏**，见阻塞表（编辑该文件时务必确认保存为 UTF-8）
 
@@ -1141,11 +1165,87 @@
 
 - [x] WebView 登录页（Phase 4.1：`pages/login/webview_login_page.dart`，通用组件）
 - [x] Cookie 提取（Phase 4.1：`services/cookie_service.dart` + `WebViewCookieManager`）
-- [ ] NCST 插件（`ncst-jwxt.js`）—— Phase 4.2；在 `__plugin` 里声明 `loginUrl` / `checkUrl`
-- [ ] 数据同步打通
-- [ ] 从插件拉取课程并存入 Hive
+- [x] NCST 插件（Phase 4.2：`assets/plugins/ncst-jwxt.js`，声明 `loginUrl` / `checkUrl` + `fetchCourses`）
+- [x] 同步接线（Phase 4.2：详情页「立即同步」→ `fetchCourses` → `saveCourse` 落盘）
+- [ ] **真机跑通"登录 → 同步 → 课表显示"** —— 当前卡在校园网可达性 + 需要人工凭据（见快照区）
+- [ ] 数据同步的增量/覆盖策略与失败重试（Phase 4.3）
+- [ ] 课表显示节次时间（Phase 4.4；数据已落 `plugin_data` 的 `section_times`，UI 未做）
+- [ ] 同步进度 UI（Phase 4.4；现在只有一个防重入闩锁 + SnackBar）
 - [ ] **⚠️ 收尾必做：`flutter build apk --release` 发布包冒烟**
       （装到设备上跑通"安装插件 → `ctx.http` 拉数据"；此前所有网络验证都在 debug 包）
+
+### Phase 4.2 备注（NCST 教务插件 + 同步接线）
+
+> **Phase 4.2**：`dart analyze lib` 通过，**未加新依赖**，**未改 pubspec**
+> （`assets/plugins/` 是**目录**声明，新增插件文件自动包含）。
+>
+> **改动**：
+> - 新建 `assets/plugins/ncst-jwxt.js`：第一个真实插件
+> - `lib/providers/plugin_provider.dart`：抽出通用 `installBuiltinPlugin(...)`；
+>   新增常量 `kNcstPluginId` / `kNcstPluginAssetPath` 与 `installNcstPlugin()`；
+>   `installExamplePluginForDemo()` 改为它的薄封装
+> - `lib/pages/settings/plugin_manage_page.dart`：`+` 菜单新增「安装 NCST 教务插件」
+> - `lib/pages/settings/plugin_detail_page.dart`：「立即同步」接真实逻辑（`_syncNow`）
+>   + 常量 `kSyncJsTimeout = 5s`
+>
+> **NCST 具体 URL / 字段名只出现在 `ncst-jwxt.js` 里**，Dart 侧一个都没有（CONTEXT 3.1）——
+> 可用 `grep -r "ncst\|xjw1" lib/` 自查（结果应为空）。
+>
+> **插件关键设计**：
+> - 入口函数**只有 `fetchCourses`**：周次解析等工具函数放在 `__plugin` **外面**
+>   （运行时会用 `Object.keys(__plugin).filter(typeof === 'function')` 收集入口函数，
+>   放进去会被误报成入口）
+> - **结构校验优先**：顶层非对象 / 是数组 / 缺 `dateList` / `dateList` 非数组 /
+>   某项缺 `selectCourseList` → 一律 `{error:'响应结构异常：…'}`。
+>   **宁可报错也不静默返回空数组**（空数组会被误当成"这学期没课"）
+> - `dateList` 为**空数组**是合法的（真的没选课）→ 返回 0 门课
+> - 节次时间失败**不影响课程**，只进 `warnings`（`data.sectionTime` 是 JSON 字符串，二次解析）
+> - `ctx.cookie` 为空 → 直接 `{error:'未登录…'}`，**不发任何网络请求**
+> - 全部 `ctx.http` 调用都包 `try/catch`，把异常转成 `{error}`（不 throw 污染结果）
+>
+> **JS 侧周次解析**：`__ncst_parseWeeks` / `__ncst_parseWeekType` 是 Dart 版
+> `TimetableLogic.parseWeeks` / `parseWeekType` 的复刻，**24 组样本逐一对拍通过**。
+>
+> **验证**：临时 `flutter test` 脚本 **20 组全部通过**，脚本已删除。覆盖：
+> 插件能被 `PluginRuntime` 加载、manifest 的 `loginUrl`/`checkUrl`/`capabilities`、
+> `entries == ['fetchCourses']`、无 Cookie 时报"未登录"且不发请求、
+> **规格响应下返回的 `{courses}` 能被 `Course.fromJson` 逐字段解析**
+> （id/teacher trim/unit/category/sourcePluginId/两个 timePlace 的 day/startSession/length/
+> room/rawWeeksText/weeks/weekType）、**两个接口各只真实调用一次**（证明重放去重）、
+> **节次时间二次解析后落盘 `plugin_data`**（`"0830"→"08:30"`）、
+> 节次时间失败只记 warning、
+> **7 种响应结构异常各自给出可读 error**（HTML/缺 dateList/非数组/缺 selectCourseList/
+> 顶层数组/HTTP 401）、空 dateList 合法返回 0 门、缺课程号的条目跳过并计 warning、
+> **24 组样本 JS↔Dart 周次对拍**、单双周对拍、`installNcstPlugin` 安装并启用 + 重复安装不重复。
+>
+> **真机验证（⚠️ 卡在网络可达性，需人工介入）**：Redmi K60
+> （`getprop ro.product.model` = `2211133C`，Android 16 / arm64-v8a）。
+> 日志：
+> ```
+> [NCST-VERIFY] 安装=true isUsable=true entries=[fetchCourses]
+> [NCST-VERIFY] loginUrl=https://xjw1.ncst.edu.cn/
+> [NCST-VERIFY] checkUrl=https://xjw1.ncst.edu.cn/student/courseSelect/courseSelectResult/index
+> [NCST-VERIFY] 无Cookie: status=success value={"error":"未登录：Cookie 为空，请先点「登录」完成教务系统登录"}
+> [Plugin:ncst-jwxt] 第 1 轮登记了 1 个 HTTP 请求，取回后重放
+> [Plugin:ncst-jwxt] HTTP GET https://xjw1.ncst.edu.cn/... 失败：DioExceptionType.connectionError
+> [NCST-VERIFY] 假Cookie: status=success value={"error":"拉取课程列表失败：connection"}
+> [NCST-VERIFY] Hive 课程数=3
+> ```
+> **结论与卡点**：
+> - ✅ **安装成功、插件可用、入口函数正确、manifest 正确**
+> - ✅ **无 Cookie 时命中插件侧守卫且不发网络**（符合设计）
+> - ✅ **假 Cookie 时真的发出了 HTTPS 请求到真实主机**（走了完整重放链路），
+>   且失败被优雅转成 `{error}`、**没有崩溃**
+> - ❌ **连接失败：`connectionError`**。排查后确认是**网络不可达，不是代码问题**：
+>   - `xjw1.ncst.edu.cn` 解析到 **`172.20.13.4`（校园内网地址，RFC1918）**
+>   - 本机（在校园网内）TCP 443 可达 ✅
+>   - 手机在 `192.168.137.196`（**PC 的热点**，ICS 网段），`ping 172.20.13.4` **100% 丢包** ❌，
+>     而同一次 `ping example.com` 正常 ✅（说明手机本身有网）
+> - **因此"登录 → 同步 → Hive 落盘 → 课表渲染"这四步我无法在本次环境验证**，
+>   需要：① 手机连**校园 WiFi 或校园 VPN**；② **人工输入学号密码**（我没有凭据，也不该有）。
+>
+> **临时改动已还原**：`lib/main.dart` / `lib/app.dart` 的验证脚手架已用
+> `git checkout HEAD --` 恢复，`git diff` 为空。
 
 ### Phase 4.1 备注（WebView 登录页 + Cookie 提取）
 
@@ -1347,7 +1447,10 @@
 | 2026-09-23 | 3.6 未做：权限系统（所有插件都能用全部 ctx）、网络白名单；`ctx.notify` 仍是占位（Phase 7）；`ctx.cookie` 只读（Phase 4 才写入） | 待处理 |
 | 2026-09-24 | **4.1 已验证 ✅：`WebViewCookieManager.getCookies` 在 Android 上能拿到 HttpOnly Cookie**。真机用本机服务同时下发 `normal=xyz`（普通）与 `JSESSIONID=ABC123; HttpOnly`，提取结果为 `"normal=xyz; JSESSIONID=ABC123"` —— **HttpOnly 也在内**（Android 的 `CookieManager.getCookie(url)` 返回的是"会随请求发送的 Cookie"）。所以**不需要**引入 `webview_cookie_manager` 等第三方包 | ✅ 已完成 |
 | 2026-09-24 | **4.1 已验证并确认为真实风险：Android 明文 HTTP（cleartext）被拦**。真机上 WebView 打开 `http://127.0.0.1:.../login` 直接失败：`net::ERR_CLEARTEXT_NOT_PERMITTED`（targetSdk 34 默认禁 cleartext）。**不少学校教务仍是 http://** —— 若是，则 **WebView 登录与 `ctx.http` 都会被系统拦掉**。修法二选一：① `networkSecurityConfig` 只对具体域名放行（推荐，安全）；② `usesCleartextTraffic="true"`（全放开，不推荐）。**待 Phase 4.2 拿到真实教务地址后决定** | ⚠️ 待处理（Phase 4.2） |
-| 2026-09-24 | **4.1 已知局限：登录成功后 URL 不变的站点（单页 / AJAX 登录）无法自动判定成功**。当前主方案是 URL 前缀匹配；若学校登录后不跳转，`checkUrl` 永远不命中 → 只能用户手动返回（那样按规范不保存 Cookie）。真机验证里也顺带确认了相反方向的规则是对的：`https://example.com/` 命中前缀但**没有 Cookie 时不会误判成功**。Phase 4.2 用真实成功页 URL 填 `checkUrl` 即可规避 | 待处理 |
+| 2026-09-24 | **4.1 已知局限：登录成功后 URL 不变的站点（单页 / AJAX 登录）无法自动判定成功**。当前主方案是 URL 前缀匹配；若学校登录后不跳转，`checkUrl` 永远不命中 → 只能用户手动返回（那样按规范不保存 Cookie）。4.1 真机验证里也顺带确认了相反方向的规则是对的：`https://example.com/` 命中前缀但**没有 Cookie 时不会误判成功** | 待处理 |
+| 2026-09-24 | **4.2 真机验证卡在网络可达性（非代码问题）**：`xjw1.ncst.edu.cn` → `172.20.13.4`（校园内网）。本机可达，但手机经 PC 热点上网时 `ping` 100% 丢包（example.com 正常）。**需手机连校园 WiFi / VPN + 人工输入学号密码**，才能验证登录 → 同步 → 课表渲染 | ⚠️ 待人工验收 |
+| 2026-09-24 | **4.2 未验证：真实教务响应是否与规格一致**。插件里的字段名（`coureNumber` 等）来自你之前提供的抓包结构，**我无法在未登录状态下验证真实响应**。插件已按"结构不符就报 `响应结构异常：…`"处理——真机登录后若报错，把 error 文案发我即可定位 | ⚠️ 待人工验收 |
+| 2026-09-24 | 4.2 未做：同步的增量/覆盖策略（现有 `saveCourse` 按 id 覆盖，插件的 `id = coureNumber_coureSequenceNumber` 天然稳定）、失败重试、同步进度 UI —— 留给 Phase 4.3 / 4.4 | 待处理 |
 | 2026-09-23 | `PluginStorageService` 的目录布局（`<appDocuments>/plugins/<id>.js` + `<id>.manifest.json`）此后即**契约**：已装插件的文件名/后缀改动需写迁移（重命名旧文件） | 已决定 |
 | 2026-09-23 | PluginProvider 用 allCapabilities（enabled）驱动模块可用性，插件加载失败时模块仍在——Phase 3.5 在插件详情页显示 loadErrors | 待处理 |
 | 2026-09-24 | 插件安装 UI（文件选择器）暂不做，Phase 4 从 assets 内置插件加载 | 已决定 |

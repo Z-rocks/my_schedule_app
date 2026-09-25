@@ -111,6 +111,10 @@ class PluginManagePage extends StatelessWidget {
             itemBuilder: (BuildContext context) =>
                 <PopupMenuEntry<_AddAction>>[
               const PopupMenuItem<_AddAction>(
+                value: _AddAction.installNcst,
+                child: Text('安装 NCST 教务插件'),
+              ),
+              const PopupMenuItem<_AddAction>(
                 value: _AddAction.importFile,
                 child: Text('从文件导入（Phase 6+）'),
               ),
@@ -152,6 +156,15 @@ class PluginManagePage extends StatelessWidget {
   ) async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
     switch (action) {
+      case _AddAction.installNcst:
+        final bool ok = await provider.installNcstPlugin();
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(ok
+                ? 'NCST 教务插件已安装并启用，去详情页点「登录」'
+                : 'NCST 插件安装失败，详见日志'),
+          ),
+        );
       case _AddAction.importFile:
         messenger.showSnackBar(
           const SnackBar(content: Text('从文件导入（Phase 6+ 实现）')),
@@ -167,8 +180,8 @@ class PluginManagePage extends StatelessWidget {
   }
 }
 
-/// `+` 菜单的两个动作。
-enum _AddAction { importFile, installExample }
+/// `+` 菜单的动作。
+enum _AddAction { installNcst, importFile, installExample }
 
 /// 单个插件卡片。
 class _PluginCard extends StatelessWidget {

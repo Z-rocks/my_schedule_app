@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-24（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService；3.5 插件管理 UI 接入；3.5.1 插件可卸载性 isRemovable；3.6 插件上下文 ctx；4.1 WebView 登录页 + Cookie 提取）
+- 最后更新：2026-09-24（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService；3.5 插件管理 UI 接入；3.5.1 插件可卸载性 isRemovable；3.6 插件上下文 ctx；4.1 WebView 登录页 + Cookie 提取；4.2 NCST 教务插件 + 同步接线）
 
 ---
 
@@ -706,11 +706,17 @@ UI 偏好设置（Phase 2.2b.1 新增）。目前只有"左右滑动切换周次
 
 **示例插件（Phase 3.5 临时功能，Phase 4 完成后删除）**
 
-- 常量 `kExamplePluginId = 'example-plugin'`、`kExamplePluginAssetPath = 'assets/plugins/example.js'`
-- `Future<bool> installExamplePluginForDemo()` — 从 assets 读 `example.js` → `installFromAssets` 落盘 →
-  `addPlugin`（先以 `enabled: false` 落盘）→ `togglePlugin(id, true)` 启用（复用同一条启停链路，
-  避免在这里重写"落盘 + 加载运行时"）。**任何一步失败都不抛异常**，只 `debugPrint` 并返回 `false`，
-  由 UI 弹 SnackBar。重复调用安全（同 id 替换 + 覆盖文件）
+常量 `kExamplePluginId` / `kExamplePluginAssetPath` 与 `kExamplePluginId`、
+**`kNcstPluginId = 'ncst-jwxt'`**、**`kNcstPluginAssetPath = 'assets/plugins/ncst-jwxt.js'`**
+
+- `Future<bool> installBuiltinPlugin({required String pluginId, required String assetPath, required String fallbackName, List<String> fallbackCapabilities = const [], String author = 'MySchedule', String description = ''})`
+  — **Phase 4.2 新增**：安装**内置**插件（从 assets）并自动启用。
+  流程：`installFromAssets` 落盘 → `addPlugin`（先以 `enabled: false` 落盘）→
+  `togglePlugin(id, true)` 启用（复用同一条启停链路）。失败不抛异常、只返回 `false`。
+  装有 `isRemovable: true`（显式写，防止将来改默认值时静默变成不可卸载）
+- `Future<bool> installExamplePluginForDemo()` — 示例插件（Phase 3.5 验证用，**Phase 4 后可删**）
+- **`Future<bool> installNcstPlugin()`** — 安装内置 **NCST 教务插件**（Phase 4.2）；
+  装完即为"已启用"，用户接着去详情页「登录」→「立即同步」
 
 > **签名变更**：`addPlugin` / `removePlugin` / `togglePlugin` 由 `void` 改为 `Future<void>`，
 > 以便调用方 `await` 落盘/加载完成。原签名在 `lib/` 里**没有调用方**（插件管理页仍是占位页），
@@ -1098,10 +1104,10 @@ Body 为 `ListView`，分 6 组，每组 = 小标题 + 一张 `Card`（`color: t
 `const PluginManagePage({super.key})`，`StatelessWidget` + `context.watch<PluginProvider>()`
 （插件从 0 个变 N 个或反向时自动重建，空态与列表自动切换）。
 
-- **AppBar**：标题"插件管理"，右侧 `PopupMenuButton`（`Icons.add`），两项：
+- **AppBar**：标题"插件管理"，右侧 `PopupMenuButton`（`Icons.add`），三项：
+  - **"安装 NCST 教务插件"** → `PluginProvider.installNcstPlugin()`（Phase 4.2）
   - "从文件导入（Phase 6+）" → `SnackBar('从文件导入（Phase 6+ 实现）')`
-  - "安装示例插件（Phase 3.5 验证用）" → `PluginProvider.installExamplePluginForDemo()`，
-    按成功与否弹不同 SnackBar
+  - "安装示例插件（Phase 3.5 验证用）" → `PluginProvider.installExamplePluginForDemo()`
 - **空列表** → `EmptyState(Icons.extension, '还没有安装插件', '从文件导入或从创意工坊下载', '去创意工坊')`
 - **有插件** → `ListView.builder`，每项一张 `_PluginCard`
 
@@ -1160,6 +1166,16 @@ class PluginDetailPage extends StatelessWidget {
   否则 push `WebViewLoginPage(pluginId: meta.id, ...)`（由登录页负责落盘），
   返回非空 Cookie → `SnackBar('登录成功（已保存 N 字符的 Cookie）')`，
   返回 `null`/空 → `SnackBar('已取消登录')`
+- **立即同步**（Phase 4.2，`_syncNow`）：
+  1. 无 Cookie → `SnackBar('请先登录，再点「立即同步」')`（**不白跑网络**）
+  2. 句柄不可用 → `SnackBar('插件未加载，无法同步：<原因>')`
+  3. `handle.execute('fetchCourses', timeout: kSyncJsTimeout)`（默认 5s；
+     HTTP 发生在宿主侧 dio，**不受该超时约束**）
+  4. 插件返回 `{error}` → 直接展示；`{courses}` → 逐条 `Course.fromJson`
+     （单条坏数据跳过并 `debugPrint`，不毁掉整次同步）→ `saveCourse` 逐条落盘
+  5. `SnackBar('已同步 N 门课程')`；有 `warnings` 时追加条数提示
+  - 用一个 `try/finally` 复位的静态闩锁 `_syncing` 防重复点击
+    （本页是 `StatelessWidget`；Phase 4.4 做同步进度 UI 时再改成页内状态）
 - 辅助私有组件：`_InfoCard`（分区卡片）、`_InfoRow`（标签 : 值，值可换行）、
   `_InstallPathRow`、`_ActionRow`
 
@@ -1218,6 +1234,65 @@ const EmptyState({
 
 - `const Map<String, IconData> kModuleIconByName` — 图标名 → `IconData`。覆盖 6 个内置模块图标（`calendar_month` / `book_outlined` / `assignment_outlined` / `edit_note` / `notifications_outlined` / `settings_outlined`）与 4 个预留插件图标（`grade_outlined` / `school_outlined` / `task_outlined` / `message_outlined`）
 - `IconData iconFromName(String name)` — 查表；**查不到（含空串、插件未声明 `iconName`）兜底 `Icons.extension`**
+
+---
+
+## lib/ 特性插件
+
+### `assets/plugins/ncst-jwxt.js` — NCST 教务插件（Phase 4.2）
+
+**第一个真实插件**，也是**唯一允许出现 NCST 具体 URL / 字段名的地方**
+（CONTEXT 3.1：内核不得硬编码任何学校信息）。文件格式见上方「插件文件格式」一节。
+
+`__plugin` 声明：
+
+| 字段 | 值 |
+|------|-----|
+| `id` | `'ncst-jwxt'` |
+| `name` | `'华北理工大学教务系统'` |
+| `capabilities` | `['timetable']` |
+| `school` | `'华北理工大学'` |
+| `loginUrl` | `'https://xjw1.ncst.edu.cn/'` |
+| `checkUrl` | `'https://xjw1.ncst.edu.cn/student/courseSelect/courseSelectResult/index'` |
+| 入口函数 | **只有 `fetchCourses`**（工具函数放在 `__plugin` 外面，否则会被误报成入口函数） |
+
+**`fetchCourses(args)` 流程**：
+
+1. `ctx.cookie` 为空 → `{error:'未登录：…'}`（**不发任何网络请求**）
+2. `ctx.http.get` 课程列表 `…/thisSemesterCurriculum/callback`
+   （headers：`Cookie` / `Referer` / `X-Requested-With`）
+3. **结构校验**：顶层非对象 / 是数组 / 缺 `dateList` / `dateList` 非数组 /
+   某项缺 `selectCourseList` → 一律返回 `{error:'响应结构异常：…'}`
+4. `ctx.http.post` 节次时间 `…/ajax/student/getSectionAndTime`
+   （body `planNumber=&ff=f&xqh=009`）；**失败不影响课程**，只进 `warnings`。
+   注意 `data.sectionTime` 是 **JSON 字符串**，要**二次 `JSON.parse`**；
+   `"0830"` → `"08:30"`，结果写入 `ctx.storage` 的 `section_times`
+5. 转换成内核 `Course` JSON 并返回
+
+**返回约定**：
+
+```json
+{ "courses": [ <Course JSON>... ], "sectionTimes": 12, "allUnits": 8.8, "warnings": [...] }
+{ "error": "人话原因" }
+```
+
+- **宁可报错也不静默返回空数组**：空数组会被上层误当成"这学期没课"，比报错危险
+- `dateList` 为**空数组**是合法的（真的没选课）→ 返回 0 门课，不是错误
+- 缺 `coureNumber` 的条目跳过并计入 `warnings`
+- 字段名按教务系统的原样（注意 `coureNumber` / `coureSequenceNumber` 是**官方的拼写**，不要"纠正"）
+- `Course.id = '<coureNumber>_<coureSequenceNumber>'`、
+  `teacher` 会 trim 尾部空格、`sourcePluginId = 'ncst-jwxt'`
+
+**JS 侧周次解析**：`__ncst_parseWeeks` / `__ncst_parseWeekType` 是
+`TimetableLogic.parseWeeks` / `parseWeekType` 的 **JS 复刻**（沙箱里调不到 Dart）。
+**二者结果必须逐字一致**——已用 24 组样本（含全角标点、反向区间、超大区间、
+乱码、空串、`1-2-3`）在测试里对拍。
+
+**幂等**：`fetchCourses` 会被执行多次（`ctx.http` 重放），只做纯计算 +
+`ctx.storage.set`（宿主保证只在最终轮提交）。见 CONTEXT 3.6。
+
+**怎么装**：插件管理页右上角 `+` → 「安装 NCST 教务插件」
+（`PluginProvider.installNcstPlugin()`）。
 
 ---
 

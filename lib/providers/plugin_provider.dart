@@ -18,6 +18,15 @@ const String kExamplePluginId = 'example-plugin';
 /// 内置示例插件的 asset 路径（**临时**，同上）。
 const String kExamplePluginAssetPath = 'assets/plugins/example.js';
 
+/// 内置 NCST 教务插件的 id（Phase 4.2）。
+const String kNcstPluginId = 'ncst-jwxt';
+
+/// 内置 NCST 教务插件的 asset 路径。
+///
+/// 注意：`pubspec.yaml` 里声明的是**目录** `assets/plugins/`，
+/// 所以新增插件文件**不需要**改 pubspec。
+const String kNcstPluginAssetPath = 'assets/plugins/ncst-jwxt.js';
+
 /// 已安装插件状态。
 ///
 /// **Phase 3.3 起接线 PluginRuntime**：本类持有 [PluginManager]（组合关系），
@@ -229,50 +238,81 @@ class PluginProvider extends ChangeNotifier {
     _notify();
   }
 
-  // ─────────────────────── 示例插件（临时） ───────────────────────
+  // ─────────────────────── 内置插件安装 ───────────────────────
 
-  /// 安装内置示例插件（**仅用于 Phase 3.5 UI 验证，Phase 4 完成后删除**）。
+  /// 安装**内置**插件（从 assets）并自动启用。
   ///
-  /// 流程：从 assets 读 `example.js` → 落盘到插件目录 → 加入列表并落盘 →
-  /// **自动启用**（这样用户立刻能看到"已加载"的完整效果）。
+  /// 流程：`installFromAssets` 落盘 → `addPlugin`（先以 `enabled: false` 落盘）→
+  /// `togglePlugin(id, true)` 启用（复用同一条启停链路，避免重写"落盘 + 加载运行时"）。
   ///
-  /// 任何一步失败都不抛异常：只 `debugPrint` + 返回 `false`，让 UI 用 SnackBar
-  /// 提示。成功返回 `true`。
+  /// 任何一步失败都不抛异常：只 `debugPrint` + 返回 `false`，让 UI 用 SnackBar 提示。
+  /// 重复调用安全（`addPlugin` 同 id 替换、`installPlugin` 覆盖文件）。
   ///
-  /// 重复调用是安全的：`addPlugin` 同 id 替换、`installPlugin` 覆盖文件。
-  Future<bool> installExamplePluginForDemo() async {
+  /// [fallbackName] / [fallbackCapabilities]：插件声明读不到时的兜底
+  /// （正常情况下加载成功后会用插件自报的 name/capabilities 补齐）。
+  Future<bool> installBuiltinPlugin({
+    required String pluginId,
+    required String assetPath,
+    required String fallbackName,
+    List<String> fallbackCapabilities = const <String>[],
+    String author = 'MySchedule',
+    String description = '',
+  }) async {
     try {
       await PluginStorageService.installFromAssets(
-        pluginId: kExamplePluginId,
-        assetPath: kExamplePluginAssetPath,
+        pluginId: pluginId,
+        assetPath: assetPath,
       );
     } catch (e) {
-      debugPrint('[PluginProvider] 安装示例插件失败：$e');
+      debugPrint('[PluginProvider] 安装内置插件 $pluginId 失败：$e');
       return false;
     }
 
-    final PluginMeta existing = getById(kExamplePluginId) ??
+    final PluginMeta existing = getById(pluginId) ??
         PluginMeta(
-          id: kExamplePluginId,
-          name: '示例插件',
+          id: pluginId,
+          name: fallbackName,
           version: '1.0.0',
-          author: 'MySchedule',
-          description: '内置示例，用于验证插件管理页与运行时链路',
-          capabilities: const <String>['exam'],
+          author: author,
+          description: description,
+          capabilities: fallbackCapabilities,
           source: 'builtin',
-          // 显式声明可卸载：示例插件来源虽是 builtin（随 App 打包），
-          // 但用户应当能把它卸掉。写成显式而非依赖默认值，是为了防止
-          // 将来有人改默认值时静默把示例插件变成"不可卸载"。
+          // 显式声明可卸载：来源虽是 builtin（随 App 打包），但用户应当能卸掉。
+          // 写成显式而非依赖默认值，是为了防止将来有人改默认值时
+          // 静默把内置插件变成"不可卸载"（Phase 3.5.1 的教训）。
           isRemovable: true,
           enabled: false,
           installedAt: DateTime.now(),
         );
-    // 先落盘插件本体（enabled 仍为 false），再走 toggle 启用——
-    // 复用同一条启停链路，避免这里再写一遍"落盘 + 加载运行时"。
     await addPlugin(existing.copyWith(enabled: false));
-    await togglePlugin(kExamplePluginId, true);
-    debugPrint('[PluginProvider] 示例插件已安装并启用：$kExamplePluginId');
+    await togglePlugin(pluginId, true);
+    debugPrint('[PluginProvider] 内置插件已安装并启用：$pluginId');
     return true;
+  }
+
+  /// 安装内置示例插件（**Phase 3.5 的 UI 验证用，Phase 4 完成后可删除**）。
+  Future<bool> installExamplePluginForDemo() {
+    return installBuiltinPlugin(
+      pluginId: kExamplePluginId,
+      assetPath: kExamplePluginAssetPath,
+      fallbackName: '示例插件',
+      fallbackCapabilities: const <String>['exam'],
+      description: '内置示例，用于验证插件管理页与运行时链路',
+    );
+  }
+
+  /// 安装内置的 **NCST 教务插件**（Phase 4.2）。
+  ///
+  /// 装完即为"已启用"，用户接着在插件详情页点「登录」→「立即同步」。
+  /// 真实 URL 只在 `assets/plugins/ncst-jwxt.js` 里，内核不硬编码（CONTEXT 3.1）。
+  Future<bool> installNcstPlugin() {
+    return installBuiltinPlugin(
+      pluginId: kNcstPluginId,
+      assetPath: kNcstPluginAssetPath,
+      fallbackName: '华北理工大学教务系统',
+      fallbackCapabilities: const <String>['timetable'],
+      description: '从 NCST 教务系统拉取本学期课表（需先登录）',
+    );
   }
 
   // ─────────────────────────── 增删 ───────────────────────────
