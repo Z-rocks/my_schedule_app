@@ -27,6 +27,8 @@ class PluginManifest {
     this.description = '',
     this.school = '',
     this.capabilities = const <String>[],
+    this.loginUrl = '',
+    this.checkUrl = '',
   });
 
   /// 插件唯一 ID，如 `"demo-course-plugin"`。**必须非空**（由加载器校验）。
@@ -50,6 +52,20 @@ class PluginManifest {
   /// 数据能力 ID 列表，如 `['exam', 'homework']`。
   final List<String> capabilities;
 
+  /// 登录页 URL（Phase 4.1 新增）。空串表示**未声明**，登录按钮会提示用户。
+  ///
+  /// 由插件自己声明（各校教务地址不同，内核不得硬编码任何学校 URL，见 CONTEXT 3.1）。
+  /// 之所以放在 `PluginManifest` 而不是 `PluginMeta`：`PluginManifest` 是**运行时**从
+  /// 插件 JS / `.manifest.json` 解析出来的，**不落盘**，所以加字段**无需迁移**
+  /// （`PluginMeta` 存在 Hive 里，受 CONTEXT 4.2.1 约束）。
+  final String loginUrl;
+
+  /// 登录成功判定用的 **URL 前缀**（Phase 4.1 新增）。
+  ///
+  /// 登录页里当 WebView 的当前 URL 以它为前缀时判定成功；空串表示未声明，
+  /// 此时登录页退化为"拿到任意 Cookie 即视为成功"的兜底策略。
+  final String checkUrl;
+
   /// id 是否有效（非空且非纯空白）。
   bool get hasValidId => id.trim().isNotEmpty;
 
@@ -66,6 +82,8 @@ class PluginManifest {
       description: _asString(json['description']),
       school: _asString(json['school']),
       capabilities: _asStringList(json['capabilities']),
+      loginUrl: _asString(json['loginUrl']),
+      checkUrl: _asString(json['checkUrl']),
     );
   }
 
@@ -79,6 +97,8 @@ class PluginManifest {
       'description': description,
       'school': school,
       'capabilities': capabilities,
+      'loginUrl': loginUrl,
+      'checkUrl': checkUrl,
     };
   }
 

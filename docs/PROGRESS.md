@@ -12,18 +12,22 @@
 
 > 给新会话 AI 用。每次阶段切换时更新。
 
-- **最新完成**：Phase 3.6（PluginContext：`ctx.http` / `ctx.storage` / `ctx.log` / `ctx.notify` / `ctx.cookie`）
+- **最新完成**：Phase 4.1（WebView 登录页 + Cookie 提取）
 - **代码状态**：dart analyze 全绿；真机验收通过（`getprop ro.product.model` = `2211133C`）
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
 - **Phase 3 全部完成**：插件运行时（沙箱 → 加载 → 多插件管理 → 文件持久化 → 管理 UI → **ctx**）
-- **下一步**：Phase 4（第一个真实插件：WebView 登录 + Cookie 提取 + NCST 教务插件）
+- **下一步**：Phase 4.2（NCST 插件本体：在 `__plugin` 里声明 `loginUrl` / `checkUrl` + 写抓取逻辑）
 - **⚠️ Phase 4 完成后必须做**：跑一次 **`flutter build apk --release` 做发布包冒烟**。
   到目前为止**所有网络相关验证都是在 debug 包里做的**（debug/profile manifest 自带 `INTERNET`
   权限），release 包是否有其他权限 / 混淆（R8）问题**完全没有验证过**。3.6 刚发现
   `src/main` 缺 `INTERNET` 就是同类问题——release 冒烟必须真正装到设备上跑通
   "安装插件 → `ctx.http` 拉数据"这条链路。
-- **遗留**：ModuleProvider 改用 `loadedCapabilities`；`ctx.cookie` 写入（Phase 4）；
-  `ctx.notify` 接真实通知（Phase 7）；插件管理 UI 的"从文件导入"（Phase 6+）
+- **⚠️ Phase 4.2 首先要定的事**：拿到真实教务地址后确认它是 `http://` 还是 `https://`。
+  若是 **http**，必须配 `networkSecurityConfig`（定向放行）或 `usesCleartextTraffic`，
+  否则 WebView 登录与 `ctx.http` 都会被 Android 拦掉（4.1 已在真机确认
+  `net::ERR_CLEARTEXT_NOT_PERMITTED`）。
+- **遗留**：ModuleProvider 改用 `loadedCapabilities`；`ctx.notify` 接真实通知（Phase 7）；
+  插件管理 UI 的"从文件导入"（Phase 6+）
 - **最近 commit**：fix(plugin): 修正示例插件无法卸载
 - **关键约束**：
   - testWidgets 不能触发 Hive 写（会卡死）
@@ -52,6 +56,11 @@
     `ctx.storage` 副作用**只在最终轮**提交；`ctx.*` 只应在入口函数里用
   - **`testWidgets`/`TestWidgetsFlutterBinding` 会把 HTTP mock 成 400**：
     要访问真实（含本机 loopback）服务必须 `HttpOverrides.global = null`
+  - **WebView 页面无法在 `flutter test` 里 pump**（`WebViewController()` 需要
+    `WebViewPlatform.instance`，测试环境为 null）→ 登录页只能真机验证，
+    单测覆盖其**纯函数**（`isLoginSuccessUrl`）与构造契约
+  - **登录地址/成功判定由插件声明**（`PluginManifest.loginUrl` / `checkUrl`），
+    内核**不得硬编码任何学校 URL**（CONTEXT 3.1）
   - **禁止用 PowerShell 的 Get-Content/Set-Content 做文本往返**（会按控制台代码页解码，中文变乱码，见阻塞表）
   - **docs/PROGRESS.md 曾因编码问题损坏**，见阻塞表（编辑该文件时务必确认保存为 UTF-8）
 
@@ -1125,18 +1134,113 @@
 
 ---
 
-## Phase 4：第一个插件（未开始）
+## Phase 4：第一个插件（进行中）
 
 > ⚠️ **写 NCST 插件前先读 `CONTEXT.md` 3.6「插件入口函数幂等约定」**——
 > 入口函数会被执行多次，必须幂等；`ctx.storage` 只在最终轮生效。
 
-- [ ] WebView 登录页
-- [ ] Cookie 提取
-- [ ] NCST 插件（`ncst-jwxt.js`）
+- [x] WebView 登录页（Phase 4.1：`pages/login/webview_login_page.dart`，通用组件）
+- [x] Cookie 提取（Phase 4.1：`services/cookie_service.dart` + `WebViewCookieManager`）
+- [ ] NCST 插件（`ncst-jwxt.js`）—— Phase 4.2；在 `__plugin` 里声明 `loginUrl` / `checkUrl`
 - [ ] 数据同步打通
 - [ ] 从插件拉取课程并存入 Hive
 - [ ] **⚠️ 收尾必做：`flutter build apk --release` 发布包冒烟**
       （装到设备上跑通"安装插件 → `ctx.http` 拉数据"；此前所有网络验证都在 debug 包）
+
+### Phase 4.1 备注（WebView 登录页 + Cookie 提取）
+
+> **Phase 4.1**（通用 WebView 登录页 + Cookie 提取）：`dart analyze lib` 通过，**未加新依赖**。
+>
+> **改动**：
+> - 新建 `lib/pages/login/webview_login_page.dart`：`WebViewLoginPage` +
+>   顶层纯函数 `isLoginSuccessUrl`
+> - 新建 `lib/services/cookie_service.dart`：`CookieService`（save / load / clear / formatCookies）
+> - `lib/runtime/plugin_manifest.dart`：新增 **`loginUrl` / `checkUrl`**（见下）
+> - `lib/runtime/plugin_runtime.dart`：`_deriveManifest` 从 `__plugin` 里一并推导这两个字段
+> - `lib/pages/settings/plugin_detail_page.dart`：「登录」从 SnackBar 占位改为
+>   push 真实登录页（`_openLogin`）
+>
+> **`loginUrl` / `checkUrl` 放在 `PluginManifest` 而不是 `PluginMeta`**（任务书让判断）：
+> `PluginMeta` 存在 Hive 里、受 CONTEXT 4.2.1 约束，加字段要写迁移；而
+> **`PluginManifest` 是运行时从插件 JS / `.manifest.json` 解析出来的、根本不落盘**，
+> 所以加字段**零迁移成本**。而且这正是任务书说的"从插件的 manifest 读"，
+> Phase 4.2 的 NCST 插件只需在 `__plugin` 里写两个字段即可。
+>
+> **5 个设计决策**：
+> 1. **登录成功判定：URL 前缀匹配为主（方案 A）**，理由：通用、不需要知道任何学校的
+>    页面结构、失败模式可预期。**fallback 是"Cookie 出现"（方案 C）**——当
+>    `successUrlPrefix` 为空串时，退化为"拿到非空 Cookie 即视为成功"。
+>    **明确不用方案 B（页面元素）**：它需要学校特定的 CSS 选择器，会违反"通用组件"约束。
+>    另加一条规则：**URL 命中但 Cookie 为空不算成功**（没有凭证的"成功"没有意义）。
+> 2. **Cookie 提取用官方 `WebViewCookieManager.getCookies(domain:)`**（webview_flutter
+>    4.14.1 **已有**该 API），**未加新依赖**。同时查登录页域名与当前页域名并合并。
+>    ⚠️ **能否拿到 HttpOnly Cookie 待真机确认**，见阻塞表。
+> 3. **存储格式** `name1=value1; name2=value2`（HTTP 头标准写法），key = `<pluginId>:cookie`
+>    —— 插件侧可直接 `ctx.http.get(url, { Cookie: ctx.cookie })`。
+> 4. **用户取消** → `pop(null)`，不写任何东西、不做破坏性操作。
+> 5. **登录 URL 来源**：构造函数参数（由调用方传入）；Phase 4.2 起由插件的
+>    `__plugin.loginUrl` 提供。
+>
+> **验证**：临时 `flutter test` 脚本 **26 组全部通过**，脚本已删除。覆盖：
+> `isLoginSuccessUrl`（命中 / 未命中 / 域名不同 / 空前缀恒 false / 两侧空白）、
+> `PluginManifest` 的 `loginUrl`/`checkUrl`（缺键回落空串、JSON 往返、`tryDecode`、
+> **真实沙箱里从 `__plugin` 推导出来**、未声明时为空串）、
+> `CookieService.formatCookies`（正常拼接 / 同名后者覆盖 / 空列表 / 跳过空名与含 `;`、换行的值 /
+> 空值合法 / 分隔符是 `"; "`）、
+> `CookieService` 存取（save→load 往返、未登录返回空串、clear、空串等价清除、
+> **不同插件互不干扰**、**存储 key 确为 `<pluginId>:cookie`**）、
+> `WebViewLoginPage` 构造契约（字段与默认值 / 可传 title 与 pluginId / 空前缀合法）、
+> 详情页「登录」：**未声明 loginUrl → SnackBar 且不跳转**、「立即同步」仍是占位、
+> 端到端（插件声明的 `checkUrl` 直接喂给 `isLoginSuccessUrl`，含 JSON 往返后仍可用）。
+>
+> **测试注意（新增）**：
+> ① `WebViewLoginPage` **无法在 `flutter test` 里 pump**——`WebViewController()` 需要
+> `WebViewPlatform.instance`（测试环境为 null），所以只测纯函数与构造契约，真实加载只能真机验证；
+> ② `flutter_secure_storage` 用官方测试替身 `FlutterSecureStorage.setMockInitialValues`，
+> 这样 save/load 往返是真的（不 mock 的话 `MissingPluginException` 会让读回空串）；
+> ③ 详情页较长，默认 800×600 视口下「登录」点不到（`tap` 会报 hit-test 警告），需高视口。
+>
+> **真机验证（✅ 已完成）**：Redmi K60（`adb shell getprop ro.product.model` 原始输出 =
+> `2211133C`，Android 16 / arm64-v8a）。为了一次性回答两个关键未知，临时在**应用内**起了一个
+> 本机 HTTP 登录服务（`/login` → 302 → `/index`，并在 `/index` 同时下发一个普通 Cookie 与一个
+> **HttpOnly** Cookie），并把 `WebViewLoginPage` 推起来。
+>
+> **阶段 1：本机 HTTP（含 HttpOnly）—— 完全通过**：
+> ```
+> [LOGIN-VERIFY] 本机服务收到 GET /login
+> [LOGIN-VERIFY] 本机服务收到 GET /index
+> [WebViewLoginPage] 提取到 2 个 Cookie，拼接后 29 字符
+> [WebViewLoginPage] 已保存 example-plugin 的 Cookie（29 字符）
+> [LOGIN-VERIFY] 阶段1 返回="normal=xyz; JSESSIONID=ABC123"
+> [LOGIN-VERIFY] 阶段1 落盘 Cookie="normal=xyz; JSESSIONID=ABC123"
+> ```
+> **★ 结论：`WebViewCookieManager.getCookies` 能拿到 HttpOnly Cookie**（`JSESSIONID` 就是
+> HttpOnly 的）——**不需要引入第三方 cookie 包**，阻塞表那条已关闭。
+> 同时验证了：302 跳转跟得上、URL 前缀命中、Cookie 拼接格式正确、
+> **落盘到 `flutter_secure_storage` 成功**（`CookieService.loadCookie` 读回一致）、
+> 且插件侧 `ctx.cookie` 会读到同一个值（两边共用 `:cookie` 后缀）。
+>
+> **阶段 2：公网 HTTPS**：
+> ```
+> [WebViewLoginPage] 提取到 0 个 Cookie，拼接后 0 字符
+> [WebViewLoginPage] URL 已匹配前缀但未拿到 Cookie，继续等待：https://example.com/
+> ```
+> HTTPS 页面**加载正常**、前缀匹配生效；`example.com` 不下发 Cookie，所以按规则
+> **没有误判成功**（这正是"URL 命中但 Cookie 为空不算成功"那条规则在起作用）。
+>
+> **⚠️ 另一次运行（未开 cleartext）暴露了一个真实风险**：WebView 打开 `http://` 地址时
+> ```
+> [WebViewLoginPage] 加载失败：-1 net::ERR_CLEARTEXT_NOT_PERMITTED
+> ```
+> 即 **targetSdk 34 默认禁止明文 HTTP**，而**不少学校教务仍是 http://** ——
+> 若是，WebView 登录与 `ctx.http` 都会被系统拦掉。已记入阻塞表，待 Phase 4.2
+> 拿到真实教务地址后用 `networkSecurityConfig` 定向放行（**不推荐**全局
+> `usesCleartextTraffic`）。顺带说明：本次验证为了访问本机 http 服务，
+> **临时**在 `android/app/src/debug/AndroidManifest.xml` 开了 cleartext，
+> **验证完已还原**（只影响 debug、从未进 release）。
+>
+> **临时改动已全部还原**：`lib/main.dart`、`lib/app.dart`（本机服务 + 登录页脚手架）与
+> `debug/AndroidManifest.xml` 都用 `git checkout HEAD --` 恢复，`git diff` 为空。
 
 ---
 
@@ -1241,6 +1345,9 @@
 | 2026-09-23 | 3.6 的 `ctx.http` 用**重放**实现，因此**插件入口函数会被执行多次**：插件必须是幂等的纯计算，`ctx.storage` 副作用只在最终轮提交。这是写 Phase 4 插件时必须遵守的约定 | 已决定 |
 | 2026-09-23 | `plugin_data` Box（key = `<pluginId>:<userKey>`）此后即**契约**，改动需写迁移 | 已决定 |
 | 2026-09-23 | 3.6 未做：权限系统（所有插件都能用全部 ctx）、网络白名单；`ctx.notify` 仍是占位（Phase 7）；`ctx.cookie` 只读（Phase 4 才写入） | 待处理 |
+| 2026-09-24 | **4.1 已验证 ✅：`WebViewCookieManager.getCookies` 在 Android 上能拿到 HttpOnly Cookie**。真机用本机服务同时下发 `normal=xyz`（普通）与 `JSESSIONID=ABC123; HttpOnly`，提取结果为 `"normal=xyz; JSESSIONID=ABC123"` —— **HttpOnly 也在内**（Android 的 `CookieManager.getCookie(url)` 返回的是"会随请求发送的 Cookie"）。所以**不需要**引入 `webview_cookie_manager` 等第三方包 | ✅ 已完成 |
+| 2026-09-24 | **4.1 已验证并确认为真实风险：Android 明文 HTTP（cleartext）被拦**。真机上 WebView 打开 `http://127.0.0.1:.../login` 直接失败：`net::ERR_CLEARTEXT_NOT_PERMITTED`（targetSdk 34 默认禁 cleartext）。**不少学校教务仍是 http://** —— 若是，则 **WebView 登录与 `ctx.http` 都会被系统拦掉**。修法二选一：① `networkSecurityConfig` 只对具体域名放行（推荐，安全）；② `usesCleartextTraffic="true"`（全放开，不推荐）。**待 Phase 4.2 拿到真实教务地址后决定** | ⚠️ 待处理（Phase 4.2） |
+| 2026-09-24 | **4.1 已知局限：登录成功后 URL 不变的站点（单页 / AJAX 登录）无法自动判定成功**。当前主方案是 URL 前缀匹配；若学校登录后不跳转，`checkUrl` 永远不命中 → 只能用户手动返回（那样按规范不保存 Cookie）。真机验证里也顺带确认了相反方向的规则是对的：`https://example.com/` 命中前缀但**没有 Cookie 时不会误判成功**。Phase 4.2 用真实成功页 URL 填 `checkUrl` 即可规避 | 待处理 |
 | 2026-09-23 | `PluginStorageService` 的目录布局（`<appDocuments>/plugins/<id>.js` + `<id>.manifest.json`）此后即**契约**：已装插件的文件名/后缀改动需写迁移（重命名旧文件） | 已决定 |
 | 2026-09-23 | PluginProvider 用 allCapabilities（enabled）驱动模块可用性，插件加载失败时模块仍在——Phase 3.5 在插件详情页显示 loadErrors | 待处理 |
 | 2026-09-24 | 插件安装 UI（文件选择器）暂不做，Phase 4 从 assets 内置插件加载 | 已决定 |

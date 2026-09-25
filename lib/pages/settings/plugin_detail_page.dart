@@ -5,9 +5,11 @@ import 'package:provider/provider.dart';
 import '../../models/plugin_meta.dart';
 import '../../providers/plugin_provider.dart';
 import '../../runtime/plugin_handle.dart';
+import '../../runtime/plugin_manifest.dart';
 import '../../services/plugin_storage_service.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
+import '../login/webview_login_page.dart';
 import 'plugin_manage_page.dart'
     show
         PluginUiStatus,
@@ -152,16 +154,17 @@ class PluginDetailPage extends StatelessWidget {
                 onChanged: (bool value) =>
                     provider.togglePlugin(meta.id, value),
               ),
-              // 以下三项留给后续阶段，先占位（CONTEXT 要求用户可见错误用 SnackBar）。
+              // "登录" Phase 4.1 起接真实 WebView 登录（见 _openLogin）。
               _ActionRow(
                 icon: Icons.login,
                 label: '登录',
-                onTap: () => _snack(context, '登录（Phase 4 实现）'),
+                onTap: () => _openLogin(context, provider, meta, handle),
               ),
+              // 以下两项留给后续阶段，先占位（CONTEXT 要求用户可见错误用 SnackBar）。
               _ActionRow(
                 icon: Icons.sync,
                 label: '立即同步',
-                onTap: () => _snack(context, '立即同步（Phase 4 实现）'),
+                onTap: () => _snack(context, '立即同步（Phase 4.2/4.3 实现）'),
               ),
               _ActionRow(
                 icon: Icons.article_outlined,
@@ -173,6 +176,46 @@ class PluginDetailPage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// 打开通用 WebView 登录页（Phase 4.1）。
+  ///
+  /// 登录地址与成功判定前缀都来自**插件自己的声明**（`PluginManifest.loginUrl` /
+  /// `checkUrl`，由插件 JS 的 `__plugin` 或 `.manifest.json` 提供）——内核**不硬编码**
+  /// 任何学校 URL（CONTEXT 3.1）。插件没声明时给 SnackBar 提示，不跳转。
+  Future<void> _openLogin(
+    BuildContext context,
+    PluginProvider provider,
+    PluginMeta meta,
+    PluginHandle? handle,
+  ) async {
+    final PluginManifest? manifest = handle?.manifest;
+    final String loginUrl = manifest?.loginUrl.trim() ?? '';
+    if (loginUrl.isEmpty) {
+      _snack(context, '该插件未声明登录地址（loginUrl）');
+      return;
+    }
+
+    final String? cookie = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (BuildContext _) => WebViewLoginPage(
+          loginUrl: loginUrl,
+          // 未声明 checkUrl 时传空串 → 登录页退化为"拿到 Cookie 即成功"
+          successUrlPrefix: manifest?.checkUrl.trim() ?? '',
+          title: '登录 ${meta.name}',
+          // 传入 pluginId → 由登录页负责落盘，避免调用方忘记保存
+          pluginId: meta.id,
+        ),
+      ),
+    );
+
+    if (!context.mounted) return;
+    if (cookie == null || cookie.isEmpty) {
+      // 用户主动返回（或没拿到凭证）：不做任何破坏性操作（决策 4）。
+      _snack(context, '已取消登录');
+      return;
+    }
+    _snack(context, '登录成功（已保存 ${cookie.length} 字符的 Cookie）');
   }
 
   /// 卸载：先确认，再移除（会销毁运行时沙箱并删存储），最后退回列表页。

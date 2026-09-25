@@ -321,7 +321,10 @@ class PluginRuntime {
       " author: $kPluginGlobalName.author,"
       " description: $kPluginGlobalName.description,"
       " school: $kPluginGlobalName.school,"
-      " capabilities: $kPluginGlobalName.capabilities"
+      " capabilities: $kPluginGlobalName.capabilities,"
+      // Phase 4.1：登录页 URL 与成功判定前缀由插件自己声明（各校地址不同）
+      " loginUrl: $kPluginGlobalName.loginUrl,"
+      " checkUrl: $kPluginGlobalName.checkUrl"
       "})",
       timeout: loadTimeout,
     );

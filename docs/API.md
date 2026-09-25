@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-23（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService；3.5 插件管理 UI 接入；3.5.1 插件可卸载性 isRemovable；3.6 插件上下文 ctx）
+- 最后更新：2026-09-24（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService；3.5 插件管理 UI 接入；3.5.1 插件可卸载性 isRemovable；3.6 插件上下文 ctx；4.1 WebView 登录页 + Cookie 提取）
 
 ---
 
@@ -509,6 +509,27 @@ App 的全部视觉令牌集合，不可变（**30 个字段**，Phase 3.5 由 2
 
 ## lib/services/
 
+### `cookie_service.dart` — CookieService（Phase 4.1）
+
+插件登录凭证的**存取与格式化**（纯静态类）。只负责"存 / 取 / 清 / 拼串"四件事，
+**不负责登录流程**（那是 `WebViewLoginPage`），也不负责把 Cookie 塞回 WebView。
+
+存储位置：`flutter_secure_storage`，key = **`<pluginId>:cookie`**（CONTEXT 3.5）。
+格式：HTTP 请求头标准写法 `name1=value1; name2=value2`
+—— 插件侧可直接 `ctx.http.get(url, { Cookie: ctx.cookie })`。
+
+常量：`kCookieKeySuffix = ':cookie'`（**必须与 `PluginContext.kCookieKeySuffix` 一致**：
+登录页写进去、`ctx.cookie` 读出来，两边对不上就白搭）、`kCookieSeparator = '; '`
+
+- `static Future<void> saveCookie(String pluginId, String cookie)` — 保存；**空串等价于清除**（不留空记录）
+- `static Future<String> loadCookie(String pluginId)` — 读取；**不存在或失败返回空串**（不是 `null`，对齐"边界只传字符串"）
+- `static Future<void> clearCookie(String pluginId)` — 清除（退出登录 / 卸载插件用）
+- `static String formatCookies(List<WebViewCookie> cookies)` — 拼成 HTTP 头格式：
+  跳过**空名**与**值含 `;` / 换行**的条目（会拼坏请求头）；**同名后者覆盖前者**；
+  空列表返回空串
+
+三个写方法失败都只 `debugPrint`、**不抛异常**：登录流程不该因存储问题崩掉。
+
 ### `storage_service.dart` — StorageService
 
 统一管理 Hive 初始化与 Box 访问。纯静态类（`StorageService._()` 禁止实例化）。
@@ -753,6 +774,55 @@ UI 偏好设置（Phase 2.2b.1 新增）。目前只有"左右滑动切换周次
 ---
 
 ## lib/pages/
+
+### `login/webview_login_page.dart` — WebViewLoginPage（Phase 4.1）
+
+**通用** WebView 登录页：打开登录地址 → 判定成功 → 提取 Cookie → pop 返回。
+**不硬编码任何学校 URL、不依赖任何学校页面结构**（CONTEXT 3.1）——
+登录地址与成功判定条件全部由调用方传入（Phase 4.2 起来自插件的 manifest）。
+
+```dart
+const WebViewLoginPage({
+  super.key,
+  required String loginUrl,
+  required String successUrlPrefix,
+  String? title,        // 默认「登录」
+  String? pluginId,     // 非空时本页负责把 Cookie 落盘
+});
+```
+
+**顶层纯函数**（便于单测，不需要真的起 WebView）：
+
+- `bool isLoginSuccessUrl(String currentUrl, String successUrlPrefix)` —
+  当前 URL 是否以该前缀开头（两侧空白忽略）。**空前缀返回 `false`**，
+  语义是"没声明前缀、不靠 URL 判定"，由调用方走 Cookie 兜底
+
+**行为**：
+
+- AppBar：标题（默认「登录」）+ 右侧「刷新」（`controller.reload()`）
+- Body：`WebViewWidget` + 加载中显示 `LinearProgressIndicator`
+- **判定时机**：`onPageFinished`（`NavigationDelegate`）→ `_maybeFinish(url)`
+- **判定规则**（Phase 4.1 决策 1）：
+  | 情况 | 结果 |
+  |------|------|
+  | URL 命中前缀 **且** 拿到非空 Cookie | 成功 → pop(cookie) |
+  | URL 命中前缀但 Cookie 为空 | **不算成功**，继续等下一页（没有凭证的"成功"没有意义） |
+  | 未声明前缀（空串） | 兜底：拿到非空 Cookie 即视为成功 |
+  | 都没命中 | 什么都不做，等用户操作 |
+- **Cookie 提取**：`WebViewCookieManager.getCookies(domain:)`（webview_flutter 官方 API，**未加新依赖**）。
+  同时查**登录页域名**与**当前页域名**并合并（会话 Cookie 可能落在跳转后的主机上），
+  同名以"后查到的"为准；读取失败只记日志、不中断登录流程
+- `pluginId` 非空时，返回前 `await CookieService.saveCookie(pluginId, cookie)`
+- **用户手动返回** → `pop(null)`，**不写任何东西**（决策 4）
+- URL 非法 / 主框架加载失败 → 显示错误文案 + 「重试」按钮（子资源错误忽略，
+  判据是 `WebResourceError.isForMainFrame == false`）
+- `_finished` 标志防止"多次 `onPageFinished`"导致重复 pop
+- 颜色 / 字号 / 圆角全部取自 `AppThemeExtension`
+
+> **注意**：本页在 `flutter test` 里**无法 pump**——`WebViewController()` 需要
+> `WebViewPlatform.instance`（测试环境为 `null`）。真实加载只能在真机验证。
+
+## lib/pages/ 其它页面
 
 ### `home_page.dart` — HomePage
 
@@ -1079,12 +1149,17 @@ class PluginDetailPage extends StatelessWidget {
 |------|------|
 | 基本信息 | 插件 ID / 版本 / 作者 / 描述 / 能力 / 来源（中文）/ **安装路径** / 加载状态（带状态色） |
 | 运行时 | 沙箱（可用 / 不可用 / 未创建）、入口函数列表、降级原因（不可用时，红色） |
-| 操作 | `SwitchListTile` 启用；"登录"/"立即同步"/"查看日志" 三个 `ListTile` → SnackBar 占位（Phase 4 / 3 后） |
+- **操作** | `SwitchListTile` 启用；"登录"（**Phase 4.1 起接真实 WebView 登录**）、"立即同步"（SnackBar 占位，Phase 4.2/4.3）、"查看日志"（SnackBar 占位） |
 
 - **安装路径**用 `FutureBuilder` 异步读 `PluginStorageService.getPluginJsPath(pluginId)`：
   读取中 → `读取中…`；出错 → `读取失败`；`null` → `未安装（插件目录中找不到 .js 文件）`
 - **卸载**：`showDialog` 确认（"确定要卸载插件「X」吗？这会删除插件文件与本地数据。"）→
   确认后 `await provider.removePlugin(id)` → `context.mounted` 检查 → `Navigator.pop()`
+- **登录**（Phase 4.1）：读 `handle.manifest?.loginUrl` / `checkUrl`（**插件自己声明**，
+  内核不硬编码任何学校 URL）；`loginUrl` 为空 → `SnackBar('该插件未声明登录地址（loginUrl）')`，不跳转；
+  否则 push `WebViewLoginPage(pluginId: meta.id, ...)`（由登录页负责落盘），
+  返回非空 Cookie → `SnackBar('登录成功（已保存 N 字符的 Cookie）')`，
+  返回 `null`/空 → `SnackBar('已取消登录')`
 - 辅助私有组件：`_InfoCard`（分区卡片）、`_InfoRow`（标签 : 值，值可换行）、
   `_InstallPathRow`、`_ActionRow`
 
@@ -1389,6 +1464,8 @@ JS 侧 `JSON.stringify` 出来、Dart 侧 `jsonDecode` 解析；**不使用 `con
 | `version` | `String` | 版本号，默认 `'0.0.0'` |
 | `author` / `description` / `school` | `String` | 作者 / 说明 / 适用学校 |
 | `capabilities` | `List<String>` | 能力 ID 列表，默认空 |
+| `loginUrl` | `String` | **登录页 URL（Phase 4.1 新增）**。空串表示未声明，插件详情页的「登录」会提示用户。各校教务地址不同，由**插件自己声明**（内核不得硬编码，CONTEXT 3.1） |
+| `checkUrl` | `String` | **登录成功判定用的 URL 前缀（Phase 4.1 新增）**。登录页里当前 URL 以它为前缀即判定成功；空串表示未声明，登录页退化为"拿到任意 Cookie 即视为成功" |
 
 构造：`const PluginManifest({required id, required name, String version = '0.0.0', String author = '', String description = '', String school = '', List<String> capabilities = const []})`
 
