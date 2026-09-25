@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 平台网络安全配置（Phase 4.2.2）。
+
+  作用：**定向白名单**，只允许指定域名的明文 HTTP 流量。
+  targetSdk 34 起 Android 默认禁止 cleartext（明文 HTTP），而 NCST 教务系统
+  登录时会从 https 重定向到 http://xjw1.ncst.edu.cn/gotoLogin，
+  被系统拦掉的表现就是 WebView 报 `-1 net::ERR_CLEARTEXT_NOT_PERMITTED`
+  （插件侧走 dio 的 ctx.http 同样会被拦——dio 用的是系统网络策略）。
+
+  ⚠️ 与 CONTEXT 3.1 的关系（已在 CONTEXT.md 3.1 末尾写明为例外）：
+  本文件是**平台安全策略配置**，不是业务逻辑代码；这里出现的域名是
+  "允许明文流量的域名白名单"，与"内核不得硬编码学校 URL / 字段名 / 接口路径"
+  并不冲突（内核代码里依然一个学校 URL 都没有，见 `grep -r "ncst\|xjw1" lib/`）。
+
+  ⚠️ 维护成本：每新增一个使用 http 的学校，都要在此追加一条 <domain-config>
+  并**重新发版**（这是系统级配置，插件无法在运行时改）。
+  如需免发版，只能全局 usesCleartextTraffic="true" —— **不采用**，那是全局降级。
+-->
+<network-security-config>
+    <!-- 默认禁止明文流量（保持 Android 默认的安全策略） -->
+    <base-config cleartextTrafficPermitted="false" />
+
+    <!-- 定向放行：教务系统登录会重定向到 http，必须允许 -->
+    <!-- 每新增一个使用 http 的学校，在此追加一条 domain-config -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">xjw1.ncst.edu.cn</domain>
+    </domain-config>
+</network-security-config>

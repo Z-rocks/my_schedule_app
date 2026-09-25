@@ -4,7 +4,7 @@
 > 遇到阻塞，在旁边加 `⚠️` 并说明。
 > 本文件是"当前状态"的唯一真相来源。
 
-- 最后更新：2026-09-23
+- 最后更新：2026-09-25
 
 ---
 
@@ -12,18 +12,35 @@
 
 > 给新会话 AI 用。每次阶段切换时更新。
 
-- **最新完成**：Phase 4.2（NCST 教务插件 + 登录/同步接线）—— **代码完成，真机验收待人工**
-- **代码状态**：dart analyze 全绿；**真机验证卡在网络可达性**（见 4.2 备注块）
+- **最新完成**：**Phase 4.2.2（Android 明文流量定向白名单 `network_security_config.xml`）** ——
+  **代码/配置完成，真机复验待人工**。真机链路已推进两步：
+  4.2.1 修 `net::ERR_CERT_AUTHORITY_INVALID`（自签证书，WebView 默认拒绝）→
+  4.2.2 修 `net::ERR_CLEARTEXT_NOT_PERMITTED`（登录从 **https 重定向到
+  `http://xjw1.ncst.edu.cn/gotoLogin`**，targetSdk 34 默认禁明文）
+- **代码状态**：dart analyze 全绿；**真机验证仍卡在网络可达性 + 待复验 SSL/明文两处放行**
+  （见 4.2 / 4.2.1 / 4.2.2 备注块）
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
 - **Phase 3 全部完成**：插件运行时（沙箱 → 加载 → 多插件管理 → 文件持久化 → 管理 UI → **ctx**）
 - **Phase 4 进度**：4.1 ✅（WebView 登录 + Cookie，已真机验收）→
-  **4.2 代码完成、待人工验收** → 4.3 未开始 → 4.4 未开始
+  4.2 代码完成 → 4.2.1 代码完成 → **4.2.2 完成、待真机复验** → 4.3 未开始 → 4.4 未开始
 - **新会话请先做这一件事**：在**校园网/VPN** 下用真机跑通
   「安装 NCST 插件 → 登录（人工输学号密码）→ 立即同步」。
   这一步过不了，4.3 / 4.4 都没有意义。若报 `响应结构异常：…`，
-  把 error 文案发出来即可定位（插件已按"结构不符就报错"实现）。
+  把 error 文案发出来即可定位（插件已按"结构不符就报错"实现）；
+  若登录页仍打不开，按 **4.2.1 / 4.2.2 备注块**里的 `logcat` 命令抓 `WebViewLoginPage` 日志。
 - **下一步**：Phase 4.3（数据同步打通：增量/覆盖策略、覆盖层保留、失败重试）
-- **⚠️ 4.2 真机验证卡住（需要人工操作）**：NCST 教务主机 `xjw1.ncst.edu.cn` 解析到
+- **⚠️ 4.2.2 待真机复验（需要人工操作）**：明文白名单是**系统级配置**，
+  `dart analyze` 管不到它，**只能重装 APK 后真机确认**：
+  重跑 `flutter run`（**必须重编译安装**，热重载不生效）→ 插件管理 → NCST 详情 → 登录。
+  预期：登录页能打开（过程可能经过 `http://xjw1.ncst.edu.cn/gotoLogin` 重定向；
+  顶部可能还有一条证书警告条）。仍失败则 `adb logcat -d | grep WebViewLoginPage` 取日志。
+- **⚠️ 4.2.1 待真机复验（需要人工操作）**：SSL 放行逻辑已加（只放行登录 host），
+  但**真实证书错误无法在 `flutter test` 里模拟**（`SslAuthError` 构造私有、
+  `WebViewController()` 在测试环境起不来），**只能真机确认**。
+  看 `adb logcat -d | grep WebViewLoginPage`：出现 `SSL 错误放行` 即修复生效；
+  若仍失败，把 `加载失败: code=… desc=…` 那行发出来（`code=-1` 是 `ERROR_UNKNOWN`、
+  `-11` 是 `ERROR_FAILED_SSL_HANDSHAKE`，`desc` 里会带 `net::ERR_CERT_*`）。
+- **⚠️ 4.2 真机验证仍卡在网络可达性（需要人工操作）**：NCST 教务主机 `xjw1.ncst.edu.cn` 解析到
   **校园内网地址 `172.20.13.4`**，手机经"PC 热点"上网时**完全不可达**
   （手机 ping 该地址 100% 丢包，而 example.com 正常）。**需要让手机连上校园 WiFi
   或校园 VPN**，并**人工输入学号密码**完成登录，才能验证登录 → 同步 → 课表渲染这条链路。
@@ -35,14 +52,18 @@
   权限），release 包是否有其他权限 / 混淆（R8）问题**完全没有验证过**。3.6 刚发现
   `src/main` 缺 `INTERNET` 就是同类问题——release 冒烟必须真正装到设备上跑通
   "安装插件 → `ctx.http` 拉数据"这条链路。
-- **cleartext 问题已定案（4.2）**：NCST 是 **https**，不需要 cleartext 配置。
-  但**其他学校若仍是 http**，仍需 `networkSecurityConfig`（4.1 已在真机确认
-  `net::ERR_CLEARTEXT_NOT_PERMITTED`）。
+- **cleartext 问题已定案（4.2.2 ✅ 已修）**：4.2 曾判定"NCST 是 https，不需要 cleartext 配置"
+  —— **这个判断被真机推翻了**：登录会从 https **重定向到
+  `http://xjw1.ncst.edu.cn/gotoLogin`**，被系统拦成 `net::ERR_CLEARTEXT_NOT_PERMITTED`
+  （4.1 已在真机确认过这条风险，当时留作"待拿到真实地址后决定"）。
+  现已加 `network_security_config.xml` **定向白名单**（base 仍 `false`，
+  只放开 `xjw1.ncst.edu.cn` 含子域），**未**用全局 `usesCleartextTraffic="true"`。
+  其他学校若仍全程 http，修法相同（追加一条 `domain-config`）。
 - **遗留**：ModuleProvider 改用 `loadedCapabilities`；`ctx.notify` 接真实通知（Phase 7）；
   插件管理 UI 的"从文件导入"（Phase 6+）；同步进度 UI（Phase 4.4）；
   课表显示节次时间（数据已落 `plugin_data`，UI 未做，留 4.4）；
   单页/AJAX 登录（URL 不变）无法自动判定成功（4.1）
-- **最近 commit**：feat(plugin): 新增 NCST 教务插件与同步接线
+- **最近 commit**：`bf4f916` feat(plugin): 新增 NCST 教务插件与同步接线（4.2.1 SSL 修复与 4.2.2 明文白名单**尚未提交**）
 - **关键约束**：
   - testWidgets 不能触发 Hive 写（会卡死）
   - schema 已冻结（改字段要写迁移）
@@ -85,6 +106,30 @@
     **裸 `JsSandbox` 直接调 JS 函数**，不必为测试往插件里塞调试入口（4.2）
   - **教务系统可能是校园内网地址**（NCST 的 `xjw1.ncst.edu.cn` → `172.20.13.4`）：
     真机验收必须在**校园网 / VPN** 下做，普通外网（含手机热点）不可达（4.2）
+  - **`WebViewLoginPage` 对登录 URL 的 host 放行 SSL 证书错误，其他域名仍拒绝**（4.2.1）：
+    教务系统常用自签 / 不受信证书 —— 浏览器会提示"继续访问"，**WebView 默认直接拒绝**
+    （真机表现就是 `-1` 加载失败，容易被误判成"网络不可达"）。
+    放行判定是纯函数 `sslErrorHostToProceedOn`：精确同 host 或其**子域**才放行
+    （`xjw1.ncst.edu.cn.evil.com` 这类**前缀伪装不匹配**），解析不出 host 一律**拒绝**（fail closed）。
+    ⚠️ **写别的 WebView 页面时不要照抄成全局放行** —— 那等于静默接受任何第三方域名的坏证书
+  - **webview_flutter 4.14.1 没有 `onReceivedSslError` / `SslError`**（那是 4.15+ 的 API）：
+    4.14.1 的等价回调是 **`NavigationDelegate.onSslAuthError`**，参数是 `SslAuthError`
+    （只有 `certificate` / `cancel()` / `proceed()`，描述文案在 `error.platform.description`，
+    **不含 URL**，要用 `controller.currentUrl()` 代替）；它由 `webview_flutter` 直接导出
+    → **不需要把 `webview_flutter_android` 提为直接依赖**，也不用改平台判断（4.2.1）
+  - **`network_security_config.xml` 是"平台配置白名单"，加学校要重新发版**（4.2.2）：
+    `base-config` 保持 `cleartextTrafficPermitted="false"`，只给用 http 的域名开
+    `domain-config`（NCST 是 `xjw1.ncst.edu.cn`，`includeSubdomains="true"`）。
+    ⚠️ **绝不用 `android:usesCleartextTraffic="true"`**（全局放行 = 对所有域名降级）。
+    它是**系统级配置**，插件无法在运行时改 → 每新增一个 http 学校都要改文件并重发版；
+    其域名白名单属于**平台安全策略**、不算"内核硬编码学校 URL"（CONTEXT 3.1 已加例外说明，v1.5）
+  - **明文白名单的生效范围要分清**（4.2.2）：`network_security_config.xml` 的
+    `domain-config` **已确认**约束 **WebView**（4.1 真机就是 WebView 报的
+    `ERR_CLEARTEXT_NOT_PERMITTED`）；但它对 **`ctx.http`（dio → Dart 侧 socket）**
+    是否生效**尚无证据**（4.1 dio 打通 `http://` 本机服务那次用的是 debug 的**全局**
+    `usesCleartextTraffic`，不能外推）。
+    ⚠️ 复验点：同步报 `{error:'connection'}` 而浏览器能通 → 即此问题，按证据再决策，
+    **不要预先加全局 `usesCleartextTraffic="true"`**
   - **禁止用 PowerShell 的 Get-Content/Set-Content 做文本往返**（会按控制台代码页解码，中文变乱码，见阻塞表）
   - **docs/PROGRESS.md 曾因编码问题损坏**，见阻塞表（编辑该文件时务必确认保存为 UTF-8）
 
@@ -1167,12 +1212,146 @@
 - [x] Cookie 提取（Phase 4.1：`services/cookie_service.dart` + `WebViewCookieManager`）
 - [x] NCST 插件（Phase 4.2：`assets/plugins/ncst-jwxt.js`，声明 `loginUrl` / `checkUrl` + `fetchCourses`）
 - [x] 同步接线（Phase 4.2：详情页「立即同步」→ `fetchCourses` → `saveCourse` 落盘）
-- [ ] **真机跑通"登录 → 同步 → 课表显示"** —— 当前卡在校园网可达性 + 需要人工凭据（见快照区）
+- [x] **WebView 登录页 SSL 证书放行 + 诊断日志**（Phase 4.2.1：只放行登录 host；真机复验见备注块）
+- [x] **Android 明文流量定向白名单**（Phase 4.2.2：`network_security_config.xml`，
+      只放开 `xjw1.ncst.edu.cn`；**需重装 APK 才能生效**，真机复验见备注块）
+- [ ] **真机跑通"登录 → 同步 → 课表显示"** —— 卡在校园网可达性 + 需要人工凭据（见快照区）；
+  WebView 侧的 `-1` 加载失败已按 4.2.1（证书）+ 4.2.2（明文）修复，**待复验**
 - [ ] 数据同步的增量/覆盖策略与失败重试（Phase 4.3）
 - [ ] 课表显示节次时间（Phase 4.4；数据已落 `plugin_data` 的 `section_times`，UI 未做）
 - [ ] 同步进度 UI（Phase 4.4；现在只有一个防重入闩锁 + SnackBar）
 - [ ] **⚠️ 收尾必做：`flutter build apk --release` 发布包冒烟**
       （装到设备上跑通"安装插件 → `ctx.http` 拉数据"；此前所有网络验证都在 debug 包）
+
+### Phase 4.2.2 备注（Android 明文流量定向白名单）
+
+> **问题（4.2.1 修复后的真机复验）**：SSL 放行生效后，登录页**仍打不开**，
+> 但错误换了一条 ——
+> ```
+> [WebViewLoginPage] 加载失败: code=-1
+>   desc=net::ERR_CLEARTEXT_NOT_PERMITTED
+>   url=http://xjw1.ncst.edu.cn/gotoLogin
+> ```
+> **根因**：教务系统登录会从 `https://xjw1.ncst.edu.cn/` **重定向到 http**
+> （`http://xjw1.ncst.edu.cn/gotoLogin`），而 targetSdk 34 起 Android **默认禁止明文流量**。
+> 这正好印证了 4.1 真机就确认过的那条风险（当时留作"待拿到真实教务地址后决定"），
+> 而 **4.2 快照里"NCST 是 https，不需要 cleartext 配置"的判断被推翻了** ——
+> 入口是 https，但**跳转链里有 http**。
+
+> **改动**（**未加新依赖**、**未改任何 Dart 代码**）：
+> - 新建 `android/app/src/main/res/xml/network_security_config.xml`：
+>   `base-config cleartextTrafficPermitted="false"` + 一条 `domain-config true`
+>   （`<domain includeSubdomains="true">xjw1.ncst.edu.cn</domain>`）
+> - `android/app/src/main/AndroidManifest.xml`：`<application>` 新增
+>   `android:networkSecurityConfig="@xml/network_security_config"`
+>   （放在 `main` 里 ⇒ **debug / profile / release 三个变体都生效**；
+>   debug 变体的 manifest 只额外声明 `INTERNET`，不含网络策略）
+> - **没有**加 `android:usesCleartextTraffic="true"`（那是全局放行，等于对所有域名降级）
+> - `docs/CONTEXT.md`：3.1 小节新增**例外说明** + 版本 **v1.4 → v1.5** + 版本记录一行
+>
+> 其他地方**一个都没动**：`lib/` 零改动（`dart analyze lib` 仍全绿）、pubspec 未改、
+> `debug/AndroidManifest.xml` 未改、其他 Android 配置未改。
+
+> **为什么两个修复都要保留（互补，不是二选一）**：
+> | 修复 | 拦的是 | 表现 |
+> |------|--------|------|
+> | 4.2.1 `onSslAuthError` | **证书不受信**（`net::ERR_CERT_*`） | WebView 对自签证书默认直接拒绝 |
+> | 4.2.2 `network_security_config` | **明文 HTTP**（`net::ERR_CLEARTEXT_NOT_PERMITTED`） | 系统层拦掉 http 请求 |
+> 两者是**不同层**的拦截：一个是 TLS 校验，一个是传输层策略。
+> 教务系统"自签证书 + https→http 跳转"同时踩中两条，所以缺一不可。
+
+> **⚠️ 影响面：WebView 已确认受益，`ctx.http`（dio）待真机确认**：
+> - ✅ **已确认**：4.1 真机上报 `net::ERR_CLEARTEXT_NOT_PERMITTED` 的就是 **WebView**，
+>   所以登录页这条链路一定受这份配置影响
+> - ❓ **未知**：`ctx.http` 走 **dio → Dart 侧 socket**。Android 原生的
+>   `usesCleartextTraffic`（全局开关）对 Flutter Dart 侧 HTTP 是生效的，
+>   但**"按域白名单"（`domain-config`）是否被 Dart 侧尊重，本项目没有证据** ——
+>   4.1 的真机记录里 dio 确实打通了 `http://` 本机服务，但那一次是临时在
+>   **debug** manifest 开了 cleartext（**全局开关**，且只影响 debug），
+>   **不能**据此推断本配置对 dio 生效
+> - ⚠️ **由此产生一个明确的复验项**：登录成功后点「立即同步」，
+>   若 `fetchCourses` 报 `{error:'connection'}`（而浏览器 / curl 能通），
+>   基本就是"dart 侧不被按域白名单放行"。届时按证据再决策
+>   （**不预先全局放行**：那会把安全策略降级到所有域名）
+
+> **验证（做过的 / 没做的，说清楚）**：
+> - ✅ **XML 良构性 + 关键节点/属性**用 .NET `XmlDocument` 解析校验：
+>   `base-config` 的 `cleartextTrafficPermitted="false"`、恰好 **1** 条 `domain-config`、
+>   domain = `xjw1.ncst.edu.cn`、`includeSubdomains="true"`、
+>   manifest 上 `networkSecurityConfig='@xml/network_security_config'`、
+>   **`usesCleartextTraffic` 属性为空**（确认没做全局放行）、`INTERNET` 权限仍在
+> - ✅ `dart analyze lib` 全绿（证明 `lib/` 未受影响）
+> - ❌ **没有写新单测**：这是 Android 平台配置，Dart 测试**看不到**它
+>   （`flutter test` 跑在 Windows 宿主 Dart VM 上，连 Android 都不涉及）
+> - ❌ **没有跑 gradle 构建**（耗时且本阶段重点是配置正确性）；
+>   真正的"资源引用有效 + 策略生效"**只能靠重装 APK 真机验收**：
+>   若 `@xml/` 引用写错，构建期就会失败（`resource xml/network_security_config not found`），
+>   这一点下次 `flutter run` 会立刻暴露，属可接受的验证缺口
+
+### Phase 4.2.1 备注（WebView 登录页 SSL 证书放行 + 诊断日志）
+
+> **问题（真机 4.2 验收）**：点插件详情页「登录」→ WebView 打开登录页报**加载失败 `-1`**；
+> 而**手机系统浏览器访问同一地址能正常打开**。
+> **推断即根因**：教务系统用的是**不受信 / 自签证书** —— 浏览器会提示"继续访问"，
+> **WebView 默认直接拒绝**。这正是 4.2 真机"登录链路走不通"的真正原因之一
+> （当时只归因为"校园内网不可达"，那条**依然成立**，但 WebView 侧是另一个独立故障）。
+
+> **改动**：只动 `lib/pages/login/webview_login_page.dart`（`dart analyze lib` 通过，
+> **未加新依赖**、未改 pubspec、未碰其他文件）。
+>
+> - 新增 `NavigationDelegate.onSslAuthError` → `_onSslAuthError(SslAuthError)`
+> - 新增**顶层纯函数** `sslErrorHostToProceedOn({loginUrl, errorUrl})`：返回放行后允许的 host，
+>   `null` = 拒绝。精确同 host / 互为子域才放行，`xjw1.ncst.edu.cn.evil.com` 这类
+>   前缀伪装不匹配，解析不出 host 一律拒绝（fail closed）
+> - 新增私有 `_hostOf(url)`：兼容绝对 URL 与裸主机名，统一小写去空白
+> - `onWebResourceError` 日志补全为 `code / desc / type / mainFrame / url`，
+>   且**子资源错误也打日志**（原先直接 return，等于丢掉线索）
+> - 新增 `_sslProceedHost` 状态：放行后 Body 顶部显示黄色警告条
+>   （`theme.warning` + `Icons.warning_amber_rounded`，文案"该网站使用了不受信任的证书（已放行）"），
+>   并**抑制同一 host 紧随其后的 `onWebResourceError` 报错页**（放行后 WebView 常会为
+>   同一次导航再报一次错，那时页面其实能用）；`onPageStarted` 重置
+> - 私有字段 `_error` 更名 `_loadError`：`_onSslAuthError` 的参数名是 `error`，
+>   原来的字段名会被遮蔽（可读性坑，不是 bug）
+> - `_load()` / `_maybeFinish()` / `_collectCookieString()` / 构造签名**均未改动**
+>   （4.1 已验收的契约保持不变）
+
+> **⚠️ 任务书里的 API 在 4.14.1 不存在（重要，属"未经核实的技术前提"）**：
+> 任务书给的是 `onReceivedSslError: (WebViewController controller, SslError error)`、
+> `error.url` / `error.errorCode`。实测 **webview_flutter 4.14.1（本项目实际锁定版本）
+> 的 `NavigationDelegate` 没有 `onReceivedSslError`，也没有 `SslError` 类型**——
+> 那是 **4.15+** 才加的 API。4.14.1 的等价能力是
+> **`NavigationDelegate(onSslAuthError: (SslAuthError error) => …)`**
+> （`SslAuthError` 由 `webview_flutter` 直接导出，见 `lib/src/navigation_delegate.dart`，
+> 内部把平台层的 `PlatformSslAuthError` 包起来，`proceed()` / `cancel()` 都转发）。
+> 代价只有一个：**`SslAuthError` 不含 URL**，所以用 `controller.currentUrl()` 作为
+> "出错页面地址"的等价信息源 —— 判定失败的代价只是**拒绝**，不会误放行别的域名。
+> 之所以不去 cast `AndroidSslAuthError`（它**有** `url` 字段）拿 URL：
+> 那要求把 `webview_flutter_android` 提为**直接依赖**（当前只是传递依赖），
+> 违反本次"不加新依赖"的约束。
+> **结论**：用框架层 API + `currentUrl()`，既有 host 限制又有诊断日志，
+> 且零依赖改动。若将来升到 4.15+，可平滑换成 `onReceivedSslError` 并直接拿 `error.url`。
+
+> **为什么不做弹窗确认**：自签证书是教务系统常态，每次登录都弹窗很烦；
+> 本次做"**自动放行 + 警告条 + 日志**"。若要弹窗，在 `_onSslAuthError` 的放行分支前
+> 插一个 `showDialog` 即可，纯函数判定不用动。
+
+> **验证**：临时 `flutter test` 脚本 **19 组全部通过**，脚本已删除。覆盖：
+> 放行（精确同 host / 带端口 / 带 query / 子域 / 反向子域 / 大小写与空白归一 /
+> 登录 URL 带路径端口）、
+> 拒绝（不同域名 / 兄弟域 `jwxt.other.edu.cn` / 前缀伪装 `xjw1.ncst.edu.cn.evil.com` /
+> 后缀伪装 `evilncst.edu.cn` / 账号混淆 `xjw1.ncst.edu.cn@evil.com` /
+> 登录 URL 为空·空白·`about:blank`·`https:///no-host` 时一律拒绝 /
+> `errorUrl` 为空·相对路径时拒绝）、
+> 裸主机名能识别（是登录 host 则放行、否则拒绝）、
+> `isLoginSuccessUrl` 4 组回归、`WebViewLoginPage` 构造契约 2 组（必填 + 默认值、
+> title/pluginId/key）、加载失败日志 5 个字段齐全、
+> **源码钩子冒烟**（确实挂了 `onSslAuthError`、源码里 `proceed()` 只出现一次 =
+> 不存在无条件放行路径）。
+
+> **⚠️ 真实 SSL 错误无法在 `flutter test` 里覆盖**（两条硬原因）：
+> ① `WebViewController()` 需要 `WebViewPlatform.instance`，测试环境为 `null` → 本页 pump 不起来；
+> ② `SslAuthError` 的构造函数是私有的（`SslAuthError._fromPlatform`）→ 测试里造不出实例。
+> 因此**只能真机验收**：真机上出现 `[WebViewLoginPage] SSL 错误放行: …` 即修复生效。
 
 ### Phase 4.2 备注（NCST 教务插件 + 同步接线）
 
@@ -1446,9 +1625,15 @@
 | 2026-09-23 | `plugin_data` Box（key = `<pluginId>:<userKey>`）此后即**契约**，改动需写迁移 | 已决定 |
 | 2026-09-23 | 3.6 未做：权限系统（所有插件都能用全部 ctx）、网络白名单；`ctx.notify` 仍是占位（Phase 7）；`ctx.cookie` 只读（Phase 4 才写入） | 待处理 |
 | 2026-09-24 | **4.1 已验证 ✅：`WebViewCookieManager.getCookies` 在 Android 上能拿到 HttpOnly Cookie**。真机用本机服务同时下发 `normal=xyz`（普通）与 `JSESSIONID=ABC123; HttpOnly`，提取结果为 `"normal=xyz; JSESSIONID=ABC123"` —— **HttpOnly 也在内**（Android 的 `CookieManager.getCookie(url)` 返回的是"会随请求发送的 Cookie"）。所以**不需要**引入 `webview_cookie_manager` 等第三方包 | ✅ 已完成 |
-| 2026-09-24 | **4.1 已验证并确认为真实风险：Android 明文 HTTP（cleartext）被拦**。真机上 WebView 打开 `http://127.0.0.1:.../login` 直接失败：`net::ERR_CLEARTEXT_NOT_PERMITTED`（targetSdk 34 默认禁 cleartext）。**不少学校教务仍是 http://** —— 若是，则 **WebView 登录与 `ctx.http` 都会被系统拦掉**。修法二选一：① `networkSecurityConfig` 只对具体域名放行（推荐，安全）；② `usesCleartextTraffic="true"`（全放开，不推荐）。**待 Phase 4.2 拿到真实教务地址后决定** | ⚠️ 待处理（Phase 4.2） |
+| 2026-09-24 | **4.1 已验证并确认为真实风险：Android 明文 HTTP（cleartext）被拦**。真机上 WebView 打开 `http://127.0.0.1:.../login` 直接失败：`net::ERR_CLEARTEXT_NOT_PERMITTED`（targetSdk 34 默认禁 cleartext）。**不少学校教务仍是 http://** —— 若是，则 **WebView 登录与 `ctx.http` 都会被系统拦掉**。修法二选一：① `networkSecurityConfig` 只对具体域名放行（推荐，安全）；② `usesCleartextTraffic="true"`（全放开，不推荐）。**待 Phase 4.2 拿到真实教务地址后决定** | ✅ 已完成（Phase 4.2.2：采用方案①，`network_security_config.xml` 只放行 `xjw1.ncst.edu.cn` 含子域，`base-config` 仍为 `false`；**待真机复验**） |
 | 2026-09-24 | **4.1 已知局限：登录成功后 URL 不变的站点（单页 / AJAX 登录）无法自动判定成功**。当前主方案是 URL 前缀匹配；若学校登录后不跳转，`checkUrl` 永远不命中 → 只能用户手动返回（那样按规范不保存 Cookie）。4.1 真机验证里也顺带确认了相反方向的规则是对的：`https://example.com/` 命中前缀但**没有 Cookie 时不会误判成功** | 待处理 |
 | 2026-09-24 | **4.2 真机验证卡在网络可达性（非代码问题）**：`xjw1.ncst.edu.cn` → `172.20.13.4`（校园内网）。本机可达，但手机经 PC 热点上网时 `ping` 100% 丢包（example.com 正常）。**需手机连校园 WiFi / VPN + 人工输入学号密码**，才能验证登录 → 同步 → 课表渲染 | ⚠️ 待人工验收 |
+| 2026-09-25 | **4.2.1 已诊断并修复（待复验）：WebView 打开登录页报 `-1`，而系统浏览器能打开** —— 根因是**不受信 / 自签证书**（WebView 默认拒绝，浏览器给"继续访问"）。已加**只对登录 host** 的 SSL 放行 + 诊断日志 + 警告条；真实证书错误在 `flutter test` 里造不出来（`SslAuthError` 构造私有、`WebViewController()` 测试环境起不来），**需真机看 `SSL 错误放行` 日志确认** | ⚠️ 待真机复验（Phase 4.2.1） |
+| 2026-09-25 | **webview_flutter 4.14.1（本项目锁定版本）没有 `onReceivedSslError` / `SslError`**（4.15+ 才有），等价 API 是 `NavigationDelegate.onSslAuthError(SslAuthError)`；该 `SslAuthError` **不含 URL**（描述在 `error.platform.description`），故用 `controller.currentUrl()` 兜。若将来升级到 4.15+ 可换成 `onReceivedSslError` 直接取 `error.url` | 已决定（Phase 4.2.1） |
+| 2026-09-25 | 4.2.1 只做了"**自动放行 + 警告条**"，**未做放行前弹窗确认**（自签证书是教务常态，每次弹窗烦人）。将来若要弹窗，在 `_onSslAuthError` 放行分支前插 `showDialog` 即可 | 已决定（Phase 4.2.1） |
+| 2026-09-25 | **4.2.2 已修（待复验）：登录从 https 重定向到 http，被 Android 拦成 `net::ERR_CLEARTEXT_NOT_PERMITTED`**（`url=http://xjw1.ncst.edu.cn/gotoLogin`）。已加 `network_security_config.xml` 定向白名单（`base-config` 仍 `false`，只放开 `xjw1.ncst.edu.cn` 含子域）并在 manifest 引用；**需重装 APK** 才能生效。**已确认**约束 WebView；对 **`ctx.http`（dio → Dart 侧 socket）是否生效尚无证据**（4.1 dio 打通 http 本机服务那次用的是 debug 全局 `usesCleartextTraffic`，不能外推）→ 同步报 `{error:'connection'}` 而浏览器能通即为此问题 | ⚠️ 待真机复验（Phase 4.2.2） |
+| 2026-09-25 | **4.2 快照里"NCST 是 https，不需要 cleartext 配置"的判断已被真机推翻**：入口是 https，但**登录跳转链里有 http**。教训：涉及网络策略的结论必须等真机完整跑过跳转链再定 | ✅ 已更正（Phase 4.2.2） |
+| 2026-09-25 | `network_security_config.xml` 是**系统级配置**，插件无法在运行时修改 → **每新增一个使用 http 的学校都要改文件并重新发版**。若将来要免发版，只能全局 `usesCleartextTraffic="true"`（**不采用**，等于对所有域名降级明文） | 已决定（Phase 4.2.2） |
 | 2026-09-24 | **4.2 未验证：真实教务响应是否与规格一致**。插件里的字段名（`coureNumber` 等）来自你之前提供的抓包结构，**我无法在未登录状态下验证真实响应**。插件已按"结构不符就报 `响应结构异常：…`"处理——真机登录后若报错，把 error 文案发我即可定位 | ⚠️ 待人工验收 |
 | 2026-09-24 | 4.2 未做：同步的增量/覆盖策略（现有 `saveCourse` 按 id 覆盖，插件的 `id = coureNumber_coureSequenceNumber` 天然稳定）、失败重试、同步进度 UI —— 留给 Phase 4.3 / 4.4 | 待处理 |
 | 2026-09-23 | `PluginStorageService` 的目录布局（`<appDocuments>/plugins/<id>.js` + `<id>.manifest.json`）此后即**契约**：已装插件的文件名/后缀改动需写迁移（重命名旧文件） | 已决定 |

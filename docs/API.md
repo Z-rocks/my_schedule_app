@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-24（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService；3.5 插件管理 UI 接入；3.5.1 插件可卸载性 isRemovable；3.6 插件上下文 ctx；4.1 WebView 登录页 + Cookie 提取；4.2 NCST 教务插件 + 同步接线）
+- 最后更新：2026-09-25（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService；3.5 插件管理 UI 接入；3.5.1 插件可卸载性 isRemovable；3.6 插件上下文 ctx；4.1 WebView 登录页 + Cookie 提取；4.2 NCST 教务插件 + 同步接线；4.2.1 WebView SSL 证书放行 + 诊断日志；4.2.2 Android 明文流量定向白名单 `network_security_config.xml`）
 
 ---
 
@@ -802,6 +802,15 @@ const WebViewLoginPage({
 - `bool isLoginSuccessUrl(String currentUrl, String successUrlPrefix)` —
   当前 URL 是否以该前缀开头（两侧空白忽略）。**空前缀返回 `false`**，
   语义是"没声明前缀、不靠 URL 判定"，由调用方走 Cookie 兜底
+- **`String? sslErrorHostToProceedOn({required String loginUrl, required String errorUrl})`**
+  （Phase 4.2.1）— SSL 证书错误的放行判定：返回**放行后允许的 host**，
+  `null` 表示拒绝（`cancel`）。
+  - **只对 `loginUrl` 的 host 放行**，绝不全局放行
+  - 匹配规则：`errorUrl` 的 host 与登录 host **相同**、或为其子域
+    （`auth.xjw1.ncst.edu.cn` ← `.xjw1.ncst.edu.cn`）、或登录 host 是它的子域；
+    `xjw1.ncst.edu.cn.evil.com` 这类前缀伪装**不匹配**（必须以 `.<host>` 结尾）
+  - 登录 host 解析不出 / `errorUrl` 无主机 → 一律拒绝（**fail closed**）
+  - 用得着它的原因见下方「SSL 证书错误处理」
 
 **行为**：
 
@@ -825,8 +834,112 @@ const WebViewLoginPage({
 - `_finished` 标志防止"多次 `onPageFinished`"导致重复 pop
 - 颜色 / 字号 / 圆角全部取自 `AppThemeExtension`
 
+#### SSL 证书错误处理（Phase 4.2.1）
+
+**问题背景（真机 4.2）**：点「登录」后 WebView 报 `-1` 加载失败，而**手机系统浏览器
+能正常打开**同一个地址 —— 典型的不受信 / 自签证书：浏览器会提示"继续访问"，
+WebView 默认**直接拒绝**。教务系统用自签证书是常态，所以必须放行，
+但**只能放行登录校的域名**。
+
+**实现要点**：
+
+| 项 | 做法 |
+|----|------|
+| 回调 | `NavigationDelegate.onSslAuthError`（**框架层 4.14.1 就有**）→ `_onSslAuthError` |
+| 放行判定 | `sslErrorHostToProceedOn(loginUrl:, errorUrl: controller.currentUrl())` |
+| 放行 | `error.proceed()` + `debugPrint('[WebViewLoginPage] SSL 错误放行: url=… host=… platform=…')` |
+| 拒绝 | `error.cancel()` + `debugPrint('[WebViewLoginPage] SSL 错误拒绝: …')` |
+| 提示 UI | 放行后 Body 顶部一条黄色警告条（`theme.warning` + `Icons.warning_amber_rounded`）：<br>「该网站使用了不受信任的证书（已放行）」 |
+| 报错抑制 | 记录 `_sslProceedHost`；同一 host 紧随其后的 `onWebResourceError` **不再展示报错页**<br>（放行后 WebView 常会为同一次导航再报一次错，页面其实能正常用）；`onPageStarted` 时重置 |
+
+> **为什么不用任务书里的 `onReceivedSslError(controller, SslError)`**：
+> webview_flutter **4.14.1 没有这个 API**（`SslError` 是 4.15+ 才加的）。
+> 4.14.1 的等价能力就是 `onSslAuthError`，且 `SslAuthError` 由 `webview_flutter`
+> 直接导出，**不需要引入 `webview_flutter_android` 直接依赖**。
+> 代价：`SslAuthError` **不含出错 URL**（只有 `certificate` / `cancel()` / `proceed()`，
+> 描述文案在 `error.platform.description`），所以用 `currentUrl()` 作为等价信息源 ——
+> 判定失败的代价只是"拒绝"，不会误放行别的域名。
+
+> **为什么不做弹窗确认**：自签证书是教务系统常态，每次登录都弹窗很烦；
+> 当前做"**自动放行 + 警告条 + 日志**"。将来若有人要求，"放行前弹确认框"可以在此函数上直接加。
+
+#### 诊断日志（Phase 4.2.1）
+
+排障时按 `WebViewLoginPage` 过滤 logcat 即可：
+
+```
+adb logcat -d | grep WebViewLoginPage
+```
+
+| 日志 | 触发点 | 关键字段 |
+|------|--------|----------|
+| `加载失败: code=… desc=… type=… mainFrame=… url=…` | `onWebResourceError`（**子资源也打**，不复用过滤） | `code`（Android 的 `-1` = `ERROR_UNKNOWN`、`-11` = `ERROR_FAILED_SSL_HANDSHAKE`）、`desc`（`net::ERR_CERT_AUTHORITY_INVALID` / **`net::ERR_CLEARTEXT_NOT_PERMITTED`** 等）、`type`、`mainFrame`、`url` |
+| `SSL 错误放行: url=… host=… platform=…` | `onSslAuthError` → 放行分支 | `url`、`host`、`platform`（如 `The certificate authority is not trusted.`） |
+| `SSL 错误拒绝: url=… platform=…` | `onSslAuthError` → 拒绝分支 | 同上 |
+| `该错误发生在已放行证书的 host（X），不显示报错页` | `onWebResourceError` 被抑制 | host |
+| `读取当前 URL 失败：…` | `currentUrl()` 抛异常 | 异常文本 |
+
+> **子资源错误为什么也要打**：真机排障时"看起来不相干的子资源错误"往往才是根因
+> （证书错误、明文 HTTP 被拦、DNS 失败）；过滤掉就等于把线索丢了。
+> 只是**不打日志≠不算失败**：`isForMainFrame == false` 仍不显示报错页。
+
+**两个已修复的真机故障（对应两条不同的 `net::ERR_*`）**：
+
+| 现象（logcat） | 根因 | 修复 |
+|----------------|------|------|
+| `-1 net::ERR_CERT_AUTHORITY_INVALID` | 教务用不受信 / 自签证书，WebView 默认拒绝（浏览器给"继续访问"） | **4.2.1**：`onSslAuthError` 只放行登录 host（见上） |
+| `-1 net::ERR_CLEARTEXT_NOT_PERMITTED`（`url=http://xjw1.ncst.edu.cn/gotoLogin`） | 登录从 **https 重定向到 http**，targetSdk 34 默认禁止明文流量 | **4.2.2**：`network_security_config.xml` 定向白名单（见下节） |
+
 > **注意**：本页在 `flutter test` 里**无法 pump**——`WebViewController()` 需要
-> `WebViewPlatform.instance`（测试环境为 `null`）。真实加载只能在真机验证。
+> `WebViewPlatform.instance`（测试环境为 `null`）；`SslAuthError` 的构造函数是私有的
+> （`_fromPlatform`），测试里也**造不出**一个真实 SSL 错误。因此真实证书错误
+> **只能真机验收**；单测覆盖其**纯函数**（`isLoginSuccessUrl`、
+> `sslErrorHostToProceedOn`）与构造契约。
+
+### 平台配置 — `android/app/src/main/res/xml/network_security_config.xml`（Phase 4.2.2）
+
+**不是 Dart 代码，是 Android 平台的网络安全策略文件**，用 manifest 的
+`android:networkSecurityConfig="@xml/network_security_config"` 引用（在
+`android/app/src/main/AndroidManifest.xml` 的 `<application>` 上，**对 debug / profile / release
+三个变体都生效**——debug 变体的 manifest 只额外声明 `INTERNET`，不含网络策略）。
+
+```xml
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />          <!-- 默认：仍禁止明文 -->
+    <domain-config cleartextTrafficPermitted="true">           <!-- 定向放行 -->
+        <domain includeSubdomains="true">xjw1.ncst.edu.cn</domain>
+    </domain-config>
+</network-security-config>
+```
+
+- **为什么需要**：NCST 登录会从 `https://xjw1.ncst.edu.cn/` 重定向到
+  `http://xjw1.ncst.edu.cn/gotoLogin`；targetSdk 34 默认禁 cleartext，
+  不放行就报 `net::ERR_CLEARTEXT_NOT_PERMITTED`
+- **影响范围（已确认 vs 待确认，说清楚）**：
+  - ✅ **已确认**：WebView 受它约束（4.1 真机就是 WebView 报的
+    `net::ERR_CLEARTEXT_NOT_PERMITTED`），所以登录页这条链路一定受益
+  - ❓ **待真机确认**：`ctx.http`（dio → Dart 侧 socket）**是否也受这份"按域白名单"约束**。
+    Android 原生的 `usesCleartextTraffic` 对 Flutter Dart 侧 HTTP 是生效的，
+    但**"按域白名单"（`domain-config`）是否被 Dart 侧尊重，我们没有证据**；
+    4.1 的真机记录反而显示 dio 能打到 `http://` 本机服务
+    （那一次是临时在 **debug** manifest 开了 cleartext，属"全局开关"而非"按域白名单"，
+    所以**不能**用来推断本配置对 dio 生效）
+  - ⚠️ 由此产生一个**明确的复验项**：登录成功后点「立即同步」，若 `fetchCourses`
+    报 `{error:'connection'}`（而 `curl`/浏览器能通），基本就是"dart 侧不被按域白名单放行"，
+    届时需另行决策（例如把 manifest 的 `usesCleartextTraffic` 也纳入，
+    或为该插件走 http 的场景单独评估——**不预先全局放行**）
+- **绝不用 `android:usesCleartextTraffic="true"`**：那是全局放行（等于对所有域名降级）；
+  这里用 `base-config false` + 单域名白名单，其他域名仍禁止
+- `includeSubdomains="true"`：认证可能跳到同主域的另一台主机（`gotoLogin` 之类的跳转链）
+- **维护成本**：新增一个用 http 的学校 → 追加一条 `<domain-config>` → **重新发版**
+  （系统级配置，插件无法在运行时改）。CONTEXT 3.1 已为这份文件写了例外说明：
+  它属于"允许明文流量的域名白名单"（平台配置），不算"内核硬编码学校 URL"
+
+> **验证方式**：`dart analyze` 管不到 XML。已做的检查是**XML 良构性 + 关键节点/属性**
+> （`base-config` 为 `false`、恰好 1 条 `domain-config`、域名与 `includeSubdomains` 正确、
+> manifest 上 `networkSecurityConfig` 已引用且 **`usesCleartextTraffic` 为空**、
+> `INTERNET` 权限仍在）。真正生效**只能靠真机验收**（重装 APK，见 PROGRESS 验收路径）。
+
 
 ## lib/pages/ 其它页面
 

@@ -4,8 +4,8 @@
 > 每次生成代码前，必须把本文件内容作为前置上下文提供给 AI。
 > 本文件一旦确定，不轻易改动；如需修改，请更新版本号并说明原因。
 
-- 版本：v1.4
-- 最后更新：2026-09-23
+- 版本：v1.5
+- 最后更新：2026-09-25
 
 ---
 
@@ -65,6 +65,16 @@
 - 插件通过注入的 `ctx` API（http / storage / notify / log）与外界交互
 - 插件**不接触** UI、文件系统、原生 API
 - 插件输出统一模型（Course / Exam / Homework），由内核消费
+
+> **例外（Phase 4.2.2）**：`android/app/src/main/res/xml/network_security_config.xml`
+> 是 **Android 平台的安全策略文件**，其中的域名白名单**不违反**"内核不硬编码学校 URL"
+> —— 它是"**允许的明文流量白名单**"（`cleartextTrafficPermitted`），属于**平台配置**而非业务逻辑：
+> 内核代码里依然一个学校 URL 都没有（可用 `grep -r "ncst\|xjw1" lib/` 自查，结果为空）。
+> 加它的原因：教务系统登录会从 https 重定向到 http，而 targetSdk 34 默认禁止明文流量，
+> 不放行就直接报 `net::ERR_CLEARTEXT_NOT_PERMITTED`（4.1 真机确认该错误来自 **WebView**；
+> 对 `ctx.http`（dio → Dart 侧 socket）是否同样生效**尚无证据**，属待验证项）。
+> **每新增一个使用 http 的学校，都需要在此追加一条 `<domain-config>` 并重新发版**
+> （系统级配置，插件无法在运行时修改；也不用全局 `usesCleartextTraffic="true"`，那是全局降级）。
 
 ### 3.2 UI 与主题
 - 所有 UI 组件**必须**从 `AppThemeExtension` 读样式
@@ -223,3 +233,4 @@
 | v1.2 | 2026-09-23 | Phase 3.4 引入 path_provider，支持插件文件持久化 |
 | v1.3 | 2026-09-23 | Phase 3.5.1 补充 4.2.1：**纯新增**字段（不改名、不改语义、缺键有兼容默认值）无需迁移，只有键改名 / 语义变化才要迁移 |
 | v1.4 | 2026-09-23 | Phase 3.6 新增 **3.6 插件入口函数幂等约定**（`ctx.http` 用"登记待办 + 宿主重放"实现，入口函数会被执行多次）；3.5 存储分离表补插件私有 KV（`plugin_data`） |
+| v1.5 | 2026-09-25 | Phase 4.2.2：3.1 小节新增**例外说明**——`android/.../network_security_config.xml` 的域名白名单属 Android **平台安全策略**，不算"内核硬编码学校 URL"；每新增一个用 http 的学校需追加 `domain-config` 并重新发版 |

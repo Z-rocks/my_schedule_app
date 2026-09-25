@@ -1,4 +1,5 @@
 // Phase 4.1：通用 WebView 登录页（登录 + Cookie 提取）。
+// Phase 4.2.1：新增 SSL 证书错误处理（**只放行登录 URL 的 host**）+ 诊断日志。
 //
 // **本页是通用组件**：不硬编码任何学校 URL、不依赖任何学校页面结构
 // （CONTEXT 3.1：内核不知道任何具体学校的 URL / 字段名）。
@@ -24,6 +25,56 @@ bool isLoginSuccessUrl(String currentUrl, String successUrlPrefix) {
   return currentUrl.trim().startsWith(prefix);
 }
 
+/// 判定"这个 SSL 证书错误该不该放行"，返回**放行后允许的 host**；
+/// 返回 `null` 表示**拒绝**（`cancel`）。
+///
+/// **只对 [loginUrl] 的 host 放行**——这是 Phase 4.2.1 的硬约束：
+/// 学校教务系统用自签 / 不受信证书是常态（浏览器会提示"继续访问"，
+/// 而 WebView 默认直接拒绝），但**绝不能全局放行**，
+/// 否则登录流程里任何第三方域名的证书错误都会被静默接受。
+///
+/// 匹配规则（`errorUrl` 里含登录 host 是**必要**条件）：
+/// - 精确同主机：`xjw1.ncst.edu.cn` == `xjw1.ncst.edu.cn` ✅
+/// - 同主域的子域：`auth.xjw1.ncst.edu.cn` 的后缀是 `.xjw1.ncst.edu.cn` ✅
+///   （教务系统常把认证跳转到另一台主机，那台主机的域名里必然带着它的父域）
+/// - 反向则不成立：`xjw1.ncst.edu.cn.evil.com` ❌（它不以 `.<host>` 结尾）
+/// - 登录 host 无法解析 / `errorUrl` 无主机 → 一律拒绝（fail closed）
+///
+/// 纯函数，便于单测（真实的 `SslAuthError` 无法在 `flutter test` 里构造）。
+String? sslErrorHostToProceedOn({
+  required String loginUrl,
+  required String errorUrl,
+}) {
+  final String allowedHost = _hostOf(loginUrl);
+  if (allowedHost.isEmpty) return null;
+
+  final String errorHost = _hostOf(errorUrl);
+  if (errorHost.isEmpty) return null;
+
+  if (errorHost == allowedHost ||
+      errorHost.endsWith('.$allowedHost') ||
+      allowedHost.endsWith('.$errorHost')) {
+    return allowedHost;
+  }
+  return null;
+}
+
+/// 从 URL 里取出**小写主机名**；解析不出主机时返回空串。
+///
+/// 兼容两种情况：带 scheme 的绝对 URL，以及只有主机名的裸串
+/// （个别平台回调给的可能不是完整 URL）。
+String _hostOf(String url) {
+  final String trimmed = url.trim();
+  if (trimmed.isEmpty) return '';
+
+  final Uri? parsed = Uri.tryParse(trimmed);
+  final String byParse = parsed?.host.trim().toLowerCase() ?? '';
+  if (byParse.isNotEmpty) return byParse;
+
+  final String hostPart = Uri.tryParse('https://$trimmed')?.host ?? '';
+  return hostPart.trim().toLowerCase();
+}
+
 /// 通用 WebView 登录页。
 ///
 /// 打开 [loginUrl]；当 WebView 的当前 URL 命中 [successUrlPrefix] **且拿到 Cookie**
@@ -33,6 +84,9 @@ bool isLoginSuccessUrl(String currentUrl, String successUrlPrefix) {
 /// - [pluginId] 非空时，本页会在返回前把 Cookie 存进 `flutter_secure_storage`
 ///   （key = `<pluginId>:cookie`）；为空则只返回，由调用方自己保存
 /// - [successUrlPrefix] 为空 → 退化为"拿到任意 Cookie 即视为成功"（兜底策略）
+/// - **SSL 证书错误（Phase 4.2.1）**：只对 [loginUrl] 的 host 放行，其他域名拒绝
+///   （见 [sslErrorHostToProceedOn]）；放行后页面顶部显示一条黄色警告条
+///   （`theme.warning`），并且**抑制同一 host 紧随其后的 `onWebResourceError` 报错页**
 class WebViewLoginPage extends StatefulWidget {
   const WebViewLoginPage({
     super.key,
@@ -63,10 +117,20 @@ class _WebViewLoginPageState extends State<WebViewLoginPage> {
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
 
   bool _loading = true;
-  String? _error;
+  String? _loadError;
 
   /// 是否已经判定成功过——防止"多次 onPageFinished"导致重复 pop。
   bool _finished = false;
+
+  /// **本轮加载**放行过 SSL 错误的 host（`null` 表示没放行过）。
+  ///
+  /// 两个用途：
+  /// 1. 顶部黄色警告条的显隐；
+  /// 2. 抑制"放行同一 host 的证书错误后，紧随其后的 `onWebResourceError`"
+  ///    ——否则会出现"已经放行了，却还显示加载失败页"的自相矛盾状态。
+  ///
+  /// `onPageStarted` 时重置：下一次加载重新判定，不会残留上一轮的状态。
+  String? _sslProceedHost;
 
   @override
   void initState() {
@@ -78,6 +142,7 @@ class _WebViewLoginPageState extends State<WebViewLoginPage> {
           onPageStarted: _onPageStarted,
           onPageFinished: _onPageFinished,
           onWebResourceError: _onWebResourceError,
+          onSslAuthError: _onSslAuthError,
         ),
       );
     _load();
@@ -92,7 +157,7 @@ class _WebViewLoginPageState extends State<WebViewLoginPage> {
     if (!valid) {
       setState(() {
         _loading = false;
-        _error = '登录地址无效：${widget.loginUrl}';
+        _loadError = '登录地址无效：${widget.loginUrl}';
       });
       return;
     }
@@ -103,7 +168,9 @@ class _WebViewLoginPageState extends State<WebViewLoginPage> {
     if (!mounted) return;
     setState(() {
       _loading = true;
-      _error = null;
+      _loadError = null;
+      // 新一轮加载：上一轮放行过的记录不再适用（见 `_sslProceedHost` 注释）。
+      _sslProceedHost = null;
     });
   }
 
@@ -114,14 +181,77 @@ class _WebViewLoginPageState extends State<WebViewLoginPage> {
   }
 
   void _onWebResourceError(WebResourceError error) {
+    final String url = error.url ?? '';
+    // ⚠️ 诊断日志：**不过滤子资源**，先全部打出来。
+    // 真机排障时"看起来不相干的子资源错误"往往才是根因（如证书错误、
+    // 明文 HTTP 被拦、DNS 失败），过滤掉就等于把线索丢了。
+    debugPrint('[WebViewLoginPage] 加载失败: '
+        'code=${error.errorCode} '
+        'desc=${error.description} '
+        'type=${error.errorType} '
+        'mainFrame=${error.isForMainFrame} '
+        'url=$url');
+
     // 子资源（图片 / CSS）失败不该当成整页失败。
     if (error.isForMainFrame == false) return;
     if (!mounted) return;
-    debugPrint('[WebViewLoginPage] 加载失败：${error.errorCode} ${error.description}');
+
+    // 同一 host 刚刚按用户意图放行了证书错误 → 不再展示"加载失败"页：
+    // 放行后 WebView 常会为这次导航再报一次错，那时页面其实能正常用。
+    final String? proceeded = _sslProceedHost;
+    if (proceeded != null &&
+        (proceeded == _hostOf(url) || url.trim().isEmpty)) {
+      debugPrint('[WebViewLoginPage] 该错误发生在已放行证书的 host（$proceeded），不显示报错页');
+      setState(() => _loading = false);
+      return;
+    }
+
     setState(() {
       _loading = false;
-      _error = '页面加载失败（${error.errorCode}）：${error.description}';
+      _loadError = '页面加载失败（${error.errorCode}）：${error.description}';
     });
+  }
+
+  /// SSL 证书错误：**只放行登录 URL 的 host**（Phase 4.2.1）。
+  ///
+  /// 背景：教务系统常用自签 / 不受信证书。手机浏览器会提示"继续访问"，
+  /// 而 WebView 默认**直接拒绝**——真机表现就是 `-1` 加载失败
+  /// （Phase 4.2 曾误判为"网络不可达"）。
+  ///
+  /// 这里用框架层 4.14.1 就有的 [NavigationDelegate.onSslAuthError]：
+  /// 它给出 `proceed()` / `cancel()`，**不需要引入 webview_flutter_android 直接依赖**。
+  /// 该 API 的 [SslAuthError] 只公开 `certificate` / `cancel()` / `proceed()`，
+  /// 描述文案要从平台实现对象 `error.platform.description` 取
+  /// （这是框架层公开字段，不算平台特有 API）。
+  /// **不含 URL**，所以用 `currentUrl()` 作为"出错页面地址"的等价信息源——
+  /// 判定失败的代价只是"拒绝"（fail closed），不会误放行别的域名。
+  Future<void> _onSslAuthError(SslAuthError error) async {
+    final String detail = 'platform=${error.platform.description}';
+    String currentUrl = '';
+    try {
+      currentUrl = await _controller.currentUrl() ?? '';
+    } catch (e) {
+      debugPrint('[WebViewLoginPage] 读取当前 URL 失败：$e');
+    }
+
+    final String? allowedHost = sslErrorHostToProceedOn(
+      loginUrl: widget.loginUrl,
+      errorUrl: currentUrl,
+    );
+
+    if (allowedHost == null) {
+      debugPrint('[WebViewLoginPage] SSL 错误拒绝: url="$currentUrl" $detail'
+          '（不在登录 host 内）');
+      await error.cancel();
+      return;
+    }
+
+    debugPrint('[WebViewLoginPage] SSL 错误放行: url="$currentUrl" '
+        'host=$allowedHost $detail');
+    await error.proceed();
+    if (!mounted) return;
+    // 记下放行事实：用于顶部警告条 + 抑制紧随其后的 onWebResourceError。
+    setState(() => _sslProceedHost = allowedHost);
   }
 
   /// 判断是否登录成功；成功则提取 Cookie 并返回。
@@ -202,7 +332,7 @@ class _WebViewLoginPageState extends State<WebViewLoginPage> {
             tooltip: '刷新',
             onPressed: () {
               setState(() {
-                _error = null;
+                _loadError = null;
                 _loading = true;
               });
               _controller.reload();
@@ -215,7 +345,7 @@ class _WebViewLoginPageState extends State<WebViewLoginPage> {
   }
 
   Widget _buildBody(AppTheme theme) {
-    final String? error = _error;
+    final String? error = _loadError;
     if (error != null) {
       return Center(
         child: Padding(
@@ -241,7 +371,7 @@ class _WebViewLoginPageState extends State<WebViewLoginPage> {
               FilledButton(
                 onPressed: () {
                   setState(() {
-                    _error = null;
+                    _loadError = null;
                     _loading = true;
                   });
                   _load();
@@ -261,16 +391,59 @@ class _WebViewLoginPageState extends State<WebViewLoginPage> {
       );
     }
 
-    return Stack(
+    return Column(
       children: <Widget>[
-        WebViewWidget(controller: _controller),
-        if (_loading)
-          LinearProgressIndicator(
-            minHeight: theme.gridGap,
-            backgroundColor: theme.surface,
-            color: theme.primary,
+        if (_sslProceedHost != null) _buildSslWarning(theme),
+        Expanded(
+          child: Stack(
+            children: <Widget>[
+              WebViewWidget(controller: _controller),
+              if (_loading)
+                LinearProgressIndicator(
+                  minHeight: theme.gridGap,
+                  backgroundColor: theme.surface,
+                  color: theme.primary,
+                ),
+            ],
           ),
+        ),
       ],
+    );
+  }
+
+  /// 证书被放行时的提示条（Phase 4.2.1）。
+  ///
+  /// 只做**告知**，不做拦截：自签证书是教务常态，每次弹窗确认会很烦
+  /// （决策：自动放行 + 日志，弹窗留给将来真有人要求时再加）。
+  /// 颜色 / 字号 / 圆角 / 间距全部取自 [AppTheme]，无硬编码。
+  Widget _buildSslWarning(AppTheme theme) {
+    return Container(
+      width: double.infinity,
+      color: theme.warning,
+      padding: EdgeInsets.symmetric(
+        horizontal: theme.cardPadding,
+        vertical: theme.cardPadding / 2,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(
+            Icons.warning_amber_rounded,
+            size: theme.bodySize,
+            color: theme.onBackground,
+          ),
+          SizedBox(width: theme.gridGap),
+          Expanded(
+            child: Text(
+              '该网站使用了不受信任的证书（已放行）',
+              style: TextStyle(
+                fontSize: theme.captionSize,
+                color: theme.onBackground,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
