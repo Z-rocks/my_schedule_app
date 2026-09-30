@@ -3,10 +3,17 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/course.dart';
+import '../../models/plugin_meta.dart';
 import '../../models/semester_config.dart';
+import '../../models/sync_report.dart';
 import '../../providers/course_provider.dart';
+import '../../providers/plugin_provider.dart';
 import '../../providers/semester_provider.dart';
 import '../../providers/settings_provider.dart';
+import '../../runtime/plugin_handle.dart';
+import '../../services/cookie_service.dart';
+import '../../services/course_sync_service.dart';
+import '../../services/section_time_service.dart';
 import '../../services/timetable_logic.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
@@ -19,11 +26,15 @@ import 'course_detail_sheet.dart';
 /// 顶部日期栏的高度。
 const double kTopBarHeight = 48;
 
-/// 默认节次时间表（节次 → 上课时间段）。
+/// **兜底**节次时间表（节次 → 上课时间段）。
 ///
-/// 暂时硬编码：`AppTheme` 只有 `timeFormat`，没有节次时间数据。
-/// **Phase 4 插件接入后改为从插件的 `sectionTime` 数据读取**
-/// （不同学校的作息不同，不能长期写死在客户端）。
+/// **Phase 4.4 起这只是一份兜底值**：正常路径是用插件同步下来的真实作息
+/// （`SectionTimeService` 从 Hive `plugin_data.section_times` 读，
+/// 见 `_TimetableViewState._sectionTimes`）。只有当"没有任何插件提供作息"时
+/// 才用这份硬编码——它不可能对每一所学校都正确。
+///
+/// 保留它的另一个原因：新用户还没装插件时，课表时间列得显示点东西，
+/// 而不是一片空白。
 const Map<int, String> kDefaultSectionTimes = <int, String>{
   1: '08:30-09:15',
   2: '09:20-10:05',
@@ -81,6 +92,25 @@ class _TimetableViewState extends State<TimetableView> {
   /// 左右滑动切周用的控制器；懒建，仅 `gestureSwitchWeek == true` 时使用。
   PageController? _pageController;
 
+  /// 插件同步下来的真实作息（Phase 4.4）；`null` 表示没有插件提供 →
+  /// 课表回退到内置默认 [kDefaultSectionTimes]。
+  SectionTimes? _sectionTimes;
+
+  /// 上次解析作息时用的"插件状态签名"。
+  ///
+  /// 用途：作息存在 Hive `plugin_data` 里，**不是** Flutter 的可监听状态。
+  /// 用签名避免每帧都去查一次 Box：只有"插件列表 / 启用态 / 能力声明"变了
+  /// 才重新解析。
+  ///
+  /// **同步完成后会自动刷新**，不需要用户手动操作：同步会写课程，
+  /// 而写课程走 `CourseProvider.saveCourse` → `notifyListeners`，
+  /// 本页 `watch` 了 `CourseProvider`，于是重建 → [didChangeDependencies]
+  /// → 本方法。课表页的同步按钮另外会显式把签名置空再刷新一次（更直接）。
+  String? _sectionTimesSignature;
+
+  /// 是否正在同步（Phase 4.4 顶部栏按钮的防重入闩锁）。
+  bool _syncing = false;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -94,6 +124,28 @@ class _TimetableViewState extends State<TimetableView> {
         _jumpPageToWeek(_week);
       });
     }
+
+    // 插件状态可能变了（启用/禁用/新装）→ 重新解析作息。
+    _refreshSectionTimesIfChanged();
+  }
+
+  /// 重新解析插件作息（仅在插件状态签名变化时真正读盘）。
+  ///
+  /// 数据流：插件同步时 `ctx.storage.set('section_times', ...)` →
+  /// 宿主落 Hive `plugin_data` 的 `<pluginId>:section_times` →
+  /// [SectionTimeService] 读出 → 传给 `TimetableGrid.sectionTimes`。
+  ///
+  /// **不需要手动刷新**：同步会走 `CourseProvider.saveCourse` → `notifyListeners`，
+  /// 而课表页 `watch` 了 `CourseProvider`，于是本页重建 → 本方法被再次调用。
+  void _refreshSectionTimesIfChanged() {
+    final List<PluginMeta> plugins = context.read<PluginProvider>().plugins;
+    final String signature = plugins
+        .map((PluginMeta p) => '${p.id}:${p.enabled}:'
+            '${(p.effectiveCapabilities.toList()..sort()).join(",")}')
+        .join('|');
+    if (signature == _sectionTimesSignature) return;
+    _sectionTimesSignature = signature;
+    _sectionTimes = SectionTimeService.fromPlugins(plugins);
   }
 
   /// 学期变化时把选中周重置为"当前周"；同一学期内保留用户的选择。
@@ -294,6 +346,27 @@ class _TimetableViewState extends State<TimetableView> {
                 ),
               ),
             const Spacer(),
+            // Phase 4.4：有可同步的插件时，课表页也能直接同步
+            // （原来只能进「设置 → 插件管理 → 详情」才能点同步）。
+            if (_syncablePlugin != null)
+              IconButton(
+                icon: _syncing
+                    ? SizedBox(
+                        width: theme.bodySize,
+                        height: theme.bodySize,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            theme.primary,
+                          ),
+                        ),
+                      )
+                    : const Icon(Icons.sync),
+                tooltip: _syncing ? '正在同步…' : '从教务系统同步课程',
+                color: theme.primary,
+                // 同步中置灰，避免连点
+                onPressed: _syncing ? null : _syncNow,
+              ),
             IconButton(
               icon: const Icon(Icons.add),
               tooltip: '添加课程',
@@ -304,6 +377,92 @@ class _TimetableViewState extends State<TimetableView> {
         ),
       ),
     );
+  }
+
+  /// 课表页可用的同步插件（`null` = 不显示同步按钮）。
+  ///
+  /// 只在**恰好一个**候选插件时给按钮：多个插件都能同步课程时，
+  /// 课表页没有足够的空间让用户选"用哪个"，那种情况引导去插件管理页更合适。
+  PluginMeta? get _syncablePlugin {
+    final List<PluginMeta> candidates = context
+        .read<PluginProvider>()
+        .enabledPlugins
+        .where((PluginMeta p) => p.effectiveCapabilities.contains('timetable'))
+        .toList(growable: false);
+    if (candidates.length != 1) return null;
+    final PluginHandle? handle =
+        context.read<PluginProvider>().getHandle(candidates.first.id);
+    if (handle == null || !handle.isUsable) return null;
+    if (!handle.entries.contains('fetchCourses')) return null;
+    return candidates.first;
+  }
+
+  /// 课表页的「同步」入口：复用 [CourseSyncService]（与插件详情页同一套逻辑）。
+  ///
+  /// 与详情页的差别只有两点：没有 Cookie 时引导去插件详情页登录
+  /// （课表页没有登录入口），以及结果只用 SnackBar 呈现
+  /// （课表页顶部放不下结果卡片，详细信息去详情页看）。
+  Future<void> _syncNow() async {
+    final PluginMeta? meta = _syncablePlugin;
+    if (meta == null || _syncing) return;
+
+    final PluginProvider pluginProvider = context.read<PluginProvider>();
+    final CourseProvider courseProvider = context.read<CourseProvider>();
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+
+    final String cookie = await CookieService.loadCookie(meta.id);
+    if (cookie.isEmpty) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('「${meta.name}」还没有登录，请到插件详情页登录'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _syncing = true);
+    SyncReport report;
+    try {
+      report = await CourseSyncService.sync(
+        pluginId: meta.id,
+        handle: pluginProvider.getHandle(meta.id),
+        courses: courseProvider,
+      );
+    } catch (e) {
+      debugPrint('[TimetableView] 同步抛出未预期异常：$e');
+      report = SyncReport.failure(
+        pluginId: meta.id,
+        outcome: SyncOutcome.failed,
+        reason: '同步异常：$e',
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _syncing = false);
+      } else {
+        _syncing = false;
+      }
+    }
+
+    if (!mounted) return;
+
+    // 作息可能在本次同步里更新了（插件会写 `section_times`），重新读一次。
+    _sectionTimesSignature = null;
+    _refreshSectionTimesIfChanged();
+    setState(() {});
+
+    messenger.showSnackBar(SnackBar(content: Text(_reportText(report))));
+  }
+
+  /// 把同步报告压成一句课表页能说清的文案。
+  static String _reportText(SyncReport report) {
+    if (!report.isSuccess) return '同步失败：${report.reason}';
+    if (!report.hasChanges) {
+      return report.totalCourses == 0
+          ? '同步完成：这学期没有课程'
+          : '同步完成：${report.totalCourses} 门课程已是最新';
+    }
+    return '已同步 ${report.totalCourses} 门课程'
+        '（新增 ${report.added}、更新 ${report.updated}）';
   }
 
   /// 学期是否已结束：当前周已是最后一周，且今天已过学期结束日。
@@ -377,7 +536,9 @@ class _TimetableViewState extends State<TimetableView> {
   ) {
     return TimetableGrid(
       grid: TimetableLogic.buildGrid(courses, week),
-      sectionTimes: kDefaultSectionTimes,
+      // Phase 4.4：优先用插件同步下来的**真实作息**；没有插件提供时
+      // 回退到内置默认值（各校作息不同，硬编码只是最后兜底）。
+      sectionTimes: _sectionTimes?.times ?? kDefaultSectionTimes,
       currentWeek: week,
       weekStartDate: weekStartDateOf(config, week),
       onTapCourse: (Course course) => showCourseDetailSheet(context, course),

@@ -801,6 +801,59 @@ UI 偏好设置（Phase 2.2b.1 新增）。目前只有"左右滑动切换周次
 
 ## lib/services/
 
+### `section_time_service.dart` — SectionTimes + SectionTimeService（**Phase 4.4 新增**）
+
+从插件私有 KV 读**真实作息**（节次 → 上课时间段）。
+
+为什么需要它：课表左侧时间列原本用**硬编码**的 `kDefaultSectionTimes`，
+但各校作息不同——写死在客户端等于"永远显示错误的作息"。
+真机实测 NCST 的作息与默认值在**第 11/12 节**就不同
+（真实 `20:50-21:35` / `21:40-22:25` vs 默认 `20:40-21:25` / `21:30-22:15`）。
+
+数据来源：插件同步时 `ctx.storage.set('section_times', JSON.stringify(map))`
+（见 `ncst-jwxt.js`）→ 宿主落 Hive `plugin_data` Box，
+键为 `<pluginId>:section_times`（CONTEXT 3.5「插件私有 KV」）。
+
+常量：`kSectionTimesStorageKey = 'section_times'`（**与插件写入的键必须一致**）、
+`kTimetableCapability = 'timetable'`（声明该能力的插件才被认为提供作息）
+
+#### `class SectionTimes`（`@immutable`）
+
+| 成员 | 类型 | 说明 |
+|------|------|------|
+| `times` | `Map<int, String>` | 节次 → 时间文本（`3 → '10:25-11:10'`），键升序 |
+| `pluginId` / `pluginName` | `String` | 提供这份作息的插件（供 UI 显示来源与排查） |
+| `isEmpty` / `length` | `bool` / `int` | 便捷判定 |
+| `operator [](int session)` | `String?` | 取某一节；没有返回 `null` |
+| `displayLines` | `List<String>` | 带节次前缀：`['1 08:30-09:15', ...]` |
+
+#### `class SectionTimeService`
+
+- `static SectionTimes? fromPlugins(List<PluginMeta> plugins)` —
+  从**已启用**且声明了 `timetable` 能力的插件里找一份作息。
+  多个插件都提供时，返回**第一个能解析出非空作息**的那份
+  （按传入顺序），**不会混合**两个学校的作息——混起来会得到
+  "第 3 节 10:25，第 5 节却是另一个学校的时间"这种错乱结果。
+- `static SectionTimes? fromPlugin(PluginMeta meta)` — 读某一个插件（不检查能力/启用态）
+- `static Map<int, String>? parse(String raw)` — 解析
+  `{"第3节":"10:25-11:10", ...}`
+- `static int? parseSessionNumber(String key)` — 从键里取节次号
+
+**`parseSessionNumber` 容忍的形状**（实测 NCST 是第一种）：
+`第3节` / `第 3 节` / `3` / `3节` / `第3` / `3.0` / `第3节(上午)`
+——取**第一段连续数字**；取不到数字或不在 `1..12` 内返回 `null`。
+
+**`parse` 的容错**（任何一条坏数据只丢那一条）：
+非 JSON / 非对象 → 返回 `null`（整份不可用）；
+键解析不出节次号 → 跳过；值为空串 / `null` → 跳过；节次重复 → **后者覆盖前者**；
+输出按节次**升序**。
+
+契约：**任何失败都返回 `null`，绝不抛异常**——作息读不到时课表应静默回退到
+`kDefaultSectionTimes`，而不是让整个课表页崩掉。
+
+> ⚠️ `StorageService.pluginDataBox` 在未初始化时抛 `StateError`，
+> 本服务把它当"还没准备好"（返回 `null`）而不是错误。
+
 ### `timetable_logic.dart` — TimetableLogic
 
 课表逻辑的**纯函数**工具（全部 `static`，无状态、不依赖 Hive / Provider），可独立测试，也可在 Phase 3 插件运行时复用。
@@ -1168,7 +1221,26 @@ SizedBox(
   - 面板返回 `int` → 跳到该周；返回 `_WeekPickerResult.editSemester` → `Navigator.push(SemesterConfigPage)`（Phase 2.2c.1）
 - 右上角 `+` → `_openCourseEdit()`：**有学期**则 `Navigator.push(CourseEditPage)`；**无学期**则 `SnackBar('请先配置学期')` + `SnackBarAction('去配置')` → 打开 `SemesterConfigPage`（Phase 2.2c.2）
 
-常量：`kTopBarHeight = 48`、`kDefaultSectionTimes`（12 个节次的起止时间，**硬编码**；Phase 4 插件接入后改为从插件的 `sectionTime` 数据读取——各校作息不同，不能长期写死在客户端）
+常量：`kTopBarHeight = 48`、`kDefaultSectionTimes`（12 个节次的起止时间）
+
+> **Phase 4.4 起 `kDefaultSectionTimes` 只是兜底值**：正常路径走
+> `SectionTimeService` 从 `plugin_data` 读插件同步下来的**真实作息**
+> （`_sectionTimes`）；只有"没有任何插件提供作息"时才用这份硬编码。
+> 保留它的另一个原因：新用户还没装插件时，时间列得显示点东西而不是空白。
+>
+> `_sectionTimes` 的刷新时机：① 插件列表/启用态/能力声明的**签名**变化时
+> （`_refreshSectionTimesIfChanged`，避免每帧查 Box）；
+> ② 课表页同步按钮点完显式置空签名再刷新。
+> **同步后自动生效**走的是另一条路：写课程 → `CourseProvider.notifyListeners`
+> → 本页 `watch` 到 → 重建 → `didChangeDependencies`。
+>
+> **顶部栏（4.4 新增同步按钮）**：`[今天日期] [第N周▾] (学期已结束) [⟳] [+]`。
+> 同步按钮只在**恰好一个**候选插件时出现（已启用 + 声明 `timetable` +
+> `fetchCourses` 入口 + 句柄可用）；多个候选时课表页放不下"选哪个"，
+> 引导去插件管理页。同步中按钮变为转圈并置灰（`onPressed: null`）。
+> 无 Cookie 时提示"请到插件详情页登录"（课表页没有登录入口）。
+> 结果用 SnackBar 呈现（课表页顶部放不下结果卡片，详细信息看插件详情页）。
+
 - 点击卡片 → `showCourseDetailSheet(context, course)`
 - 长按卡片 → SnackBar `编辑功能待实现（Phase 5）`
 
