@@ -1342,11 +1342,19 @@
 > [Plugin:ncst-jwxt] 第 2 轮登记了 1 个 HTTP 请求，取回后重放
 > [Plugin:ncst-jwxt] NCST 同步：解析出 4 门课程，节次时间 12 条
 > [CourseSyncService] ncst-jwxt 同步完成：新增 4、更新 0、未变 0、跳过 0
+> ...
+> [CourseSyncService] ncst-jwxt 同步完成：新增 0、更新 0、未变 4、跳过 0
 > ```
 >
 > 结论：**R8 没有破坏 QuickJS 的 FFI 绑定与 `.so` 加载**；
 > `ctx.http` 在 release 下能真发请求并拿到数据；**明文白名单在 release 同样生效**
 > （同步成功即证明，因为部分请求走 http）。
+>
+> 上面第二条同步（`未变 4`）是用户在**课表页顶部 ⟳**触发的，
+> 说明 release 包下 ① 4.4 新增的同步入口可用、② **增量策略同样成立**
+> （4 门课原始字段与库中一致 → 全部跳过落盘）。
+> 这比 debug 包那次更有价值：debug 下多一层校验，release 下才是真实运行形态。
+>
 > 截图：`docs/verify/4.4-release-smoke.png`（该图是**卸载重装后**的状态，
 > 所以显示"还没有配置学期"——学期配置也在卸载时被清掉了）
 
