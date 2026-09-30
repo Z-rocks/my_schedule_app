@@ -39,6 +39,40 @@ class CourseProvider extends ChangeNotifier {
         _courses.where((Course course) => !course.isHidden).toList(),
       );
 
+  /// 设置某门课的"隐藏"状态（Phase 5）。
+  ///
+  /// CONTEXT 3.3 规定教务课程**只能隐藏或永久忽略、不能真删**，
+  /// 所以"删除教务课程"的落地方式就是 `setHidden(id, true)`。
+  /// 隐藏可撤销：`setHidden(id, false)` 让课程重新出现在课表里。
+  ///
+  /// 覆盖层的其他字段（改名 / 颜色 / 备注 / 自定义安排）**原样保留**——
+  /// 隐藏只是多盖一个 `hidden: true`，不该顺手清掉用户的其他修改。
+  ///
+  /// 课程不存在时返回 `false`（调用方据此提示）。
+  Future<bool> setHidden(String id, bool hidden) async {
+    final Course? course = getById(id);
+    if (course == null) {
+      debugPrint('CourseProvider.setHidden($id) 找不到该课程');
+      return false;
+    }
+    final UserOverride base =
+        course.userOverride ?? UserOverride(updatedAt: DateTime.now());
+    await saveCourse(
+      course.copyWith(
+        userOverride: base.copyWith(hidden: hidden, updatedAt: DateTime.now()),
+      ),
+    );
+    return true;
+  }
+
+  /// 被用户隐藏的课程（供"已隐藏的课程"页展示与恢复）。
+  ///
+  /// 与 [hiddenCount] 的区别：这里返回**课程本身**而不是数量。
+  /// 顺序与 [courses] 一致，保证列表稳定不乱跳。
+  List<Course> get hiddenCourses => UnmodifiableListView<Course>(
+        _courses.where((Course course) => course.isHidden),
+      );
+
   /// 被用户隐藏的课程数量。
   int get hiddenCount => _courses.where((Course c) => c.isHidden).length;
 

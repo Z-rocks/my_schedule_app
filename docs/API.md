@@ -541,6 +541,12 @@ App 的全部视觉令牌集合，不可变（**30 个字段**，Phase 3.5 由 2
   - **Phase 4.3 修正**：入参不带覆盖层时，会把**内存里已有的覆盖层重新挂回去**
     （来源优先级：入参自带的 > 内存里那条已有的 > Box 里存的）
 - `Future<void> deleteCourse(String id)` — 同时删除 `courses` 与 `overrides` 中的记录（避免孤儿覆盖层）。教务课程应改用 `userOverride.hidden`，见 CONTEXT 3.3
+- `Future<bool> setHidden(String id, bool hidden)` — **Phase 5 新增**：设置某门课的隐藏状态
+  - CONTEXT 3.3 规定教务课程**只能隐藏、不能真删**，所以"删除教务课程"的落地方式就是 `setHidden(id, true)`
+  - 隐藏可撤销：`setHidden(id, false)` 让课程重新出现在课表里
+  - **覆盖层的其他字段（改名 / 颜色 / 备注 / 自定义安排）原样保留**——隐藏只是多盖一个 `hidden: true`
+  - 课程不存在时返回 `false`（调用方据此提示），不抛异常
+- `List<Course> get hiddenCourses` — **Phase 5 新增**：被隐藏的**课程本身**（供"已隐藏的课程"页展示与恢复）。与 `hiddenCount` 的区别是返回课程而不是数量；顺序与 `courses` 一致
 - `Future<void> clearAll()` — 清空两个 Box 与内存（测试 / 重置用）
 
 **纯内存操作（不落盘，供测试 / 临时预览）**
@@ -1264,13 +1270,76 @@ Future<void> showCourseDetailSheet(BuildContext context, Course course);
   - 节次：单节 `第3节`，连堂 `第3-4节`；周次优先用 `rawWeeksText`，缺单双周标记时按 `weekType` 补 `(单)`/`(双)`
   - 无安排时显示"暂无安排"
 - "备注"区块：仅在 `userOverride.note` 非空时显示
-- 底部按钮：`编辑`（→ SnackBar `编辑功能待实现（Phase 5）`）、`关闭`（→ `Navigator.pop`）
+- 底部按钮：`编辑`（**Phase 5 起接真实编辑页**）、`关闭`（→ `Navigator.pop`）
+  - `编辑` 的实现要点：**先取 `NavigatorState` 再 `pop()`**。`pop()` 之后本 widget 已失效，
+    那时 `Navigator.of(context)` 会拿不到；而且必须用同一个 Navigator 才能保证编辑页
+    盖在**页面**上（而不是弹层自己那层）
 
 ### `edit/course_edit_page.dart` — CourseEditPage
 
-**添加课程**页（Phase 2.2c.2）。`const CourseEditPage({super.key})` —— 无构造参数；**编辑/删除留到 Phase 5**。
+**课程编辑页（新增 / 编辑）**。Phase 2.2c.2 建页时只能新增；**Phase 5 起支持编辑与删除**。
 
-两个入口（课表页顶部 `+`、空态"添加课程"按钮）都先检查 `SemesterProvider.hasConfig`：**没有学期时不跳转**，改弹 `SnackBar('请先配置学期')` 并带 `SnackBarAction('去配置')`（打开 `SemesterConfigPage`）。本页 `_save()` 里还有一次同样的兜底。
+```dart
+const CourseEditPage({super.key, this.course});
+final Course? course;   // null = 新增；非空 = 编辑该课程
+```
+
+**入口**：
+
+| 场景 | 入口 | 传参 |
+|------|------|------|
+| 新增 | 课表页顶部 `+`、空态"添加课程" | `course: null` |
+| 编辑 | 课程详情弹层「编辑」、课表卡片**长按** | `course: 该课程` |
+
+所有入口都先检查 `SemesterProvider.hasConfig`：**没有学期时不跳转**，改弹 `SnackBar('请先配置学期')` 并带 `SnackBarAction('去配置')`。本页 `_save()` 里还有一次同样的兜底。
+
+#### ⚠️ 编辑两种课程时的落点是**不同**的（CONTEXT 3.3）
+
+| 课程来源 | 保存到哪 | 为什么 |
+|----------|----------|--------|
+| 自建（`sourcePluginId == 'user'`） | `courses` Box 的**原始字段** | 这条数据本来就是用户的，没有"教务原始值"要保护 |
+| 插件同步来的 | `overrides` Box 的**覆盖层** | 原始字段是教务权威数据，重同步会覆盖它；用户改动必须放在覆盖层里才不会被冲掉 |
+
+**学分与类别在编辑插件课程时是只读的**（滑块 `onChanged: null`、类别框 `readOnly: true`
+并显示 `_ReadOnlyNotice` 说明）。原因：`UserOverride` **没有** `customUnit` / `customCategory`
+字段，硬写进 `Course` 会被下次同步冲掉（那正是 Phase 4.3 修掉的那类 bug）。
+**不假装能改**——UI 上直接说明"学分与类别来自教务系统，暂不支持修改"。
+
+#### `_buildOverride` 的四条规则
+
+1. **颜色**：始终按表单值写（`null` = 未覆盖，走"自动"配色）；
+2. **名称 / 教师**：只在**与原始值不同**时才写覆盖；改回原值就不覆盖
+   （避免留下"改了等于没改"的空覆盖，那会让下次同步无谓地判成有变化）；
+3. **时间地点**：只有用户**真的改过**（`_samePlaces` 按值比较）才写 `customTimePlaces`——
+   没改就不写，让课程继续跟着教务的原始安排走（教务调课了也该跟着变，
+   不该被一次无意义的"保存"冻结住）；
+4. **`hidden` 必须原样保留**（`base?.hidden ?? false`）：否则"隐藏了某门课 → 顺手编辑一下"
+   会让它重新出现在课表里。
+
+返回 `null` 表示新覆盖层是空的，等价于"没有覆盖层"。
+
+#### 删除 / 隐藏（AppBar 右侧按钮）
+
+**语义按来源分岔**，图标与确认文案都不同：
+
+| 来源 | 图标 | 动作 | 文案 |
+|------|------|------|------|
+| 自建 | `delete_outline` | `deleteCourse`（连覆盖层一起清） | "确定删除「X」吗？这会同时删除它的颜色与备注。" |
+| 插件同步来的 | `visibility_off_outlined` | 写 `userOverride.hidden = true` | "确定把「X」从课表隐藏吗？…之后可以在「设置 → 课表设置 → 已隐藏的课程」里恢复。" |
+
+"删除"和"隐藏"对用户是两件事，**不能共用一句"确定吗"**。
+
+#### 编辑模式的表单预填
+
+- 文本与颜色一律走 `displayXxx`（已叠加覆盖层）；**覆盖层里没有颜色 → 保持"自动"**，
+  不要凭空选一个（那会改掉用户的自动配色）。
+- 时间段草稿在 `didChangeDependencies` 里构建（要读 `SemesterProvider.totalWeeks`，
+  `initState` 里拿不到 InheritedWidget），用 `_draftsInitialized` 标记保证只初始化一次。
+- `_TimePlaceDraft.fromTimePlace` 反填时，周次区间优先取 `TimePlace.weeks` 的**最小/最大值**
+  （它一定是解析好的真值；`rawWeeksText` 只是展示文本，可能解析不出），
+  并把越界值用 `clamp` 收进当前学期。
+
+纯函数（同文件导出）：`weeksFromRange(int startWeek, int endWeek, WeekType)`、`rawWeeksTextFromRange(int, int, WeekType)`
 
 `Form` + `ListView` 结构：
 
@@ -1286,6 +1355,8 @@ Future<void> showCourseDetailSheet(BuildContext context, Course course);
 ```dart
 class _TimePlaceDraft {
   _TimePlaceDraft({required this.endWeek});   // endWeek 按学期总周数传入
+  // Phase 5：从已有安排反填（编辑模式）
+  factory _TimePlaceDraft.fromTimePlace(TimePlace tp, {required int totalWeeks});
   int day = 1; int startSession = 1; int length = 2;
   int startWeek = 1; int endWeek;
   WeekType weekType = WeekType.all;
@@ -1305,10 +1376,27 @@ class _TimePlaceDraft {
 - `sourcePluginId = kUserSourcePluginId`（`'user'`）
 - `timePlaces` = 各草稿转换结果
 - **颜色存进 `userOverride.customColor`**（`Course` 没有 color 字段，`displayColor` 读的就是它；`saveCourse` 会把覆盖层剥离到 `overrides` Box 持久化）。选了"自动"时 `customColor = null`，由 `TimetableGrid` 按 `course.id` 哈希取色。备注同样存进 `userOverride.note`；两者都为空时 `userOverride` 为 `null`。
-
-纯函数（同文件导出）：`weeksFromRange(int startWeek, int endWeek, WeekType)`、`rawWeeksTextFromRange(int, int, WeekType)`
+- **Phase 5 补充**：`userOverride` 由 `_buildOverride` 统一构造（见上方四条规则）；
+  编辑模式下还会写入 `customName` / `customTeacher`（仅在与原始值不同时）
+  与 `customTimePlaces`（仅在时间段真的改过时）。
 
 常量：`kMaxCourseNameLength = 30`、`kMinUnit = 0` / `kMaxUnit = 10` / `kUnitStep = 0.5`、`kMinLength = 1` / `kMaxLength = 4`
+（纯函数 `weeksFromRange` / `rawWeeksTextFromRange` 见上方"纯函数"说明）
+
+### `settings/hidden_courses_page.dart` — HiddenCoursesPage（**Phase 5 新增**）
+
+`const HiddenCoursesPage({super.key})` —— 已隐藏课程列表 + 恢复入口。
+
+**为什么需要这一页**：CONTEXT 3.3 规定教务课程**只能隐藏、不能真删**，
+而"隐藏"如果没有恢复入口，在用户看来就和删除没有区别——数据还在，但用户找不回来。
+所以隐藏功能必须配一个恢复入口才算完整。
+
+入口：设置 → 课表设置 → 「已隐藏的课程」（`subtitle` 显示 `已隐藏 N 门课程` / `暂无隐藏的课程`）。
+
+- 空态 → `EmptyState(visibility_outlined, '没有隐藏的课程', '在课程详情里可以隐藏不需要的课程')`
+- 有数据 → `ListView.builder`，每张卡片：`displayName` + `教师 · N 个时间段` + 「恢复显示」`TextButton.icon`
+- 恢复走 `CourseProvider.setHidden(id, false)`——**保留**用户的颜色 / 备注 / 改名；
+  找不到课程时提示"恢复失败：找不到该课程"
 
 ### `settings/semester_config_page.dart` — SemesterConfigPage
 

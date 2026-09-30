@@ -12,28 +12,27 @@
 
 > 给新会话 AI 用。每次阶段切换时更新。
 
-- **最新完成**：**Phase 4.4（课表显示插件真实作息 + 课表页同步入口）** ——
-  `SectionTimeService` 从 `plugin_data.section_times` 读插件作息，
-  课表时间列改为显示它、`kDefaultSectionTimes` 降级为兜底；
-  课表页顶部新增同步按钮 ⟳。**真机已验证**：第 11/12 节显示插件的
-  `20:50-21:35` / `21:40-22:25`，而非硬编码的 `20:40-21:25` / `21:30-22:15`。
-  详见 4.4 备注。
+- **最新完成**：**Phase 5（课程编辑 / 删除 / 隐藏）** ——
+  编辑两种课程的落点刻意分开（自建写原始字段、教务写覆盖层），
+  新增「已隐藏的课程」恢复页。**自验证通过**：`dart analyze` 全绿 +
+  临时脚本 12 组 + widget 测试 6 组 + Windows 桌面实跑。
 - **Phase 4.2 / 4.2.1 / 4.2.2 / 4.3 真机复验全部通过（2026-09-30）** ——
   校园 WiFi 下跑通「登录 → 同步 → 课表显示」：无证书/明文错误，提取 3 个 Cookie，
   同步解析 4 门课程 + 12 条节次时间，`未变 4` 印证增量策略，
   `force-stop` 冷启动后课程仍在。详见 4.3 备注开头的"真机复验已完成"。
+- **Phase 4 已全部完成**（含 4.4 插件真实作息、release 包冒烟）；
+  **Phase 5 已完成**；**下一步 Phase 6（皮肤 / 创意工坊 / 暗色模式）**
 - **Phase 4.3**：**已 `dart analyze` 全绿 + 临时脚本 16 组通过 + 真机复验通过**。
   同步逻辑从 `PluginDetailPage` 抽到 `lib/services/course_sync_service.dart`，
   结果形状抽到 `lib/models/sync_report.dart`；顺带**修掉一个真实的数据丢失 bug**
   （`CourseProvider.saveCourse` 会冲掉内存里的用户覆盖层）。
-- **代码状态**：4.3 已提交（`d8be3b3`）；课程列表页 `6e91145`；学习笔记 `332bfcd`；
-  复验记录 `289b5d6`；4.4 见下；`dart analyze` 整包 `No issues found`
+- **代码状态**：Phase 4 各阶段已提交（最新 `c981efb`）；Phase 5 见下；
+  `dart analyze` 整包 `No issues found`
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
 - **Phase 3 全部完成**：插件运行时（沙箱 → 加载 → 多插件管理 → 文件持久化 → 管理 UI → **ctx**）
 - **Phase 4 进度**：4.1 ✅ → 4.2 ✅ → 4.2.1 ✅ → 4.2.2 ✅ → 4.3 ✅ → **4.4 ✅（含真机）**
   → **release 包冒烟 ✅（2026-09-30）** —— **Phase 4 全部完成**
-- **下一步**：**Phase 5（课程编辑 / 删除）** 或 **Phase 6（皮肤 / 创意工坊）**。
-  Phase 4 已无遗留待办。
+- **下一步**：Phase 6（皮肤 / 创意工坊 / 暗色模式）
 - **⚠️ 环境提示（4.3 复验踩到）**：
   ① 设备可能把 App 当**横屏**应用（`uiautomator` 报 `rotation="3"`），
   会让截图旋转 90° 且 `adb input tap` 坐标全落空；
@@ -1271,7 +1270,71 @@
   ⚠️ 过程中踩到：MIUI 需开「USB 调试（安全设置）」才能 adb 装包；
   且 debug/release 签名不同必须先卸载，**卸载会清掉应用数据**
 
-### Phase 4.4 备注（课表显示节次时间 + 课表页同步入口）
+### Phase 5 备注（课程编辑 / 删除 / 隐藏）
+
+> **验证状态（自验证，未用实体机）**：
+> - ✅ `dart analyze`（整包）→ `No issues found!`
+> - ✅ 临时脚本 **12 组全部通过**（真实 Hive + 临时目录）：
+>   - 编辑插件课程：改名只写 `customName`、原始 `name` 保持教务值；
+>     落盘后重建 Provider 覆盖层与原始值都在；**重同步不冲掉编辑结果**；
+>     学分/类别不被写进 `Course`
+>   - 编辑自建课程：改名/教师/学分/类别都落到原始字段
+>   - 隐藏/恢复：`visibleCourses` 过滤正确、原始数据仍在、
+>     `hiddenCount`/`hiddenCourses` 正确、**隐藏不清掉颜色/备注/改名**、
+>     **隐藏后编辑不会让它复活**（`hidden` 保留）、不存在的 id 返回 `false`、
+>     隐藏状态能持久化
+>   - 删除自建课程：真删且清掉覆盖层（不留孤儿）
+> - ✅ 临时 **widget 测试 6 组全部通过**（UI 层）：
+>   新增模式标题/无删除按钮；编辑自建课程标题/字段回填/删除图标/学分可拖；
+>   编辑插件课程**滑块禁用 + 类别只读 + 只读说明**；已改名课程回填覆盖层值；
+>   `HiddenCoursesPage` 空态与列表
+> - ✅ **Windows 桌面实跑**：`flutter build windows --debug` 成功，
+>   应用启动无异常（9 个 Hive Box 正常建立，Dart VM service 起得来）
+
+> **改动清单**：
+>
+> | 文件 | 改动 |
+> |------|------|
+> | `lib/pages/edit/course_edit_page.dart` | 加 `course` 参数支持编辑模式；`_buildOverride` 统一构造覆盖层；`_TimePlaceDraft.fromTimePlace` 反填；删除/隐藏按钮 + `_confirmDelete`；`_ReadOnlyNotice`；学分/类别在插件课程下只读 |
+> | `lib/pages/settings/hidden_courses_page.dart` | **新建**：已隐藏课程列表 + 恢复 |
+> | `lib/pages/settings/timetable_settings_page.dart` | 新增「已隐藏的课程」入口（带数量副标题） |
+> | `lib/pages/timetable/course_detail_sheet.dart` | 「编辑」接真实编辑页（先取 Navigator 再 pop） |
+> | `lib/pages/timetable/timetable_view.dart` | 长按进编辑页；`_openCourseEdit` 加可选 `course` 参数 |
+> | `lib/providers/course_provider.dart` | 新增 `setHidden` / `hiddenCourses` |
+
+> **🔑 本阶段最关键的设计决定：编辑两种课程的**落点是不同的**
+>
+> | 课程来源 | 保存到哪 | 为什么 |
+> |----------|----------|--------|
+> | 自建（`sourcePluginId == 'user'`） | `courses` Box 的**原始字段** | 这条数据本来就是用户的 |
+> | 插件同步来的 | `overrides` Box 的**覆盖层** | 原始字段是教务权威数据，重同步会覆盖它 |
+>
+> 如果偷懒让两种都写原始字段，插件课程的用户修改会在下次同步时**静默消失**——
+> 正是 4.3 修掉的那类 bug 换个入口再来一次。
+> 测试里专门有一条"重同步不冲掉编辑结果"盯着这个不变量。
+
+> **⚠️ 一个刻意的功能缺口：插件课程的「学分 / 类别」不可改**
+>
+> `UserOverride` **没有** `customUnit` / `customCategory` 字段。硬写进 `Course`
+> 会被下次同步冲掉，所以这两个字段在编辑插件课程时**只读**，
+> UI 上直接说明"学分与类别来自教务系统，暂不支持修改"。
+>
+> 要真正支持需要给 `UserOverride` 加 `customUnit` / `customCategory`：
+> 按 CONTEXT 4.2.1 属**纯新增**（缺键有兼容默认值）→ 不需要迁移逻辑。
+> 但那会让 `Course.displayUnit` / `displayCategory` 以及所有读 `unit`/`category`
+> 的地方都要跟着改（课表卡片、列表页、详情弹层），属于独立改动，
+> 本阶段**选择不做**而不是做一半。
+
+> **4 条覆盖层构造规则**（`_buildOverride`，每条都有测试盯着）：
+> 1. 颜色始终按表单值写；
+> 2. 名称/教师**只在改过时**才写（改回原值不留空覆盖）；
+> 3. 时间地点**只在真的改过时**才写 `customTimePlaces`
+>    ——没改就继续跟教务走，不该被一次无意义的"保存"冻结；
+> 4. **`hidden` 必须保留** ——否则"隐藏后顺手编辑一下"会让课程复活。
+
+> **顺带清理**：`timetable_view.dart` 与 `course_detail_sheet.dart` 里两个
+> 只服务于 Phase 5 占位的 `_showSnack` 变成死代码，已删除。
+
 
 > **目标**：课表左侧时间列改显示**插件同步下来的真实作息**，不再用硬编码的
 > `kDefaultSectionTimes`；顺带把同步入口补到课表页。
@@ -1829,13 +1892,21 @@
 
 ---
 
-## Phase 5：课表渲染 + 编辑（未开始）
+## Phase 5：课表渲染 + 编辑（✅ 完成）
 
-- [ ] `lib/widgets/timetable_grid.dart`（网格布局）
-- [ ] 课程详情底部弹层
-- [ ] `lib/pages/edit/course_edit_page.dart`
-- [ ] 添加/编辑/删除课程
-- [ ] 覆盖层生效
+> 说明：Phase 5 原计划里的"课表渲染"与"详情弹层"在 Phase 2.2b 就提前做完了
+> （见 Phase 2 备注），所以本阶段实际只做**编辑 / 删除 / 隐藏**。
+
+- [x] `lib/widgets/timetable_grid.dart`（网格布局）—— Phase 2.2b 提前完成
+- [x] 课程详情底部弹层 —— Phase 2.2b 提前完成
+- [x] `lib/pages/edit/course_edit_page.dart` —— Phase 2.2c.2 建页，**Phase 5 加编辑模式**
+- [x] 添加/编辑/删除课程 —— **Phase 5**：编辑 + 删除（自建）+ 隐藏（教务）
+- [x] 覆盖层生效 —— **Phase 5**：编辑教务课程写覆盖层，原始数据不动
+- [x] **`lib/pages/settings/hidden_courses_page.dart`**（Phase 5 计划外）：
+      隐藏的配套恢复入口——没有它，"隐藏"对用户就等同于删除
+
+> 自验证：`dart analyze` 全绿 + 临时脚本 12 组 + widget 测试 6 组 + Windows 桌面实跑。
+> 详见上方 **Phase 5 备注**。
 
 ---
 

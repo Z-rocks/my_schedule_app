@@ -167,10 +167,6 @@ class _TimetableViewState extends State<TimetableView> {
     super.dispose();
   }
 
-  void _showSnack(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-  }
-
   /// 切换周次的统一入口：更新 `_week`，并把 PageView 对齐。
   ///
   /// 这是**双向同步**的关键：`_week` 是唯一真相源，
@@ -217,10 +213,12 @@ class _TimetableViewState extends State<TimetableView> {
     );
   }
 
-  /// 打开添加课程页；**必须先配置学期**（周次范围依赖总周数）。
+  /// 打开课程编辑页；**必须先配置学期**（周次范围依赖总周数）。
   ///
   /// 没有学期时提示并提供"去配置"入口，而不是直接跳转。
-  Future<void> _openCourseEdit() async {
+  ///
+  /// [course] 为 `null` 表示新增，非空表示编辑该课程（Phase 5）。
+  Future<void> _openCourseEdit([Course? course]) async {
     if (!context.read<SemesterProvider>().hasConfig) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -235,7 +233,7 @@ class _TimetableViewState extends State<TimetableView> {
     }
     await Navigator.of(context).push(
       MaterialPageRoute<bool>(
-        builder: (BuildContext _) => const CourseEditPage(),
+        builder: (BuildContext _) => CourseEditPage(course: course),
       ),
     );
   }
@@ -542,7 +540,8 @@ class _TimetableViewState extends State<TimetableView> {
       currentWeek: week,
       weekStartDate: weekStartDateOf(config, week),
       onTapCourse: (Course course) => showCourseDetailSheet(context, course),
-      onLongPressCourse: (Course _) => _showSnack('编辑功能待实现（Phase 5）'),
+      // Phase 5：长按直接进编辑页（原来只弹一句"待实现"）。
+      onLongPressCourse: _openCourseEdit,
     );
   }
 }

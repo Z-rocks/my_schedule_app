@@ -1,4 +1,4 @@
-// 课程详情弹层：只读展示一门课程的全部信息（Phase 5 接编辑）
+// 课程详情弹层：只读展示一门课程的全部信息，并提供「编辑」入口（Phase 5）
 import 'package:flutter/material.dart';
 
 import '../../models/course.dart';
@@ -6,6 +6,7 @@ import '../../models/time_place.dart';
 import '../../services/timetable_logic.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
+import '../edit/course_edit_page.dart';
 
 /// 星期标签（索引 0 = 周一），与 `TimetableGrid` 共用同一份定义。
 const List<String> _kWeekdayLabels = <String>[
@@ -28,11 +29,6 @@ class _CourseDetailSheet extends StatelessWidget {
   const _CourseDetailSheet({required this.course});
 
   final Course course;
-
-  void _showSnack(BuildContext context, String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -125,8 +121,23 @@ class _CourseDetailSheet extends StatelessWidget {
                   children: <Widget>[
                     Expanded(
                       child: OutlinedButton(
-                        onPressed: () => _showSnack(
-                            context, '编辑功能待实现（Phase 5）'),
+                        // Phase 5：接真实编辑页。
+                        //
+                        // 先取 Navigator 再 pop：pop 之后本 widget 就失效了，
+                        // 那时再 `Navigator.of(context)` 会拿不到（且弹层自己的
+                        // Navigator 与页面的可能是同一个，必须用同一个才能保证
+                        // 编辑页盖在**页面**上而不是弹层上）。
+                        onPressed: () {
+                          final NavigatorState navigator =
+                              Navigator.of(context);
+                          navigator.pop();
+                          navigator.push(
+                            MaterialPageRoute<bool>(
+                              builder: (BuildContext _) =>
+                                  CourseEditPage(course: course),
+                            ),
+                          );
+                        },
                         style: OutlinedButton.styleFrom(
                           foregroundColor: theme.primary,
                           shape: RoundedRectangleBorder(

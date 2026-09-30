@@ -1,4 +1,4 @@
-// 添加课程页：录入课程基本信息与多个上课时间段（Phase 5 再做编辑/删除）
+// 课程编辑页：新增 / 编辑一门课程的基本信息与多个上课时间段
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -10,7 +10,12 @@ import '../../providers/semester_provider.dart';
 import '../../services/timetable_logic.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
-import '../../widgets/timetable_grid.dart' show kWeekdayLabels;
+import '../../widgets/timetable_grid.dart'
+    show kWeekdayLabels;
+
+/// 与 `TimetableLogic` 对齐的节次 / 星期上限（编辑模式反填时用来收敛越界值）。
+const int _kMaxSessions = 12;
+const int _kDaysPerWeek = 7;
 
 /// 课程名最大长度。
 const int kMaxCourseNameLength = 30;
@@ -69,13 +74,31 @@ String rawWeeksTextFromRange(int startWeek, int endWeek, WeekType weekType) {
   }
 }
 
-/// 添加课程页。
+/// 课程编辑页（新增 / 编辑）。
 ///
-/// 两个入口：课表页顶部 `+`、课表页空态的"添加课程"按钮。
+/// 入口：
+/// - **新增**：课表页顶部 `+`、课表页空态的"添加课程"按钮（不传 [course]）；
+/// - **编辑**：课程详情弹层的「编辑」、课表卡片长按（传 [course]）。
+///
 /// **必须先配置学期**（周次范围依赖 `SemesterConfig.totalWeeks`），
 /// 入口处会拦截并提示，本页也做一次兜底。
+///
+/// ## 编辑两种课程时的落点是**不同**的（CONTEXT 3.3）
+///
+/// | 课程来源 | 保存到哪 | 为什么 |
+/// |----------|----------|--------|
+/// | 自建（`sourcePluginId == 'user'`） | `courses` Box 的**原始字段** | 这条数据本来就是用户的，没有"教务原始值"要保护 |
+/// | 插件同步来的 | `overrides` Box 的**覆盖层** | 原始字段是教务权威数据，重同步会覆盖它；用户改动必须放在覆盖层里才不会被冲掉 |
+///
+/// ⚠️ **学分与类别在编辑插件课程时是只读的**：`UserOverride` 没有
+/// `customUnit` / `customCategory` 字段，硬写进 `Course` 会被下次同步冲掉
+/// （那正是 Phase 4.3 修掉的那类 bug）。所以这两个字段在插件课程里显示教务值
+/// 并置灰，并给出说明——**不假装能改**。
 class CourseEditPage extends StatefulWidget {
-  const CourseEditPage({super.key});
+  const CourseEditPage({super.key, this.course});
+
+  /// 要编辑的课程；`null` 表示新增。
+  final Course? course;
 
   @override
   State<CourseEditPage> createState() => _CourseEditPageState();
@@ -97,15 +120,66 @@ class _CourseEditPageState extends State<CourseEditPage> {
   /// 时间段草稿列表（可变，保存时转成 [TimePlace]）。
   final List<_TimePlaceDraft> _drafts = <_TimePlaceDraft>[];
 
+  /// 进入编辑时，原始课程的安排（用于判断用户到底改没改时间段）。
+  List<TimePlace> _originalPlaces = const <TimePlace>[];
+
+  /// 是否处于编辑模式。
+  bool get _isEditing => widget.course != null;
+
+  /// 编辑的是否是**用户自建**课程（决定保存到原始字段还是覆盖层）。
+  bool get _isUserCourse => widget.course?.isUserCreated ?? false;
+
+  /// 插件课程的学分 / 类别是否可改。
+  ///
+  /// 自建课程可以改（写原始字段）；插件课程不行（见类文档说明）。
+  bool get _canEditSchoolFields => !_isEditing || _isUserCourse;
+
   @override
   void initState() {
     super.initState();
-    // 默认选中第一个预设颜色（"自动"是额外选项，排在最后）
-    final List<Color> palette = AppTheme.defaultTheme().courseCardColors;
-    _selectedColor = palette.isEmpty ? null : palette.first.toARGB32();
-    // 默认时间段覆盖整个学期
-    _drafts.add(_TimePlaceDraft(endWeek: _totalWeeks));
+    final Course? course = widget.course;
+
+    if (course == null) {
+      // 新增：默认选中第一个预设颜色（"自动"是额外选项，排在最后）
+      final List<Color> palette = AppTheme.defaultTheme().courseCardColors;
+      _selectedColor = palette.isEmpty ? null : palette.first.toARGB32();
+      // 默认时间段覆盖整个学期
+      _drafts.add(_TimePlaceDraft(endWeek: _totalWeeks));
+      return;
+    }
+
+    // 编辑：把已有值填进表单。展示值一律走 displayXxx（已叠加覆盖层）。
+    _nameController.text = course.displayName;
+    _teacherController.text = course.displayTeacher;
+    _categoryController.text = course.category;
+    _noteController.text = course.userOverride?.note ?? '';
+    _unit = course.unit;
+    // 覆盖层里没有颜色 → 保持"自动"，不要凭空选一个（那会改掉用户的自动配色）
+    _selectedColor = course.displayColor;
+    _originalPlaces = course.displayTimePlaces;
   }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 时间段草稿依赖 `_totalWeeks`，它要读 SemesterProvider——
+    // `initState` 里读会拿不到 InheritedWidget，所以放在这里。
+    // 用一个标记保证只初始化一次（本回调会因依赖变化重复触发）。
+    if (_draftsInitialized) return;
+    _draftsInitialized = true;
+    final List<TimePlace> places =
+        _isEditing ? _originalPlaces : const <TimePlace>[];
+    if (places.isEmpty) {
+      _drafts.add(_TimePlaceDraft(endWeek: _totalWeeks));
+    } else {
+      for (final TimePlace tp in places) {
+        _drafts.add(_TimePlaceDraft.fromTimePlace(tp, totalWeeks: _totalWeeks));
+      }
+    }
+  }
+
+  /// 时间段草稿是否已初始化（见 [didChangeDependencies]）。
+  bool _draftsInitialized = false;
 
   @override
   void dispose() {
@@ -128,6 +202,72 @@ class _CourseEditPageState extends State<CourseEditPage> {
   void _showSnack(String message) {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// 删除 / 隐藏当前课程。
+  ///
+  /// **语义按来源分岔**（CONTEXT 3.3：教务课程只能隐藏或永久忽略，不能真删）：
+  ///
+  /// | 来源 | 动作 | 为什么 |
+  /// |------|------|--------|
+  /// | 自建 | **真删**（`deleteCourse`，连覆盖层一起清） | 这条数据只属于用户，没有"教务原始值"要留 |
+  /// | 插件同步来的 | **隐藏**（写 `userOverride.hidden = true`） | 原始数据是教务权威数据，删了下次同步还会回来；隐藏可撤销 |
+  ///
+  /// 两者的确认文案也不同——"删除"和"隐藏"对用户是两件事，
+  /// 不能共用一句"确定吗"。
+  Future<void> _confirmDelete() async {
+    final Course? course = widget.course;
+    if (course == null) return;
+
+    final bool isUserCourse = course.isUserCreated;
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: Text(isUserCourse ? '删除课程' : '从课表隐藏'),
+        content: Text(
+          isUserCourse
+              ? '确定删除「${course.displayName}」吗？这会同时删除它的颜色与备注。'
+              : '确定把「${course.displayName}」从课表隐藏吗？\n\n'
+                  '课程原始数据会保留，之后可以在'
+                  '「设置 → 课表设置 → 已隐藏的课程」里恢复。',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(isUserCourse ? '删除' : '隐藏'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    final NavigatorState navigator = Navigator.of(context);
+    final CourseProvider courses = context.read<CourseProvider>();
+
+    if (isUserCourse) {
+      await courses.deleteCourse(course.id);
+      if (!mounted) return;
+      navigator.pop(false);
+      messenger.showSnackBar(const SnackBar(content: Text('课程已删除')));
+      return;
+    }
+
+    // 插件课程：写 hidden 覆盖层。保留已有覆盖层的其他字段（颜色 / 备注 / 改名）。
+    final UserOverride base = course.userOverride ??
+        UserOverride(updatedAt: DateTime.now());
+    await courses.saveCourse(
+      course.copyWith(
+        userOverride: base.copyWith(hidden: true, updatedAt: DateTime.now()),
+      ),
+    );
+    if (!mounted) return;
+    navigator.pop(false);
+    messenger.showSnackBar(const SnackBar(content: Text('已从课表隐藏')));
   }
 
   void _addDraft() {
@@ -183,34 +323,127 @@ class _CourseEditPageState extends State<CourseEditPage> {
     final NavigatorState navigator = Navigator.of(context);
     final CourseProvider courses = context.read<CourseProvider>();
 
-    // 颜色存进覆盖层：Course 没有 color 字段，displayColor 读的是
-    // userOverride.customColor。自建课程同样可以有覆盖层（只承载颜色）。
-    final int? color = _selectedColor;
+    final String name = _nameController.text.trim();
+    final String teacher = _teacherController.text.trim();
+    final String category = _categoryController.text.trim();
     final String note = _noteController.text.trim();
-    final bool hasOverride = color != null || note.isNotEmpty;
+    final List<TimePlace> places =
+        _drafts.map(_toTimePlace).toList(growable: false);
 
-    final Course course = Course(
-      id: 'user_${DateTime.now().microsecondsSinceEpoch}',
-      name: _nameController.text.trim(),
-      teacher: _teacherController.text.trim(),
-      unit: _unit,
-      category: _categoryController.text.trim(),
-      timePlaces: _drafts.map(_toTimePlace).toList(growable: false),
-      sourcePluginId: kUserSourcePluginId,
-      userOverride: hasOverride
-          ? UserOverride(
-              customColor: color,
-              note: note.isEmpty ? null : note,
-              updatedAt: DateTime.now(),
+    final Course? original = widget.course;
+
+    if (original != null) {
+      // ── 编辑 ──
+      final UserOverride? override = _buildOverride(
+        base: original.userOverride,
+        name: name,
+        teacher: teacher,
+        note: note,
+        places: places,
+      );
+
+      final Course updated = original.isUserCreated
+          // 自建课程：本来就是用户的数据，直接改原始字段。
+          ? original.copyWith(
+              name: name,
+              teacher: teacher,
+              unit: _unit,
+              category: category,
+              timePlaces: places,
+              userOverride: override,
             )
-          : null,
+          // 插件课程：原始字段保持教务值，改动全部进覆盖层
+          // （否则下次同步会把用户的修改冲掉，见类文档）。
+          : original.copyWith(userOverride: override);
+
+      await courses.saveCourse(updated);
+      if (!mounted) return;
+      navigator.pop(true);
+      messenger.showSnackBar(const SnackBar(content: Text('课程已保存')));
+      return;
+    }
+
+    // ── 新增 ──
+    final Course created = Course(
+      id: 'user_${DateTime.now().microsecondsSinceEpoch}',
+      name: name,
+      teacher: teacher,
+      unit: _unit,
+      category: category,
+      timePlaces: places,
+      sourcePluginId: kUserSourcePluginId,
+      userOverride: _buildOverride(
+        base: null,
+        name: name,
+        teacher: teacher,
+        note: note,
+        places: places,
+      ),
     );
-
-    await courses.saveCourse(course);
+    await courses.saveCourse(created);
     if (!mounted) return;
-
     navigator.pop(true);
     messenger.showSnackBar(const SnackBar(content: Text('课程已添加')));
+  }
+
+  /// 构造新的覆盖层。
+  ///
+  /// 四条规则：
+  /// 1. **颜色**：始终按表单值写（`null` = 未覆盖，走"自动"配色）；
+  /// 2. **名称 / 教师**：只在**与原始值不同**时才写覆盖；改回原值就不覆盖
+  ///    （避免留下"改了等于没改"的空覆盖，那会让下次同步无谓地判成有变化）；
+  /// 3. **时间地点**：只有用户**真的改过**才写 `customTimePlaces`——
+  ///    没改就不写，让课程继续跟着教务的原始安排走
+  ///    （教务调课了也该跟着变，不该被一次无意义的"保存"冻结住）；
+  /// 4. **`hidden` 必须原样保留**：否则"隐藏了某门课 → 顺手编辑一下"
+  ///    会让它重新出现在课表里。
+  ///
+  /// 新增模式（[base] 与 `widget.course` 都为 `null`）下规则 2 退化为
+  /// "一律不写覆盖层"——因为新课程的原始字段就是用户填的值。
+  ///
+  /// 返回 `null` 表示新覆盖层是空的，等价于"没有覆盖层"。
+  UserOverride? _buildOverride({
+    required UserOverride? base,
+    required String name,
+    required String teacher,
+    required String note,
+    required List<TimePlace> places,
+  }) {
+    final Course? original = widget.course;
+    final bool placesChanged =
+        original != null && !_samePlaces(places, _originalPlaces);
+
+    final UserOverride draft = UserOverride(
+      customColor: _selectedColor,
+      // 新增时不写 customName/customTeacher（原始字段已承载）；
+      // 编辑时只在改动过才写。
+      customName: original == null || name == original.name ? null : name,
+      customTeacher:
+          original == null || teacher == original.teacher ? null : teacher,
+      note: note.isEmpty ? null : note,
+      hidden: base?.hidden ?? false,
+      customTimePlaces: placesChanged ? places : null,
+      updatedAt: DateTime.now(),
+    );
+    return draft.isEmpty ? null : draft;
+  }
+
+  /// 两个时间地点列表是否等价（按值比较，与顺序无关）。
+  ///
+  /// 用序列化字符串比较：`TimePlace` 没有实现 `==`，
+  /// 而它的字段都是标量 + `List<int>`，序列化后比较既准又省事。
+  static bool _samePlaces(List<TimePlace> a, List<TimePlace> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    String key(TimePlace tp) => '${tp.day}/${tp.startSession}/${tp.length}/'
+        '${tp.room}/${tp.weekType.name}'
+        '/${(List<int>.of(tp.weeks)..sort()).join(",")}';
+    final List<String> ka = a.map(key).toList()..sort();
+    final List<String> kb = b.map(key).toList()..sort();
+    for (int i = 0; i < ka.length; i++) {
+      if (ka[i] != kb[i]) return false;
+    }
+    return true;
   }
 
   @override
@@ -221,8 +454,19 @@ class _CourseEditPageState extends State<CourseEditPage> {
     return Scaffold(
       backgroundColor: theme.background,
       appBar: AppBar(
-        title: const Text('添加课程'),
+        title: Text(_isEditing ? '编辑课程' : '添加课程'),
         centerTitle: true,
+        actions: <Widget>[
+          // 删除 / 隐藏（Phase 5）。语义按课程来源分岔，见 _confirmDelete。
+          if (_isEditing)
+            IconButton(
+              icon: Icon(
+                _isUserCourse ? Icons.delete_outline : Icons.visibility_off_outlined,
+              ),
+              tooltip: _isUserCourse ? '删除课程' : '从课表隐藏',
+              onPressed: _confirmDelete,
+            ),
+        ],
       ),
       body: Form(
         key: _formKey,
@@ -262,6 +506,12 @@ class _CourseEditPageState extends State<CourseEditPage> {
 
             // 学分
             _FieldLabel(theme: theme, text: '学分'),
+            if (!_canEditSchoolFields)
+              _ReadOnlyNotice(
+                theme: theme,
+                text: '学分与类别来自教务系统，暂不支持修改'
+                    '（改了下一次同步也会被覆盖回来）。',
+              ),
             Row(
               children: <Widget>[
                 Expanded(
@@ -272,7 +522,10 @@ class _CourseEditPageState extends State<CourseEditPage> {
                     divisions: ((kMaxUnit - kMinUnit) / kUnitStep).round(),
                     label: _formatUnit(_unit),
                     activeColor: theme.primary,
-                    onChanged: (double value) => setState(() => _unit = value),
+                    // 插件课程的学分只读：置灰并忽略拖动。
+                    onChanged: _canEditSchoolFields
+                        ? (double value) => setState(() => _unit = value)
+                        : null,
                   ),
                 ),
                 SizedBox(
@@ -282,7 +535,9 @@ class _CourseEditPageState extends State<CourseEditPage> {
                     textAlign: TextAlign.end,
                     style: TextStyle(
                       fontSize: theme.bodySize,
-                      color: theme.onBackground,
+                      color: _canEditSchoolFields
+                          ? theme.onBackground
+                          : theme.onBackground.withValues(alpha: 0.45),
                     ),
                   ),
                 ),
@@ -292,12 +547,19 @@ class _CourseEditPageState extends State<CourseEditPage> {
 
             TextFormField(
               controller: _categoryController,
+              // 插件课程的类别只读（同上）。
+              readOnly: !_canEditSchoolFields,
               decoration: InputDecoration(
                 labelText: '课程类别（可选）',
                 hintText: '如：专业必修课',
                 labelStyle: TextStyle(fontSize: theme.bodySize),
               ),
-              style: TextStyle(fontSize: theme.bodySize),
+              style: TextStyle(
+                fontSize: theme.bodySize,
+                color: _canEditSchoolFields
+                    ? theme.onBackground
+                    : theme.onBackground.withValues(alpha: 0.45),
+              ),
             ),
             SizedBox(height: theme.sectionGap),
 
@@ -399,6 +661,35 @@ class _TimePlaceDraft {
   /// [endWeek] 由调用方按学期总周数传入，避免默认值超出学期范围
   /// （否则会把课程排到学期结束之后）。
   _TimePlaceDraft({required this.endWeek});
+
+  /// 从已有安排反填（Phase 5 编辑模式）。
+  ///
+  /// 周次区间的还原策略：优先用 [TimePlace.weeks] 的**最小/最大值**——
+  /// 它一定是解析好的真值；`rawWeeksText` 只是展示文本，可能解析不出
+  /// （例如它是全角标点或乱码）。两者都拿不到时退化成"整个学期"。
+  ///
+  /// [totalWeeks] 用来把越界的周次收进当前学期（学期周数改小过的情况）。
+  factory _TimePlaceDraft.fromTimePlace(
+    TimePlace tp, {
+    required int totalWeeks,
+  }) {
+    final int maxWeek = totalWeeks < 1 ? 1 : totalWeeks;
+    int startWeek = 1;
+    int endWeek = maxWeek;
+    if (tp.weeks.isNotEmpty) {
+      final List<int> sorted = List<int>.of(tp.weeks)..sort();
+      startWeek = sorted.first.clamp(1, maxWeek);
+      endWeek = sorted.last.clamp(1, maxWeek);
+    }
+    final _TimePlaceDraft draft = _TimePlaceDraft(endWeek: endWeek)
+      ..day = tp.day.clamp(1, _kDaysPerWeek)
+      ..startSession = tp.startSession.clamp(1, _kMaxSessions)
+      ..length = tp.length.clamp(kMinLength, kMaxLength)
+      ..startWeek = startWeek
+      ..weekType = tp.weekType;
+    draft.roomController.text = tp.room;
+    return draft;
+  }
 
   int day = 1;
   int startSession = 1;
@@ -790,6 +1081,42 @@ class _SectionTitle extends StatelessWidget {
           fontWeight: theme.titleFontWeight,
           color: theme.primary,
         ),
+      ),
+    );
+  }
+}
+
+/// 只读字段的说明条（Phase 5：编辑插件课程时学分 / 类别不可改）。
+class _ReadOnlyNotice extends StatelessWidget {
+  const _ReadOnlyNotice({required this.theme, required this.text});
+
+  final AppTheme theme;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: theme.gridGap * 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(
+            Icons.info_outline,
+            size: theme.captionSize,
+            // 用主题的 warning 令牌，不硬编码黄色（CONTEXT 3.2）。
+            color: theme.warning,
+          ),
+          SizedBox(width: theme.gridGap),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: theme.captionSize,
+                color: theme.onBackground.withValues(alpha: 0.6),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

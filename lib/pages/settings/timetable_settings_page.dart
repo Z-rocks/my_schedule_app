@@ -2,10 +2,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../providers/course_provider.dart';
 import '../../providers/semester_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
+import 'hidden_courses_page.dart';
 import 'semester_config_page.dart';
 
 /// 每节高度的可调范围（逻辑像素）。
@@ -57,6 +59,12 @@ class _TimetableSettingsPageState extends State<TimetableSettingsPage> {
         .showSnackBar(const SnackBar(content: Text('（待实现）')));
   }
 
+  /// 「已隐藏的课程」的副标题：`N 门课程` / `暂无`。
+  String _hiddenSubtitle(BuildContext context) {
+    final int count = context.watch<CourseProvider>().hiddenCount;
+    return count == 0 ? '暂无隐藏的课程' : '已隐藏 $count 门课程';
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppTheme theme = AppThemeExtension.of(context);
@@ -93,6 +101,33 @@ class _TimetableSettingsPageState extends State<TimetableSettingsPage> {
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute<bool>(
                 builder: (BuildContext _) => const SemesterConfigPage(),
+              ),
+            ),
+          ),
+          // 已隐藏的课程（Phase 5）：隐藏功能的配套恢复入口。
+          // subtitle 显示数量，让用户不进页面也知道有没有东西可恢复。
+          ListTile(
+            title: Text(
+              '已隐藏的课程',
+              style: TextStyle(
+                fontSize: theme.bodySize,
+                color: theme.onBackground,
+              ),
+            ),
+            subtitle: Text(
+              _hiddenSubtitle(context),
+              style: TextStyle(
+                fontSize: theme.captionSize,
+                color: theme.onBackground.withValues(alpha: 0.6),
+              ),
+            ),
+            trailing: Icon(
+              Icons.chevron_right,
+              color: theme.onBackground.withValues(alpha: 0.4),
+            ),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<bool>(
+                builder: (BuildContext _) => const HiddenCoursesPage(),
               ),
             ),
           ),
