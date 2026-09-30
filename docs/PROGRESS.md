@@ -12,71 +12,70 @@
 
 > 给新会话 AI 用。每次阶段切换时更新。
 
-- **最新完成**：**Phase 4.3（数据同步打通：增量 / 覆盖层保留 / 失败重试 / 进度 UI）** ——
-  **`dart analyze` 全绿（`No issues found!`），新增逻辑已用临时测试脚本 16 组全部验证通过**。
+- **最新完成**：**Phase 4.2 / 4.2.1 / 4.2.2 / 4.3 真机复验全部通过（2026-09-30）** ——
+  校园 WiFi 下跑通「登录 → 同步 → 课表显示」：无证书/明文错误，提取 3 个 Cookie，
+  同步解析 4 门课程 + 12 条节次时间，`未变 4` 印证增量策略，
+  `force-stop` 冷启动后课程仍在。详见 4.3 备注开头的"真机复验已完成"。
+- **Phase 4.3**：**已 `dart analyze` 全绿 + 临时脚本 16 组通过 + 真机复验通过**。
   同步逻辑从 `PluginDetailPage` 抽到 `lib/services/course_sync_service.dart`，
   结果形状抽到 `lib/models/sync_report.dart`；顺带**修掉一个真实的数据丢失 bug**
-  （`CourseProvider.saveCourse` 会冲掉内存里的用户覆盖层，见 4.3 备注）。
-  剩下的只有**真机复验**（需要校园网 + 人工凭据，与 4.2 同一阻塞项）。
-- **代码状态**：4.3 **新建 2 个文件、改动 6 个文件**（清单见 4.3 备注）；
-  `dart analyze`（整包，含 test/）**No issues found**；
-  **4.2 / 4.2.1 / 4.2.2 的真机复验仍未做**
-  （卡在网络可达性 + 需要人工凭据，见下方各自备注块）
+  （`CourseProvider.saveCourse` 会冲掉内存里的用户覆盖层）。
+- **代码状态**：4.3 已提交（`d8be3b3`）；课程列表页 `6e91145`；学习笔记 `332bfcd`；
+  工作区干净；`dart analyze` 整包 `No issues found`
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
 - **Phase 3 全部完成**：插件运行时（沙箱 → 加载 → 多插件管理 → 文件持久化 → 管理 UI → **ctx**）
-- **Phase 4 进度**：4.1 ✅（WebView 登录 + Cookie，已真机验收）→
-  4.2 代码完成 → 4.2.1 代码完成 → 4.2.2 完成、待真机复验 →
-  **4.3 ✅ 代码完成 + `dart analyze` 全绿 + 临时脚本 16 组通过（仅剩真机复验）** → 4.4 未开始
-- **新会话请先做这一件事**：在**校园网/VPN** 下用真机跑通
-  「安装 NCST 插件 → 登录（人工输学号密码）→ 立即同步」。
-  这一步过不了，4.4 没有意义。若报 `响应结构异常：…`，
-  把 error 文案发出来即可定位（插件已按"结构不符就报错"实现）；
-  若登录页仍打不开，按 **4.2.1 / 4.2.2 备注块**里的 `logcat` 命令抓 `WebViewLoginPage` 日志。
-  4.3 之后同步失败会**在插件详情页常驻显示结果卡片**（不再只有一闪而过的 SnackBar），
-  直接截那张卡片即可。
-- **下一步**：Phase 4.4（课表显示节次时间 + 同步进度 UI 增强）
+- **Phase 4 进度**：4.1 ✅ → 4.2 ✅ → 4.2.1 ✅ → 4.2.2 ✅ → **4.3 ✅（含真机）** →
+  **4.4 进行中**（课表显示节次时间 + 课表页同步入口）
+- **下一步**：Phase 4.4 —— 课表读 `plugin_data.section_times` 的真实作息
+  （真机已确认现在走的是硬编码 `kDefaultSectionTimes`），并补课表页的同步入口。
+  收尾还需做一次 **release 包冒烟**（本轮验证全在 debug 包）
+- **⚠️ 环境提示（4.3 复验踩到）**：
+  ① 设备可能把 App 当**横屏**应用（`uiautomator` 报 `rotation="3"`），
+  会让截图旋转 90° 且 `adb input tap` 坐标全落空；
+  用 `settings put system accelerometer_rotation 0` + `user_rotation 0` 锁定竖屏。
+  ② **判断校园网可达性不要用 `ping`**（Android shell 无 ICMP 权限，必然 100% 丢包），
+  要用 `curl` 或 TCP 连接。
+  ③ `flutter run` 安装后设备可能掉线（`device 'aacfd78e' not found`），
+  `adb kill-server && adb start-server` 可恢复；或直接用
+  `adb install -r build\app\outputs\flutter-apk\app-debug.apk` 绕开。
 - **✅ 4.3 验证状态（已完成，不需要人工补跑）**：
   `dart analyze`（**整包，含 `test/`**）→ `No issues found!`；
   新增逻辑另用临时测试脚本 **16 组全部通过**（脚本跑完即删）：
   `saveCourse` 覆盖层保留 4 组（含**直接复现修复前的丢数据场景**）、
   `parseCourses` 容错 4 组、`SyncReport`/`SyncOutcome` 语义 5 组、重试策略常量 3 组；
-  `node --check` 通过 `ncst-jwxt.js` 与 `example.js` 的 JS 语法检查。
-  **唯一剩下的仍是真机复验**（校园网 + 人工凭据，与 4.2 同一阻塞项）。
-- **⚠️ 4.2.2 待真机复验（需要人工操作）**：明文白名单是**系统级配置**，
-  `dart analyze` 管不到它，**只能重装 APK 后真机确认**：
-  重跑 `flutter run`（**必须重编译安装**，热重载不生效）→ 插件管理 → NCST 详情 → 登录。
-  预期：登录页能打开（过程可能经过 `http://xjw1.ncst.edu.cn/gotoLogin` 重定向；
-  顶部可能还有一条证书警告条）。仍失败则 `adb logcat -d | grep WebViewLoginPage` 取日志。
-- **⚠️ 4.2.1 待真机复验（需要人工操作）**：SSL 放行逻辑已加（只放行登录 host），
-  但**真实证书错误无法在 `flutter test` 里模拟**（`SslAuthError` 构造私有、
-  `WebViewController()` 在测试环境起不来），**只能真机确认**。
-  看 `adb logcat -d | grep WebViewLoginPage`：出现 `SSL 错误放行` 即修复生效；
-  若仍失败，把 `加载失败: code=… desc=…` 那行发出来（`code=-1` 是 `ERROR_UNKNOWN`、
-  `-11` 是 `ERROR_FAILED_SSL_HANDSHAKE`，`desc` 里会带 `net::ERR_CERT_*`）。
-- **⚠️ 4.2 真机验证仍卡在网络可达性（需要人工操作）**：NCST 教务主机 `xjw1.ncst.edu.cn` 解析到
-  **校园内网地址 `172.20.13.4`**，手机经"PC 热点"上网时**完全不可达**
-  （手机 ping 该地址 100% 丢包，而 example.com 正常）。**需要让手机连上校园 WiFi
-  或校园 VPN**，并**人工输入学号密码**完成登录，才能验证登录 → 同步 → 课表渲染这条链路。
-  代码侧已验证就绪（见 4.2 备注块的真机结论）。
-- **⚠️ 4.2 未验证：真实教务响应结构**。插件字段名全部来自用户提供的抓包结构，
-  未登录状态下无法验证。**这不算 bug，但属于"未经真机数据验证的假设"**。
-- **⚠️ Phase 4 完成后必须做**：跑一次 **`flutter build apk --release` 做发布包冒烟**。
+  `node --check` 通过 `ncst-jwxt.js` 与 `example.js` 的 JS 语法检查；
+  **真机复验也已完成**（见 4.3 备注开头）。
+- **✅ 4.2.2 真机复验已通过（2026-09-30）**：登录页正常打开，无 `ERR_CLEARTEXT_*`。
+  并从**装进设备的 APK** 用 `aapt2 dump xmltree` 解出配置确实生效：
+  `base-config cleartextTrafficPermitted=false` + 唯一一条
+  `domain-config=true`（`xjw1.ncst.edu.cn`，`includeSubdomains=true`）；
+  manifest 含 `networkSecurityConfig` 与 `INTERNET`，且**无** `usesCleartextTraffic`。
+- **✅ 4.2.1 真机复验已通过（2026-09-30）**：整轮登录无 `ERR_CERT_*`。
+  ⚠️ 但本轮教务站**没有报证书错**，所以 `onSslAuthError` 的放行回调**未被触发**——
+  结论是"未出现证书失败"，不是"放行回调被验证过"。若将来换学校遇到自签证书，
+  仍需按老办法 `adb logcat -d | grep WebViewLoginPage` 确认出现 `SSL 错误放行`。
+- **✅ 4.2 真机链路已通（2026-09-30）**：校园 WiFi 下「登录 → 同步 → 课表显示」全通。
+  ⚠️ 但**真实教务响应结构只验证到"能解析出 4 门课程"这一层**：
+  字段名仍来自抓包结构，本次没逐字段核对课程名/教师/学分的正确性。
+  课表页第 5 周出现的「综合评价方法 / HA-303」来自教务数据，属正向证据。
+- **⚠️ Phase 4 收尾必做：release 包冒烟**：跑一次 **`flutter build apk --release`**。
   到目前为止**所有网络相关验证都是在 debug 包里做的**（debug/profile manifest 自带 `INTERNET`
   权限），release 包是否有其他权限 / 混淆（R8）问题**完全没有验证过**。3.6 刚发现
   `src/main` 缺 `INTERNET` 就是同类问题——release 冒烟必须真正装到设备上跑通
   "安装插件 → `ctx.http` 拉数据"这条链路。
-- **cleartext 问题已定案（4.2.2 ✅ 已修）**：4.2 曾判定"NCST 是 https，不需要 cleartext 配置"
+- **cleartext 问题已定案（4.2.2 ✅ 已修并复验）**：4.2 曾判定"NCST 是 https，不需要 cleartext 配置"
   —— **这个判断被真机推翻了**：登录会从 https **重定向到
-  `http://xjw1.ncst.edu.cn/gotoLogin`**，被系统拦成 `net::ERR_CLEARTEXT_NOT_PERMITTED`
-  （4.1 已在真机确认过这条风险，当时留作"待拿到真实地址后决定"）。
+  `http://xjw1.ncst.edu.cn/gotoLogin`**，被系统拦成 `net::ERR_CLEARTEXT_NOT_PERMITTED`。
   现已加 `network_security_config.xml` **定向白名单**（base 仍 `false`，
   只放开 `xjw1.ncst.edu.cn` 含子域），**未**用全局 `usesCleartextTraffic="true"`。
   其他学校若仍全程 http，修法相同（追加一条 `domain-config`）。
 - **遗留**：ModuleProvider 改用 `loadedCapabilities`；`ctx.notify` 接真实通知（Phase 7）；
-  插件管理 UI 的"从文件导入"（Phase 6+）；同步进度 UI（Phase 4.4）；
-  课表显示节次时间（数据已落 `plugin_data`，UI 未做，留 4.4）；
+  插件管理 UI 的"从文件导入"（Phase 6+）；
+  课表显示节次时间（数据已落 `plugin_data`，真机确认 12 条，UI 未接，留 4.4）；
   单页/AJAX 登录（URL 不变）无法自动判定成功（4.1）
-- **最近 commit**：`bf4f916` feat(plugin): 新增 NCST 教务插件与同步接线（4.2.1 SSL 修复与 4.2.2 明文白名单**尚未提交**）
+- **最近 commit**：`d8be3b3` feat(sync): 数据同步打通（4.3）；
+  `6e91145` feat(course-list): 课程列表页接入真实数据；
+  `332bfcd` docs: 软件工程七条基本原理学习笔记
 - **关键约束**：
   - testWidgets 不能触发 Hive 写（会卡死）
   - schema 已冻结（改字段要写迁移）
@@ -1246,20 +1245,63 @@
 - [x] **WebView 登录页 SSL 证书放行 + 诊断日志**（Phase 4.2.1：只放行登录 host；真机复验见备注块）
 - [x] **Android 明文流量定向白名单**（Phase 4.2.2：`network_security_config.xml`，
       只放开 `xjw1.ncst.edu.cn`；**需重装 APK 才能生效**，真机复验见备注块）
-- [ ] **真机跑通"登录 → 同步 → 课表显示"** —— 卡在校园网可达性 + 需要人工凭据（见快照区）；
-  WebView 侧的 `-1` 加载失败已按 4.2.1（证书）+ 4.2.2（明文）修复，**待复验**
+- [x] **真机跑通"登录 → 同步 → 课表显示"** —— **2026-09-30 复验通过**：
+  校园 WiFi 下登录页正常打开（无 `ERR_CERT_*` / `ERR_CLEARTEXT_*`）→ 提取 3 个 Cookie →
+  同步解析 4 门课程 + 12 条节次时间 → 课表渲染 → `force-stop` 冷启动后仍在。
+  详见下方 **4.3 备注开头的"真机复验已完成"** 一节
 - [x] **数据同步的增量/覆盖策略与失败重试（Phase 4.3）** ——
       `services/course_sync_service.dart` + `models/sync_report.dart`；
       增量（未变不写盘）、覆盖层保留（含 `saveCourse` 内存侧修正）、
       网络类失败指数退避重试（最多 3 次）、结果分类 + 常驻结果卡片。
-      **⚠️ 待跑 `dart analyze` 与真机复验**，见下方 4.3 备注
-- [ ] 课表显示节次时间（Phase 4.4；数据已落 `plugin_data` 的 `section_times`，UI 未做）
-- [ ] 同步进度 UI（**Phase 4.3 已完成基础版**：转圈 + 阶段文案 + 常驻结果卡片；
+      **已 `dart analyze` 全绿 + 临时脚本 16 组通过 + 真机复验通过**
+- [ ] 课表显示节次时间（**Phase 4.4**；数据已落 `plugin_data` 的 `section_times` 共 12 条，
+      UI 仍用硬编码的 `kDefaultSectionTimes`，**真机已确认 UI 走的是硬编码那份**）
+- [x] 同步进度 UI（**Phase 4.3 已完成基础版**：转圈 + 阶段文案 + 常驻结果卡片；
       4.4 可加"课表页也能同步"的入口）
 - [ ] **⚠️ 收尾必做：`flutter build apk --release` 发布包冒烟**
       （装到设备上跑通"安装插件 → `ctx.http` 拉数据"；此前所有网络验证都在 debug 包）
 
 ### Phase 4.3 备注（数据同步打通：增量 / 覆盖层保留 / 失败重试）
+
+> ## ✅ 真机复验已完成（2026-09-30，Redmi K60 / `2211133C` / Android 16）
+>
+> **环境**：手机连校园 WiFi（`10.128.182.173`），`xjw1.ncst.edu.cn` 解析到 `172.20.13.4`。
+> ⚠️ **`ping` 是假阴性**：设备上 `ping -c 2 xjw1.ncst.edu.cn` 显示 100% 丢包，
+> 但 `curl` 实测 **302、`time_connect=0.021s`** —— Android shell 无权限发 ICMP。
+> **以后不要用 ping 判定校园网可达性，要用 `curl` 或 TCP 连接。**
+>
+> **复验证据链**（`adb logcat -s flutter:V`）：
+>
+> ```
+> [WebViewLoginPage] 提取到 3 个 Cookie，拼接后 82 字符
+> [WebViewLoginPage] 已保存 ncst-jwxt 的 Cookie（82 字符）
+> [Plugin:ncst-jwxt] 第 1 轮登记了 1 个 HTTP 请求，取回后重放
+> [Plugin:ncst-jwxt] 第 2 轮登记了 1 个 HTTP 请求，取回后重放
+> [Plugin:ncst-jwxt] NCST 同步：解析出 4 门课程，节次时间 12 条
+> [CourseSyncService] ncst-jwxt 同步完成：新增 0、更新 0、未变 4、跳过 0、其中带用户修改 0
+> ```
+>
+> 且全量 logcat 中**无** `ERR_CERT` / `ERR_CLEARTEXT` / `加载失败`。
+>
+> | 项 | 结论 | 依据 |
+> |----|------|------|
+> | **4.1** 登录 + Cookie | ✅ | 提取 3 个 Cookie / 82 字符并保存 |
+> | **4.2.1** SSL 放行 | ✅ 生效 | 登录页全程打开无 `ERR_CERT_*`。⚠️ 本轮**未走到**错误放行回调（教务站本次没报证书错），所以是"未出现失败"而非"回调被触发" |
+> | **4.2.2** 明文白名单 | ✅ 生效 | 登录页能打开（明文 HTTP 已被放行）**且** `aapt2 dump xmltree` 从**装进设备的 APK** 解出：`base-config cleartextTrafficPermitted=false` + `domain-config=true`/`xjw1.ncst.edu.cn`/`includeSubdomains=true`；`AndroidManifest.xml` 含 `networkSecurityConfig` 与 `INTERNET`，且**无** `usesCleartextTraffic` |
+> | **4.2** NCST 插件 + 同步接线 | ✅ | 解析出 4 门课程 + 12 条节次时间 |
+> | **4.3** 增量 / 覆盖层 / 重试 / 进度 | ✅ | `未变 4` 正是增量策略：4 门课原始字段与库中完全一致 → **全部跳过落盘**；且**这是第二次同步**（首次是上一轮会话做的），说明字段指纹稳定、没有把同一份数据反复判成"变了" |
+> | **4.3** 冷启动持久化 | ✅ | `am force-stop` 后重启，课表第 5 周仍显示「综合评价方法 / HA-303」（周二 7-8 节）。证明 Hive 落盘 + `saveCourse` 修复未破坏持久化 |
+>
+> **证据截图**：`docs/verify/4.3-timetable-after-cold-restart.png`
+>
+> **顺带修掉的一个环境问题**：复验前设备把 App 当**横屏**应用
+> （`uiautomator` 报 `rotation="3"`、根节点 `[0,0][2400,1080]`），
+> 导致截图旋转 90° 且坐标点击全部落空。
+> 已 `settings put system accelerometer_rotation 0` + `user_rotation 0` 锁定竖屏。
+> **若以后截图看起来"躺倒"，先查这两项。**
+>
+> **仍未覆盖**：release 包冒烟（`flutter build apk --release`）——
+> 本轮所有验证都在 **debug** 包上做的，与 3.6 记的"release 有独立权限/混淆风险"一致，仍需单独做一次。
 
 > **目标**（原文）："数据同步的增量/覆盖策略与失败重试"。
 > 同时把 4.2 遗留的三个问题一起解决：同步逻辑写死在页面里无法复用、
