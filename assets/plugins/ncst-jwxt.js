@@ -15,6 +15,16 @@
 // 成功：`{ courses: [<Course JSON>...], sectionTimes: N, allUnits: X, warnings: [...] }`
 // 失败：`{ error: '人话原因' }` —— **宁可报错也不静默返回空数组**，
 //       空数组会被上层误当成"这学期没课"，比报错危险得多。
+//
+// ## Phase 4.3：网络类失败要标 `retryable: true`
+// 宿主只知道"插件返回了一句 error"，无法分辨"校园网抖了一下（重试就好）"
+// 和"Cookie 过期了（重试一百次也没用）"。所以插件要把**网络层**失败
+// 显式标出来，宿主才会自动重试（见 `CourseSyncService`）。
+// 用 `__ncst_netFail()` 统一构造，避免漏标。
+//
+// ⚠️ 判断依据是 `ctx.lastHttpError`（宿主给的错误短标识：timeout /
+//    connection / bad_response / bad_certificate / ...），**不是**响应正文。
+//    因此这里依然没有解析任何教务系统的字段结构。
 var __plugin = {
   id: 'ncst-jwxt',
   name: '华北理工大学教务系统',
@@ -50,14 +60,21 @@ var __plugin = {
         commonHeaders
       );
     } catch (e) {
-      return { error: '拉取课程列表失败：' + String(e.message || e) };
+      // ctx.http 在真失败时抛错，消息就是宿主的错误短标识（timeout / connection…）
+      return __ncst_netFail('拉取课程列表失败：' + String(e.message || e));
     }
     if (!listResp.ok) {
-      return { error: '拉取课程列表失败：' + listResp.error };
+      return __ncst_netFail('拉取课程列表失败：' + listResp.error);
     }
     if (listResp.status !== 200) {
-      return { error: '拉取课程列表失败：HTTP ' + listResp.status +
-          '（Cookie 可能已过期，请重新登录）' };
+      // 5xx 是服务端临时故障 → 值得重试；4xx 多为权限/路径问题 → 不重试。
+      // 注意：这里只按**状态码**分类，不解析响应正文。
+      var msg = '拉取课程列表失败：HTTP ' + listResp.status +
+          '（Cookie 可能已过期，请重新登录）';
+      if (listResp.status >= 500) {
+        return __ncst_netFail(msg);
+      }
+      return { error: msg };
     }
 
     var data;
@@ -205,6 +222,21 @@ var __plugin = {
 //
 // 放在 `__plugin` **外面**：运行时用 `Object.keys(__plugin).filter(typeof === 'function')`
 // 收集入口函数，把工具函数放在对象里会被误报成入口函数。
+
+/// 构造"网络层失败"的返回对象（Phase 4.3）。
+///
+/// `retryable: true` 告诉宿主这次失败**值得自动重试**——只有在"请求没成功
+/// 到达 / 服务端临时故障"时才这么标。凭证过期、响应结构异常都不该标：
+/// 重试只会让用户多等一轮还会得到同样的结果。
+///
+/// `kind` 取 `ctx.lastHttpError`（宿主给的短标识），空串则退化为不标。
+/// 之所以还带上 `kind`：宿主可以据此给出更准的提示
+/// （例如 `bad_certificate` → 提示证书问题而不是"检查校园网"）。
+function __ncst_netFail(message) {
+  var kind = '';
+  try { kind = ctx.lastHttpError || ''; } catch (e) { kind = ''; }
+  return { error: message, retryable: true, errorKind: kind };
+}
 
 /// 周次解析（`TimetableLogic.parseWeeks` 的 JS 复刻）。
 ///

@@ -100,21 +100,35 @@ class CourseProvider extends ChangeNotifier {
   ///
   /// 若 [Course.userOverride] 为 `null`，**不会**去删除已有的覆盖层：
   /// 插件同步下来的原始课程本来就不带覆盖层，删了就等于冲掉用户修改。
+  ///
+  /// **Phase 4.3 修正**：入参不带覆盖层时，会把**内存里已有的覆盖层重新挂回去**。
+  /// 修正前只保护了落盘数据、没保护内存视图——`_upsert` 会把列表里那条
+  /// **带覆盖层**的课程整体换成入参，于是"课程名被用户改过"这类修改在
+  /// **本次会话内**立刻消失（重启后又从 Box 读回来，表现为"改完当场丢、重启复活"）。
+  /// 插件重同步每次都传入无覆盖层的原始课程，所以这条路径一定会被踩到。
   Future<void> saveCourse(Course c) async {
+    // 覆盖层来源优先级：入参自带的 > 内存里那条已有的 > Box 里存的。
+    // 内存优先是有意的：它一定是最新的（用户刚改完就在内存里），
+    // 而 `OverrideEngine.getOverride` 依赖 Hive 已初始化，内存查不到才值得去读盘。
+    UserOverride? override = c.userOverride ?? getById(c.id)?.userOverride;
     try {
       final Course raw = c.copyWith(clearUserOverride: true);
       await StorageService.coursesBox.put(c.id, jsonEncode(raw.toJson()));
 
-      final UserOverride? override = c.userOverride;
       if (override != null) {
         await OverrideEngine.saveOverride(c.id, override);
+      } else {
+        // 同 4.3 说明：覆盖层为 null 表示"本次没带覆盖层"，不是"要删除覆盖层"。
+        override = OverrideEngine.getOverride(c.id);
       }
     } catch (error, stackTrace) {
       debugPrint('CourseProvider.saveCourse(${c.id}) 落盘失败: $error');
       debugPrint('$stackTrace');
       // 落盘失败也继续更新内存：本次会话内用户的修改不丢失。
     }
-    _upsert(c);
+    // 覆盖层可能来自入参、内存或 Box；无论哪个来源都要随内存视图一起更新，
+    // 否则 UI 的 displayName/displayColor 会读不到它。
+    _upsert(c.copyWith(userOverride: override));
     _notify();
   }
 

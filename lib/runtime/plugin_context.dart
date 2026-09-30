@@ -295,6 +295,12 @@ class PluginContext {
     final Map<String, String> storage = await loadStorageSnapshot();
     final Map<String, String> httpCache = <String, String>{};
 
+    // Phase 4.3：跨轮累积 HTTP 失败类别。
+    // 必须累积而不能只看最终轮——失败请求的响应进了缓存后，最终轮往往
+    // 是"命中缓存拿到失败响应"，虽然也会重新登记一次，但轮数超过上限等
+    // 提前返回的路径不会走到 dump，累积值更可靠。
+    final List<String> httpErrors = <String>[];
+
     for (int round = 0; round < kMaxReplayRounds; round++) {
       final String preamble = buildCtxStateScript(
         httpCache: httpCache,
@@ -307,12 +313,18 @@ class PluginContext {
       );
 
       // 沙箱已死（超时被 kill / 不可用）→ 没有"下一轮"可言，直接返回。
-      if (result.isTimeout || result.isUnavailable) return result;
+      if (result.isTimeout || result.isUnavailable) {
+        return result.withHttpErrors(httpErrors);
+      }
 
       final _CtxRound? roundEffects = await _readRoundEffects(sandbox, timeout);
       if (roundEffects == null) {
         // 读不回副作用（沙箱出错）：只能把本轮结果原样返回。
-        return result;
+        return result.withHttpErrors(httpErrors);
+      }
+
+      for (final String error in roundEffects.httpErrors) {
+        if (!httpErrors.contains(error)) httpErrors.add(error);
       }
 
       if (roundEffects.pending.isEmpty) {
@@ -323,7 +335,7 @@ class PluginContext {
         );
         _emitLogs(roundEffects.logs);
         _emitNotifies(roundEffects.notifies);
-        return result;
+        return result.withHttpErrors(httpErrors);
       }
 
       // ── 还有待办：取回响应后重放 ──
@@ -335,6 +347,7 @@ class PluginContext {
     debugPrint('[Plugin:$pluginId] 重放轮数超过上限 $kMaxReplayRounds');
     return JsSandboxResult.error(
       '插件 HTTP 重放轮数超过上限（$kMaxReplayRounds）',
+      httpErrors: httpErrors,
     );
   }
 
@@ -382,6 +395,7 @@ class _CtxRound {
     required this.touched,
     required this.logs,
     required this.notifies,
+    required this.httpErrors,
   });
 
   final List<PluginHttpRequest> pending;
@@ -389,6 +403,9 @@ class _CtxRound {
   final List<String> touched;
   final List<_CtxLog> logs;
   final List<_CtxNotify> notifies;
+
+  /// 本轮 `ctx.http` 真失败的短标识（Phase 4.3）。
+  final List<String> httpErrors;
 
   /// 从 dump JSON 解析；坏数据一律按"空"处理，不抛异常。
   static _CtxRound? tryParse(String raw) {
@@ -453,12 +470,25 @@ class _CtxRound {
       }
     }
 
+    final List<String> httpErrors = <String>[];
+    final Object? rawHttpErrors = decoded['httpErrors'];
+    if (rawHttpErrors is List) {
+      for (final Object? item in rawHttpErrors) {
+        if (item == null) continue;
+        final String name = '$item';
+        // 'pending' 不是失败，是"还没发"，绝不能混进错误列表。
+        if (name.isEmpty || name == 'pending') continue;
+        httpErrors.add(name);
+      }
+    }
+
     return _CtxRound(
       pending: pending,
       storage: storage,
       touched: touched,
       logs: logs,
       notifies: notifies,
+      httpErrors: httpErrors,
     );
   }
 }

@@ -46,6 +46,7 @@ var __ctx_storage_touched = {};
 var __ctx_logs = [];
 var __ctx_notifies = [];
 var __ctx_cookie = '';
+var __ctx_http_errors = [];
 
 // 请求去重键：同方法 + 同 URL + 同 body + 同请求头 → 只发一次。
 function __ctx_request_key(method, url, body, headersJson) {
@@ -53,11 +54,33 @@ function __ctx_request_key(method, url, body, headersJson) {
   return method + '|' + String(url) + '|' + b + '|' + String(headersJson || '{}');
 }
 
+// Phase 4.3：把"某次 HTTP 真失败"记进本轮错误列表。
+//
+// 用途：插件把失败包装成 `{error: '人话原因'}` 后，宿主**无法**从中分辨
+// "网络超时（可以重试）"和"凭证过期（重试没用）"。这里保留宿主自己的
+// 错误短标识（timeout / connection / bad_certificate / ...），宿主读回后
+// 就能按错误类别决定要不要重试。
+// 注意：**不解析 body**（"5xx 响应里写着 error 字段"不算网络失败），
+// 只看响应信封的 ok 标志。
+function __ctx_note_http_error(responseJson) {
+  var r;
+  try { r = JSON.parse(responseJson); } catch (e) { return; }
+  if (!r || r.ok) return;
+  if (r.error && r.error !== 'pending') {
+    __ctx_http_errors.push(String(r.error));
+  }
+}
+
 // HTTP primitive：命中缓存直接返回；未命中只登记待办，绝不发网络。
 function __ctx_http(method, url, body, headersJson) {
   var key = __ctx_request_key(method, url, body, headersJson);
   if (Object.prototype.hasOwnProperty.call(__ctx_http_cache, key)) {
-    return __ctx_http_cache[key];
+    var cached = __ctx_http_cache[key];
+    // Phase 4.3：把缓存里记下的失败类别也登记一遍。
+    // 否则"重放后从缓存命中失败响应"这一轮的 __ctx_http_errors 会是空的，
+    // 宿主就看不到真实失败原因（首轮登记过，但那是上一轮的状态）。
+    __ctx_note_http_error(cached);
+    return cached;
   }
   // 同一轮内对同一 key 重复请求 → 只登记一次（否则会重复发同一个请求）。
   // 缓存只在"轮与轮之间"填充，所以这里必须再对**待办列表**去重。
@@ -77,7 +100,6 @@ function __ctx_http(method, url, body, headersJson) {
   });
   return JSON.stringify({ ok: false, error: 'pending' });
 }
-
 // storage 只操作本轮的内存快照；最终轮由宿主提交到 Hive。
 function __ctx_storage_get(key) {
   var k = String(key);
@@ -135,7 +157,20 @@ var ctx = {
     }
   },
   // 凭证：宿主每轮预先注入（Phase 4 由 WebView 登录写入）。
-  get cookie() { return __ctx_cookie; }
+  get cookie() { return __ctx_cookie; },
+
+  // Phase 4.3：本轮最后一次"真失败"的短标识（timeout / connection /
+  // bad_certificate / bad_response / cancelled / unknown），没有失败则为空串。
+  //
+  // 插件用它把 `{error:...}` 区分为**可重试**与**不可重试**：
+  // 网络类失败（timeout / connection / bad_response）返回 `retryable: true`，
+  // 宿主据此自动重试。**不解析任何响应正文**，所以与"内核不认识学校字段"
+  // 的约束无关（这里只有宿主自己的错误枚举）。
+  get lastHttpError() {
+    return __ctx_http_errors.length > 0
+        ? __ctx_http_errors[__ctx_http_errors.length - 1]
+        : '';
+  }
 };
 ''';
 
@@ -155,10 +190,13 @@ String buildCtxStateScript({
       'var __ctx_storage_touched = {};\n'
       'var __ctx_logs = [];\n'
       'var __ctx_notifies = [];\n'
-      'var __ctx_cookie = ${_jsonLiteral(cookie)};\n';
+      'var __ctx_cookie = ${_jsonLiteral(cookie)};\n'
+      // Phase 4.3：错误列表必须每轮清空，否则上一轮的失败会污染本轮判定。
+      'var __ctx_http_errors = [];\n';
 }
 
-/// 读回本轮副作用的脚本：返回 `{pending, storage, touched, logs, notifies}` 的 JSON。
+/// 读回本轮副作用的脚本：返回
+/// `{pending, storage, touched, logs, notifies, httpErrors}` 的 JSON。
 ///
 /// `touched` 只列**本轮改动过的键**，宿主据此决定写哪些键、删哪些键
 /// （避免把整个命名空间重写一遍）。
@@ -168,7 +206,8 @@ JSON.stringify({
   storage: __ctx_storage,
   touched: Object.keys(__ctx_storage_touched),
   logs: __ctx_logs,
-  notifies: __ctx_notifies
+  notifies: __ctx_notifies,
+  httpErrors: __ctx_http_errors
 })
 ''';
 

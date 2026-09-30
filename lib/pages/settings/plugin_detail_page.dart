@@ -1,17 +1,15 @@
 // 插件详情页：展示单个插件的元信息、运行时状态与操作入口
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../models/course.dart';
 import '../../models/plugin_meta.dart';
+import '../../models/sync_report.dart';
 import '../../providers/course_provider.dart';
 import '../../providers/plugin_provider.dart';
-import '../../runtime/js_sandbox.dart';
 import '../../runtime/plugin_handle.dart';
 import '../../runtime/plugin_manifest.dart';
 import '../../services/cookie_service.dart';
+import '../../services/course_sync_service.dart';
 import '../../services/plugin_storage_service.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
@@ -23,22 +21,43 @@ import 'plugin_manage_page.dart'
         pluginUiStatusLabel,
         pluginUiStatusOf;
 
-/// 同步时单次 JS 执行的墙钟上限。
+/// 同步进度最多展示的警告条数。
 ///
-/// 比默认的 1s 宽：一次同步要解析整学期课表（几十门课 + 上百条时间地点），
-/// 而 HTTP 请求本身发生在宿主侧（dio），**不受这个超时约束**。
-const Duration kSyncJsTimeout = Duration(seconds: 5);
+/// 插件可能回传很多条警告（例如每个学院各一条），全铺在页面上会把
+/// 操作区淹掉；剩下的引导用户去看日志（`debugPrint` 已完整输出）。
+const int kMaxVisibleSyncWarnings = 3;
 
 /// 插件详情页。
 ///
 /// 数据全部来自 `PluginProvider`（`context.watch` 保证启停 / 加载结果实时反映）。
 /// 安装路径是**异步**读的（`PluginStorageService.getPluginJsPath`），
 /// 用 `FutureBuilder` 展示。
-class PluginDetailPage extends StatelessWidget {
+///
+/// **Phase 4.3 起是 `StatefulWidget`**：因为同步需要页内状态
+/// （进行中 / 进度文案 / 上一次的 [SyncReport]）。4.2 时为了一个防重入闩锁
+/// 用的是 `static bool`，那样有两个问题：跨实例泄漏状态、且没法显示结果。
+class PluginDetailPage extends StatefulWidget {
   const PluginDetailPage({super.key, required this.pluginId});
 
   /// 要展示的插件 id。插件被卸载后本页会显示"插件不存在"。
   final String pluginId;
+
+  @override
+  State<PluginDetailPage> createState() => _PluginDetailPageState();
+}
+
+class _PluginDetailPageState extends State<PluginDetailPage> {
+  /// 当前插件 id（卸载后 [widget.pluginId] 不变，但可能已不存在）。
+  String get pluginId => widget.pluginId;
+
+  /// 是否正在同步（防重入）。
+  bool _syncing = false;
+
+  /// 当前进度文案（`null` 表示没有进行中的同步）。
+  String? _progressMessage;
+
+  /// 上一次同步的报告（`null` 表示本次进入页面后还没同步过）。
+  SyncReport? _lastReport;
 
   @override
   Widget build(BuildContext context) {
@@ -172,17 +191,23 @@ class PluginDetailPage extends StatelessWidget {
                 label: '登录',
                 onTap: () => _openLogin(context, provider, meta, handle),
               ),
-              // "立即同步" Phase 4.2 起接真实同步（见 _syncNow）。
+              // "立即同步" Phase 4.3 起走 CourseSyncService（增量 + 重试 + 进度）。
               _ActionRow(
                 icon: Icons.sync,
-                label: '立即同步',
-                onTap: () => _syncNow(context, provider, meta, handle),
+                label: _syncing ? '正在同步…' : '立即同步',
+                // 同步中禁用入口，避免连点（原先是 static 闩锁静默丢弃点击）。
+                onTap: _syncing
+                    ? null
+                    : () => _syncNow(context, provider, meta, handle),
               ),
               _ActionRow(
                 icon: Icons.article_outlined,
                 label: '查看日志',
                 onTap: () => _snack(context, '查看日志（Phase 3 后实现）'),
               ),
+              if (_syncing) _SyncProgressTile(message: _progressMessage),
+              if (!_syncing && _lastReport != null)
+                _SyncResultTile(report: _lastReport!),
             ],
           ),
         ],
@@ -230,21 +255,14 @@ class PluginDetailPage extends StatelessWidget {
     _snack(context, '登录成功（已保存 ${cookie.length} 字符的 Cookie）');
   }
 
-  /// 把同步请求收窄成一次（防重复点击的简单闩锁）。
+  /// 「立即同步」（Phase 4.3 起走 [CourseSyncService]）。
   ///
-  /// 本页是 `StatelessWidget`（Phase 4.1 起就没引状态），为一次防抖而改造成
-  /// StatefulWidget 不划算；用一个 `try/finally` 保证必被复位的静态闩锁即可。
-  /// Phase 4.4 做同步进度 UI 时再改成页内状态。
-  static bool _syncing = false;
-
-  /// 「立即同步」：读 Cookie → 调插件 `fetchCourses` → 解析 → 落盘（Phase 4.2）。
+  /// 本方法只负责**编排与展示**：查登录态 → 调服务 → 把 [SyncReport] 变成
+  /// 人话。重试、增量落盘、覆盖层保留、结果分类全部在服务里完成，
+  /// 这样 Phase 4.4 的课表页同步入口能复用同一套行为。
   ///
-  /// **关键点**：
-  /// - 插件负责"拉数据 + 转成内核的 Course JSON"（各校字段不同，内核不认识，见 CONTEXT 3.1）；
-  /// - Dart 侧只做**容错解析 + 落盘**：单条课程字段缺失/类型不符就跳过并 `debugPrint`，
-  ///   不让一条坏数据毁掉整次同步；
-  /// - `fetchCourses` 可能被执行多次（`ctx.http` 重放，见 CONTEXT 3.6），
-  ///   但插件是幂等的、宿主只在最终轮提交副作用，所以这里不需要去重。
+  /// 为什么仍然先查 Cookie：没有凭证时插件会**立刻**返回"未登录"，
+  /// 提前拦掉可以省掉一次沙箱执行与一次重试退避等待。
   Future<void> _syncNow(
     BuildContext context,
     PluginProvider provider,
@@ -263,127 +281,79 @@ class PluginDetailPage extends StatelessWidget {
       );
       return;
     }
-    if (handle == null || !handle.isUsable) {
-      messenger.showSnackBar(
-        SnackBar(content: Text('插件未加载，无法同步：${handle?.reason ?? '未加载'}')),
-      );
-      return;
-    }
 
-    _syncing = true;
-    messenger.showSnackBar(const SnackBar(content: Text('正在同步，请稍候…')));
+    setState(() {
+      _syncing = true;
+      _progressMessage = null;
+      _lastReport = null;
+    });
+
+    // `late final` 表达"下面 try / catch 两条路径各赋一次，且只赋一次"这个不变量
+    // —— 用类型表达出来，就不需要事后判空（分析器也能据此确认非空）。
+    //
+    // 注意 catch 块不是多余的：`CourseSyncService.sync` 的契约是"不抛异常"，
+    // 但万一它真的抛了，没有 catch 就会跳过 `finally` 之后的收尾，
+    // 页面会**永远停在转圈状态**。
+    late final SyncReport report;
     try {
-      final JsSandboxResult result = await handle.execute(
-        'fetchCourses',
-        timeout: kSyncJsTimeout,
-      );
-
-      if (result.status == JsSandboxStatus.timeout) {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('同步超时（插件执行过久）')),
-        );
-        return;
-      }
-      if (result.status == JsSandboxStatus.unavailable) {
-        messenger.showSnackBar(
-          SnackBar(content: Text('同步失败：${result.message ?? '插件不可用'}')),
-        );
-        return;
-      }
-      if (!result.isSuccess || result.value == null) {
-        messenger.showSnackBar(
-          SnackBar(content: Text('同步失败：${result.message ?? '插件返回异常'}')),
-        );
-        return;
-      }
-
-      final Object? decoded = _tryDecode(result.value!);
-      if (decoded is! Map) {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('同步失败：插件返回值不是 JSON 对象')),
-        );
-        return;
-      }
-
-      // 插件约定：失败返回 {error: '...'}，成功返回 {courses: [...]}
-      final String? pluginError = decoded['error']?.toString();
-      if (pluginError != null && pluginError.isNotEmpty) {
-        messenger.showSnackBar(SnackBar(content: Text('同步失败：$pluginError')));
-        return;
-      }
-
-      final List<Course> parsed = _parseCourses(decoded['courses']);
-      if (parsed.isEmpty) {
-        messenger.showSnackBar(
-          const SnackBar(content: Text('同步完成，但没有解析到任何课程')),
-        );
-        return;
-      }
-
-      for (final Course course in parsed) {
-        await courses.saveCourse(course);
-      }
-
-      final List<String> warnings = _stringList(decoded['warnings']);
-      debugPrint('[PluginDetailPage] 同步完成：写入 ${parsed.length} 门课程'
-          '${warnings.isEmpty ? '' : '，警告：${warnings.join('；')}'}');
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            '已同步 ${parsed.length} 门课程'
-            '${warnings.isEmpty ? '' : '（${warnings.length} 条警告，详见日志）'}',
-          ),
-        ),
+      report = await CourseSyncService.sync(
+        pluginId: meta.id,
+        handle: handle,
+        courses: courses,
+        onProgress: (String stage, String message) {
+          // 回调发生在 await 之间，此时 State 一定还挂着；
+          // 但仍按规范查 mounted，避免页面被 pop 后 setState 报错。
+          if (!mounted) return;
+          setState(() => _progressMessage = message);
+        },
       );
     } catch (e) {
-      debugPrint('[PluginDetailPage] 同步异常：$e');
-      messenger.showSnackBar(SnackBar(content: Text('同步异常：$e')));
+      // 最后一道保险：服务层的契约是"不抛"，真抛了也要给用户一个交代。
+      debugPrint('[PluginDetailPage] 同步抛出未预期异常：$e');
+      report = SyncReport.failure(
+        pluginId: meta.id,
+        outcome: SyncOutcome.failed,
+        reason: '同步异常：$e',
+      );
     } finally {
-      _syncing = false;
-    }
-  }
-
-  /// 逐条把插件返回的课程 JSON 解析成 [Course]；坏数据跳过，不抛异常。
-  static List<Course> _parseCourses(Object? raw) {
-    if (raw is! List) return const <Course>[];
-    final List<Course> result = <Course>[];
-    for (int i = 0; i < raw.length; i++) {
-      final Object? item = raw[i];
-      if (item is! Map) {
-        debugPrint('[PluginDetailPage] 第 $i 条课程不是对象，已跳过');
-        continue;
-      }
-      final Map<String, dynamic> json = <String, dynamic>{};
-      item.forEach((dynamic k, dynamic v) {
-        if (k != null) json['$k'] = v;
-      });
-      try {
-        final Course course = Course.fromJson(json);
-        if (course.id.isEmpty) {
-          debugPrint('[PluginDetailPage] 第 $i 条课程缺少 id，已跳过');
-          continue;
-        }
-        result.add(course);
-      } catch (e) {
-        // Course.fromJson 本身已经很宽容，这里只是最后一道保险。
-        debugPrint('[PluginDetailPage] 第 $i 条课程解析失败，已跳过：$e');
+      if (mounted) {
+        setState(() {
+          _syncing = false;
+          _progressMessage = null;
+        });
+      } else {
+        // 页面已销毁：没有 State 可更新，但字段复位仍是有意义的
+        // （State 对象可能被复用前的最后一次写入）。
+        _syncing = false;
+        _progressMessage = null;
       }
     }
-    return result;
+
+    if (!mounted) return;
+    setState(() => _lastReport = report);
+
+    messenger.showSnackBar(
+      SnackBar(content: Text(_snackTextFor(report))),
+    );
   }
 
-  static Object? _tryDecode(String raw) {
-    try {
-      return jsonDecode(raw);
-    } catch (e) {
-      debugPrint('[PluginDetailPage] 解析插件返回值失败：$e');
-      return null;
+  /// 把报告压成一句 SnackBar 文案。
+  ///
+  /// 详细结果交给 [_SyncResultTile]（那里有地方换行、也能常驻），
+  /// SnackBar 只给最关键的结论。
+  static String _snackTextFor(SyncReport report) {
+    if (!report.isSuccess) {
+      return '同步失败：${report.reason}';
     }
-  }
-
-  static List<String> _stringList(Object? raw) {
-    if (raw is! List) return const <String>[];
-    return raw.whereType<Object?>().map((Object? e) => '$e').toList();
+    if (!report.hasChanges) {
+      return report.totalCourses == 0
+          ? '同步完成：这学期没有课程'
+          : '同步完成：${report.totalCourses} 门课程已是最新';
+    }
+    final List<String> parts = <String>[];
+    if (report.added > 0) parts.add('新增 ${report.added}');
+    if (report.updated > 0) parts.add('更新 ${report.updated}');
+    return '已同步 ${report.totalCourses} 门课程（${parts.join('、')}）';
   }
 
   /// 卸载：先确认，再移除（会销毁运行时沙箱并删存储），最后退回列表页。
@@ -540,6 +510,9 @@ class _InstallPathRow extends StatelessWidget {
 }
 
 /// 一行可点击的操作项。
+///
+/// [onTap] 为 `null` 时是**禁用态**（Phase 4.3：同步进行中禁用"立即同步"，
+/// 避免连点；`ListTile` 收到 `null` 会自动置灰并拦截点击）。
 class _ActionRow extends StatelessWidget {
   const _ActionRow({
     required this.icon,
@@ -549,23 +522,213 @@ class _ActionRow extends StatelessWidget {
 
   final IconData icon;
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final AppTheme theme = AppThemeExtension.of(context);
+    final bool enabled = onTap != null;
     return ListTile(
       contentPadding: EdgeInsets.zero,
-      leading: Icon(icon, color: theme.primary),
+      enabled: enabled,
+      leading: Icon(
+        icon,
+        color: enabled ? theme.primary : theme.onBackground.withValues(alpha: 0.38),
+      ),
       title: Text(
         label,
-        style: TextStyle(fontSize: theme.bodySize, color: theme.onBackground),
+        style: TextStyle(
+          fontSize: theme.bodySize,
+          color: enabled ? theme.onBackground : theme.onBackground.withValues(alpha: 0.38),
+        ),
       ),
       trailing: Icon(
         Icons.chevron_right,
         color: theme.onBackground.withValues(alpha: 0.3),
       ),
       onTap: onTap,
+    );
+  }
+}
+
+/// 同步进行中的进度行（转圈 + 当前阶段文案）。
+///
+/// 所有样式取自 [AppTheme]（CONTEXT 3.2，禁止硬编码颜色/字号）。
+class _SyncProgressTile extends StatelessWidget {
+  const _SyncProgressTile({required this.message});
+
+  /// 当前进度文案；为 `null` 时显示一个通用文案。
+  final String? message;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppTheme theme = AppThemeExtension.of(context);
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: theme.gridGap * 2),
+      child: Row(
+        children: <Widget>[
+          SizedBox(
+            width: theme.captionSize * 1.4,
+            height: theme.captionSize * 1.4,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(theme.primary),
+            ),
+          ),
+          SizedBox(width: theme.cardPadding),
+          Expanded(
+            child: Text(
+              message ?? '正在同步，请稍候…',
+              style: TextStyle(
+                fontSize: theme.captionSize,
+                color: theme.onBackground.withValues(alpha: 0.7),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 上一次同步的结果卡片（常驻显示，比 SnackBar 更适合看细节）。
+///
+/// 颜色只用主题里的语义令牌：`success` / `warning` / `error`
+/// （CONTEXT 3.2 明确禁止 UI 硬编码绿 / 黄 / 红）。
+class _SyncResultTile extends StatelessWidget {
+  const _SyncResultTile({required this.report});
+
+  final SyncReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppTheme theme = AppThemeExtension.of(context);
+    final Color accent = report.isSuccess
+        ? (report.hasChanges ? theme.success : theme.onBackground.withValues(alpha: 0.6))
+        : (report.isRetryable ? theme.warning : theme.error);
+
+    return Container(
+      margin: EdgeInsets.only(top: theme.gridGap * 2),
+      padding: EdgeInsets.all(theme.cardPadding),
+      decoration: BoxDecoration(
+        // 极浅的强调色底：让结果区与上面的操作行区分开，又不抢眼。
+        color: accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(theme.buttonRadius),
+        border: Border.all(color: accent.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Icon(
+                report.isSuccess
+                    ? (report.hasChanges ? Icons.check_circle_outline : Icons.info_outline)
+                    : Icons.error_outline,
+                size: theme.captionSize * 1.4,
+                color: accent,
+              ),
+              SizedBox(width: theme.gridGap * 2),
+              Expanded(
+                child: Text(
+                  _title(),
+                  style: TextStyle(
+                    fontSize: theme.captionSize,
+                    fontWeight: theme.titleFontWeight,
+                    color: accent,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (!report.isSuccess && report.reason.isNotEmpty) ...<Widget>[
+            SizedBox(height: theme.gridGap * 2),
+            Text(
+              report.reason,
+              style: TextStyle(
+                fontSize: theme.captionSize,
+                color: theme.onBackground,
+              ),
+            ),
+          ],
+          if (report.isSuccess) ...<Widget>[
+            SizedBox(height: theme.gridGap * 2),
+            _detailLine(context, '新增 ${report.added} · 更新 ${report.updated} · '
+                '未变 ${report.unchanged}'),
+            if (report.skipped > 0)
+              _detailLine(context, '跳过 ${report.skipped} 条（数据不完整）'),
+            // 这一行是"用户改动没有被同步冲掉"的可见证据。
+            if (report.userEdited > 0)
+              _detailLine(context, '其中 ${report.userEdited} 门保留了你的修改'),
+            if (report.sectionTimes > 0)
+              _detailLine(context, '节次时间 ${report.sectionTimes} 条'),
+            if (report.allUnits != null)
+              _detailLine(context, '总学分 ${report.allUnits}'),
+          ],
+          if (report.attempts > 1)
+            _detailLine(context, '共尝试 ${report.attempts} 次'),
+          if (report.warnings.isNotEmpty) ...<Widget>[
+            SizedBox(height: theme.gridGap * 2),
+            for (final String warning
+                in report.warnings.take(kMaxVisibleSyncWarnings))
+              Text(
+                '· $warning',
+                style: TextStyle(
+                  fontSize: theme.captionSize,
+                  color: theme.warning,
+                ),
+              ),
+            if (report.warnings.length > kMaxVisibleSyncWarnings)
+              Text(
+                '· 另有 ${report.warnings.length - kMaxVisibleSyncWarnings} 条警告，详见日志',
+                style: TextStyle(
+                  fontSize: theme.captionSize,
+                  color: theme.onBackground.withValues(alpha: 0.6),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _title() {
+    if (!report.isSuccess) {
+      switch (report.outcome) {
+        case SyncOutcome.authRequired:
+          return '需要先登录';
+        case SyncOutcome.networkError:
+          return '网络失败（可重试）';
+        case SyncOutcome.timeout:
+          return '插件执行超时';
+        case SyncOutcome.unavailable:
+          return '插件不可用';
+        case SyncOutcome.unsupported:
+          return '该插件不支持课程同步';
+        case SyncOutcome.protocolError:
+          return '数据无法识别';
+        case SyncOutcome.failed:
+        case SyncOutcome.success:
+          return '同步失败';
+      }
+    }
+    if (!report.hasChanges) {
+      return report.totalCourses == 0 ? '这学期没有课程' : '已是最新';
+    }
+    return '同步成功';
+  }
+
+  Widget _detailLine(BuildContext context, String text) {
+    final AppTheme theme = AppThemeExtension.of(context);
+    return Padding(
+      padding: EdgeInsets.only(top: theme.gridGap / 2),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: theme.captionSize,
+          color: theme.onBackground.withValues(alpha: 0.75),
+        ),
+      ),
     );
   }
 }

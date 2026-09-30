@@ -4,7 +4,7 @@
 > 遇到阻塞，在旁边加 `⚠️` 并说明。
 > 本文件是"当前状态"的唯一真相来源。
 
-- 最后更新：2026-09-25
+- 最后更新：2026-09-30
 
 ---
 
@@ -12,23 +12,36 @@
 
 > 给新会话 AI 用。每次阶段切换时更新。
 
-- **最新完成**：**Phase 4.2.2（Android 明文流量定向白名单 `network_security_config.xml`）** ——
-  **代码/配置完成，真机复验待人工**。真机链路已推进两步：
-  4.2.1 修 `net::ERR_CERT_AUTHORITY_INVALID`（自签证书，WebView 默认拒绝）→
-  4.2.2 修 `net::ERR_CLEARTEXT_NOT_PERMITTED`（登录从 **https 重定向到
-  `http://xjw1.ncst.edu.cn/gotoLogin`**，targetSdk 34 默认禁明文）
-- **代码状态**：dart analyze 全绿；**真机验证仍卡在网络可达性 + 待复验 SSL/明文两处放行**
-  （见 4.2 / 4.2.1 / 4.2.2 备注块）
+- **最新完成**：**Phase 4.3（数据同步打通：增量 / 覆盖层保留 / 失败重试 / 进度 UI）** ——
+  **`dart analyze` 全绿（`No issues found!`），新增逻辑已用临时测试脚本 16 组全部验证通过**。
+  同步逻辑从 `PluginDetailPage` 抽到 `lib/services/course_sync_service.dart`，
+  结果形状抽到 `lib/models/sync_report.dart`；顺带**修掉一个真实的数据丢失 bug**
+  （`CourseProvider.saveCourse` 会冲掉内存里的用户覆盖层，见 4.3 备注）。
+  剩下的只有**真机复验**（需要校园网 + 人工凭据，与 4.2 同一阻塞项）。
+- **代码状态**：4.3 **新建 2 个文件、改动 6 个文件**（清单见 4.3 备注）；
+  `dart analyze`（整包，含 test/）**No issues found**；
+  **4.2 / 4.2.1 / 4.2.2 的真机复验仍未做**
+  （卡在网络可达性 + 需要人工凭据，见下方各自备注块）
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
 - **Phase 3 全部完成**：插件运行时（沙箱 → 加载 → 多插件管理 → 文件持久化 → 管理 UI → **ctx**）
 - **Phase 4 进度**：4.1 ✅（WebView 登录 + Cookie，已真机验收）→
-  4.2 代码完成 → 4.2.1 代码完成 → **4.2.2 完成、待真机复验** → 4.3 未开始 → 4.4 未开始
+  4.2 代码完成 → 4.2.1 代码完成 → 4.2.2 完成、待真机复验 →
+  **4.3 ✅ 代码完成 + `dart analyze` 全绿 + 临时脚本 16 组通过（仅剩真机复验）** → 4.4 未开始
 - **新会话请先做这一件事**：在**校园网/VPN** 下用真机跑通
   「安装 NCST 插件 → 登录（人工输学号密码）→ 立即同步」。
-  这一步过不了，4.3 / 4.4 都没有意义。若报 `响应结构异常：…`，
+  这一步过不了，4.4 没有意义。若报 `响应结构异常：…`，
   把 error 文案发出来即可定位（插件已按"结构不符就报错"实现）；
   若登录页仍打不开，按 **4.2.1 / 4.2.2 备注块**里的 `logcat` 命令抓 `WebViewLoginPage` 日志。
-- **下一步**：Phase 4.3（数据同步打通：增量/覆盖策略、覆盖层保留、失败重试）
+  4.3 之后同步失败会**在插件详情页常驻显示结果卡片**（不再只有一闪而过的 SnackBar），
+  直接截那张卡片即可。
+- **下一步**：Phase 4.4（课表显示节次时间 + 同步进度 UI 增强）
+- **✅ 4.3 验证状态（已完成，不需要人工补跑）**：
+  `dart analyze`（**整包，含 `test/`**）→ `No issues found!`；
+  新增逻辑另用临时测试脚本 **16 组全部通过**（脚本跑完即删）：
+  `saveCourse` 覆盖层保留 4 组（含**直接复现修复前的丢数据场景**）、
+  `parseCourses` 容错 4 组、`SyncReport`/`SyncOutcome` 语义 5 组、重试策略常量 3 组；
+  `node --check` 通过 `ncst-jwxt.js` 与 `example.js` 的 JS 语法检查。
+  **唯一剩下的仍是真机复验**（校园网 + 人工凭据，与 4.2 同一阻塞项）。
 - **⚠️ 4.2.2 待真机复验（需要人工操作）**：明文白名单是**系统级配置**，
   `dart analyze` 管不到它，**只能重装 APK 后真机确认**：
   重跑 `flutter run`（**必须重编译安装**，热重载不生效）→ 插件管理 → NCST 详情 → 登录。
@@ -130,8 +143,26 @@
     `usesCleartextTraffic`，不能外推）。
     ⚠️ 复验点：同步报 `{error:'connection'}` 而浏览器能通 → 即此问题，按证据再决策，
     **不要预先加全局 `usesCleartextTraffic="true"`**
+  - **`saveCourse` 入参不带覆盖层 ≠ 要删除覆盖层**（4.3 修的真实 bug）：
+    覆盖层来源优先级 = 入参自带 > 内存里那条已有 > Box 里存的；
+    插件重同步每次传的都是无覆盖层的原始课程，所以这条路径必然被踩到
+  - **同步只在"原始字段真的变了"时才落盘**（4.3）：字段指纹**不含 `userOverride`**，
+    且 `weeks` 要归一成"去重 + 升序"，否则会把同一份数据误判成"变了"而反复写盘
+  - **重试只针对网络类失败**（4.3）：`timeout` / `connection` / `bad_response`，
+    或插件显式声明 `retryable: true`。**凭证过期 / 结构异常 / 超时 / 插件不可用都不重试**
+  - **`ctx.http` 真失败时是 `throw`**，那一刻插件自己的 `retryable: true` 拿不回来；
+    靠宿主 `JsSandboxResult.httpErrors` 兜底（两条路都通，不是二选一）
+  - **`JsSandbox.execute()` 不填 `httpErrors`**（沙箱层不认识 HTTP），
+    只有经 `PluginContext.execute` 的路径才有值
+  - **`sync_report.dart` 的 0 门课是 `success` 不是失败**：这学期确实没选课是合法结果；
+    插件坚持"宁可报错也不静默返回空数组"，两侧配合才不会误报
   - **禁止用 PowerShell 的 Get-Content/Set-Content 做文本往返**（会按控制台代码页解码，中文变乱码，见阻塞表）
   - **docs/PROGRESS.md 曾因编码问题损坏**，见阻塞表（编辑该文件时务必确认保存为 UTF-8）
+  - **分析器能证明"必定有值"的地方不要写多余判空**（4.3 被 `unnecessary_null_comparison` 抓过）：
+    想让"每条路径都赋值"这个不变量显式化，用 `late final X v;` 而不是
+    可空类型 + 事后 `if (v == null) return;`
+  - **`dart analyze` 有一条 info 也算失败**（4.3 实测：exit code 1）：
+    看到"只有 1 条 info"别当成"基本通过"，要当成必须修掉的问题
 
 ---
 
@@ -1217,11 +1248,138 @@
       只放开 `xjw1.ncst.edu.cn`；**需重装 APK 才能生效**，真机复验见备注块）
 - [ ] **真机跑通"登录 → 同步 → 课表显示"** —— 卡在校园网可达性 + 需要人工凭据（见快照区）；
   WebView 侧的 `-1` 加载失败已按 4.2.1（证书）+ 4.2.2（明文）修复，**待复验**
-- [ ] 数据同步的增量/覆盖策略与失败重试（Phase 4.3）
+- [x] **数据同步的增量/覆盖策略与失败重试（Phase 4.3）** ——
+      `services/course_sync_service.dart` + `models/sync_report.dart`；
+      增量（未变不写盘）、覆盖层保留（含 `saveCourse` 内存侧修正）、
+      网络类失败指数退避重试（最多 3 次）、结果分类 + 常驻结果卡片。
+      **⚠️ 待跑 `dart analyze` 与真机复验**，见下方 4.3 备注
 - [ ] 课表显示节次时间（Phase 4.4；数据已落 `plugin_data` 的 `section_times`，UI 未做）
-- [ ] 同步进度 UI（Phase 4.4；现在只有一个防重入闩锁 + SnackBar）
+- [ ] 同步进度 UI（**Phase 4.3 已完成基础版**：转圈 + 阶段文案 + 常驻结果卡片；
+      4.4 可加"课表页也能同步"的入口）
 - [ ] **⚠️ 收尾必做：`flutter build apk --release` 发布包冒烟**
       （装到设备上跑通"安装插件 → `ctx.http` 拉数据"；此前所有网络验证都在 debug 包）
+
+### Phase 4.3 备注（数据同步打通：增量 / 覆盖层保留 / 失败重试）
+
+> **目标**（原文）："数据同步的增量/覆盖策略与失败重试"。
+> 同时把 4.2 遗留的三个问题一起解决：同步逻辑写死在页面里无法复用、
+> 失败原因无法判断该不该重试、UI 拿不到进度。
+
+> **⚠️ 验证状态（先说清楚做了什么、没做什么）**：
+> - ✅ **`dart analyze` 全绿**：整包（含 `test/`）`No issues found!`。
+>   过程中分析器抓出 2 处我写的多余判空（`unnecessary_nullable_for_final_variable_declarations`
+>   → `unnecessary_null_comparison`），已改用 `late final SyncReport report`
+>   把这个"try/catch 各赋一次"的不变量表达在类型里，两处告警消失。
+> - ✅ **新增逻辑用临时测试脚本 16 组全部通过**（脚本跑完即删，遵守 CONTEXT 6 不保留测试）：
+>   `saveCourse` 覆盖层保留 4 组（含**直接复现修复前的丢数据场景**）、
+>   `parseCourses` 容错 4 组、`SyncReport`/`SyncOutcome` 语义 5 组、重试策略常量 3 组。
+>   其中"只有 `networkError` 可重试"是遍历全部 8 个枚举值断言的。
+> - ✅ **JS 语法检查**：`node --check` 对 `ncst-jwxt.js` 与 `example.js` 均通过。
+> - ❌ **没有真机验证**（需要校园网 + 人工凭据，与 4.2 同一阻塞项）
+> - 注：`docs/ENV.md` 记的"`flutter.bat` 在沙箱挂死"依然成立，
+>   本次统一走 `dart.exe <flutter>/bin/cache/flutter_tools.snapshot` 调用
+
+> **改动清单（6 个文件）**：
+>
+> | 文件 | 改动 |
+> |------|------|
+> | `lib/models/sync_report.dart` | **新建**：`SyncOutcome` 枚举（8 态）+ `SyncReport`（13 字段 + 4 派生 getter + `failure` 工厂） |
+> | `lib/services/course_sync_service.dart` | **新建**：同步编排 + 增量落盘 + 重试 + 结果分类（629 行） |
+> | `lib/providers/course_provider.dart` | **修 bug**：`saveCourse` 不再冲掉内存里的覆盖层 |
+> | `lib/runtime/plugin_ctx_script.dart` | `ctx.lastHttpError` + `__ctx_note_http_error` + `__ctx_http_errors` + dump 带 `httpErrors` |
+> | `lib/runtime/plugin_context.dart` | `_CtxRound.httpErrors` + 跨轮累积 + 挂到返回结果（四条返回路径全覆盖） |
+> | `lib/runtime/js_sandbox.dart` | `JsSandboxResult.httpErrors` 字段 + `withHttpErrors()` |
+> | `lib/pages/settings/plugin_detail_page.dart` | 改 `StatefulWidget`；接 `CourseSyncService`；新增 `_SyncProgressTile` / `_SyncResultTile`；`_ActionRow.onTap` 可空（禁用态）；删掉 4.2 的临时诊断日志 |
+> | `assets/plugins/ncst-jwxt.js` | `__ncst_netFail()` 给网络类失败标 `retryable: true` |
+>
+> （表里 8 行：其中 2 个是新建，其余为改动。）
+
+> **🐛 本阶段修掉的真实 bug（值得单独记一条）**：
+> `CourseProvider.saveCourse` **只保护了落盘数据、没保护内存视图**。
+> 它把"原始数据（剥离覆盖层）"写 `courses` Box、覆盖层写 `overrides` Box，
+> 这部分是对的；但最后 `_upsert(c)` 用的是**入参 c**（插件给的、不带覆盖层），
+> 于是列表里那条**带覆盖层**的课程被整体替换 → 用户在本次会话内改过的课程名
+> **当场消失**，重启后又从 Box 读回来（表现为"改完当场丢、重启复活"）。
+> 插件重同步每次都传入无覆盖层的原始课程，所以这条路径**必然被踩到**。
+> 修法：覆盖层来源优先级 = 入参自带的 > 内存里那条已有的 > Box 里存的，
+> 挂回去之后再 `_upsert`。**内存优先**是有意的——它一定是最新的，
+> 而 `OverrideEngine.getOverride` 依赖 Hive 已初始化，内存查不到才值得读盘。
+
+> **增量策略（"增量/覆盖"的落地）**：
+>
+> | 情况 | 计数 | 动作 |
+> |------|------|------|
+> | 库里没有该 `id` | `added` | 写入 |
+> | 有且原始字段**一致** | `unchanged` | **跳过落盘**（省一次 Hive 写 + 一次 `notifyListeners`） |
+> | 有且原始字段不同 | `updated` | 覆盖写入 |
+> | 解析失败 / 重复 `id` | `skipped` | 跳过并 `debugPrint` |
+>
+> 两个设计要点：
+> 1. **字段指纹不含 `userOverride`**。否则用户每改一次课名，下次同步都会被判成
+>    `updated` 而多写一次盘——"教务数据没变"和"用户改过"是两件事。
+> 2. **`weeks` 归一为"去重 + 升序"**。教务系统两次返回的周次顺序可能不同，
+>    直接比列表会把"同一份数据"误判成"变了"。
+>
+> **"覆盖"的边界**（CONTEXT 3.3）：只覆盖**原始**字段，
+> **不删除任何课程**。教务系统里消失的课程同样保留，只能由用户显式隐藏——
+> 因为"教务系统这次没返回"和"这门课被删了"在内核看来无法区分，
+> 贸然删除会连用户的备注和自定义颜色一起丢掉。
+
+> **失败重试：只重试网络类失败**。
+> 判定顺序（从最可靠到最兜底）：
+> 1. 插件显式声明 `retryable: true`（4.3 起的约定，插件最清楚自己失败在哪一层）；
+> 2. 宿主的 HTTP 错误类别（`JsSandboxResult.httpErrors`）是
+>    `timeout` / `connection` / `bad_response` —— 给没升级契约的老插件兜底；
+> 3. 都没有 → **不重试**（保守：宁可让用户手动重试，也不自动空转）。
+>
+> 参数：`kMaxAttempts = 3`、退避 `600ms → 1500ms`。
+> **凭证过期、响应结构异常、插件不可用、执行超时一律不重试** ——
+> 重试只会让用户多等一轮还得到同样结果。
+>
+> ⚠️ 一个容易误判的点：`ctx.http.get` 在**真失败**时会 `throw`，
+> 而 throw 会让那一轮的执行结果变成 `error`，插件自己的 `retryable: true`
+> **拿不回来**。所幸宿主仍会把错误短标识放进 `result.httpErrors`，
+> 所以第 2 条兜底**能救回这种情况**——两条路都通，不是二选一。
+
+> **`ctx.lastHttpError` 与"内核不认识学校字段"的关系**（CONTEXT 3.1 自查）：
+> 新增的 `httpErrors` / `errorKind` 全部是**宿主自己的错误枚举**
+> （`timeout` / `connection` / `bad_certificate` / `bad_response` / `cancelled` / `unknown`），
+> 插件侧只把它当不透明字符串回传。**全程不解析任何响应正文**，
+> 所以内核里依然一个学校字段都没有。
+
+> **`_looksLikeAuthProblem` 为什么要靠中文关键词**：
+> `fetchCourses` 在 Cookie 为空时**根本不发请求**（NCST 插件第 33 行），
+> 所以宿主侧没有任何 HTTP 错误可依据，只能看插件给的那句话。
+> 它**只影响提示文案与是否重试**，不影响数据正确性；匹配不到就归为
+> `protocolError`（同样不重试）。这是一处有意的、有界的启发式，不是遗漏。
+
+> **进度 UI**：`_SyncProgressTile`（转圈 + 阶段文案）+ `_SyncResultTile`（常驻结果卡片）。
+> 结果卡片里有一行 **"其中 N 门保留了你的修改"**——这是"用户改动没被同步冲掉"的
+> 可见证据，比埋在日志里更有意义。颜色只用 `theme.success` / `warning` / `error`
+> （CONTEXT 3.2 禁止硬编码绿/黄/红）。
+> 页面不再用 `static bool _syncing` 闩锁（那样跨实例泄漏状态、且没法显示结果）。
+
+> **顺带清理**：
+> - 删掉 4.2 留在 `_syncNow` 里的 `[Sync诊断]` 临时日志块（当时用于排查
+>   "同步成功但课表空白"，现已由 `CourseSyncService` 的结构化日志取代）
+> - `plugin_detail_page.dart` 不再需要 `dart:convert` / `models/course.dart` /
+>   `models/time_place.dart` / `runtime/js_sandbox.dart` 的 import（解析逻辑已搬走）
+> - **删掉 `timetable_view.dart` 里整块 `[Timetable诊断]` / `[Timetable分支]` 日志**
+>   （上一轮排查同一个"课表空白"问题时加的，注释写着"定位后删除"但一直没删；
+>   共 5 处 `debugPrint` + 一个 `_dumpTimetableDiagnostics` 方法 + 一条只为它存在的
+>   `models/time_place.dart` import）。**删完后该文件与 HEAD 完全一致**
+>   （`git diff` 为空）——说明它本来就是纯诊断改动，还原后不影响 Phase 2 已交付行为
+> - `test/tmp_phase_4_3_test.dart` **已删除**（Phase 4.3 早期的临时脚本，
+>   Phase 4.3 完成时作废）。`test/` 目录现在是空的 —— 这是符合项目惯例的状态
+>   （CONTEXT 6：Phase 1-5 不写单元测试；验证脚本跑完即删）
+> - ⚠️ **`lib/pages/course_list/course_list_view.dart` 的改动是上一轮就有的**
+>   （课程列表页接真实数据，188 行），不是本次新增；它同样未提交，
+>   同属 Phase 4.3 这条工作线
+
+> **未做（留给后续）**：
+> - 课表页的同步入口（4.4；`CourseSyncService` 已经是可复用的，加个按钮即可）
+> - "教务系统里消失的课程"的提示（需要产品决策：是提醒、自动隐藏，还是不管）
+> - 同步结果的历史记录（现在只保留"上一次"）
 
 ### Phase 4.2.2 备注（Android 明文流量定向白名单）
 

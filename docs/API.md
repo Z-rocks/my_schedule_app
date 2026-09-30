@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-25（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService；3.5 插件管理 UI 接入；3.5.1 插件可卸载性 isRemovable；3.6 插件上下文 ctx；4.1 WebView 登录页 + Cookie 提取；4.2 NCST 教务插件 + 同步接线；4.2.1 WebView SSL 证书放行 + 诊断日志；4.2.2 Android 明文流量定向白名单 `network_security_config.xml`）
+- 最后更新：2026-09-25（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService；3.5 插件管理 UI 接入；3.5.1 插件可卸载性 isRemovable；3.6 插件上下文 ctx；4.1 WebView 登录页 + Cookie 提取；4.2 NCST 教务插件 + 同步接线；4.2.1 WebView SSL 证书放行 + 诊断日志；4.2.2 Android 明文流量定向白名单 `network_security_config.xml`；**4.3 数据同步打通：`CourseSyncService` 增量/覆盖层保留/失败重试 + `SyncReport` + 同步进度 UI + `ctx.lastHttpError`/`JsSandboxResult.httpErrors` 错误类别通道 + `saveCourse` 内存覆盖层修正**）
 
 ---
 
@@ -342,6 +342,48 @@
 - `Map<String, dynamic> toJson()`
 - `SkinPack copyWith({...})`
 
+### `sync_report.dart` — SyncOutcome + SyncReport（**Phase 4.3 新增**）
+
+一次插件数据同步的结论。纯数据类，不依赖任何 Provider / 运行时——
+`CourseSyncService` 产出它、`PluginDetailPage` 消费它。
+
+#### `enum SyncOutcome`
+
+| 取值 | 含义 | 是否重试 |
+|------|------|:--------:|
+| `success` | 成功拿到数据（**0 门课也是合法结果**：这学期确实没选课） | — |
+| `unsupported` | 插件没声明 `fetchCourses` | ❌ |
+| `authRequired` | 凭证缺失或已失效 | ❌（要引导去登录） |
+| `protocolError` | 数据读不懂（结构不符 / 不是 JSON / 插件抛错） | ❌ |
+| `networkError` | 网络类失败（超时 / 连不上 / 5xx） | ✅ |
+| `timeout` | 插件执行超时（沙箱已被 kill） | ❌ |
+| `unavailable` | 插件未加载 / 已销毁 / 沙箱创建失败 | ❌ |
+| `failed` | 其它未归类（含 `bad_certificate` 等系统类问题） | ❌ |
+
+#### `class SyncReport`
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `pluginId` | `String` | 产出本报告的插件 id |
+| `outcome` | `SyncOutcome` | 最终结论 |
+| `reason` | `String` | 失败原因（面向用户的中文），成功时为空串 |
+| `added` / `updated` / `unchanged` | `int` | 新增 / 覆盖更新 / **跳过落盘**（原始字段一致）的课程数 |
+| `skipped` | `int` | 插件返回了但被跳过的条目数（解析失败 + 重复 id） |
+| `userEdited` | `int` | 本次被更新的课里**带用户覆盖层**的数量（"修改没被冲掉"的可见证据） |
+| `sectionTimes` | `int` | 插件顺带回传的节次时间条数 |
+| `allUnits` | `double?` | 插件顺带回传的总学分（`null` = 没提供，区别于 `0`） |
+| `warnings` | `List<String>` | 插件的非致命警告 |
+| `attempts` | `int` | 实际尝试次数（`>1` 表示发生过重试） |
+| `httpErrors` | `List<String>` | 同步期间宿主记录的 HTTP 失败短标识 |
+| `duration` | `Duration` | 同步总耗时 |
+
+派生：`bool get isSuccess`、`bool get isRetryable`（仅 `networkError`）、
+`bool get hasChanges`（`added > 0 || updated > 0`）、`int get totalCourses`
+（`added + updated + unchanged`）。
+
+构造：`const SyncReport({required pluginId, required outcome, ... 其余均有默认值})`，
+以及便捷工厂 `SyncReport.failure({required pluginId, required outcome, required reason, attempts, httpErrors, warnings, duration})`。
+
 ---
 
 ## lib/theme/
@@ -496,6 +538,8 @@ App 的全部视觉令牌集合，不可变（**30 个字段**，Phase 3.5 由 2
 
 - `Future<void> loadFromStorage()` — 读 `courses` Box，并把 `OverrideEngine.getAllOverrides()` **一次性**读出的覆盖层按课程 ID 挂载；解析失败的单条数据被跳过。会**替换**内存列表（不是累加）
 - `Future<void> saveCourse(Course c)` — **先落盘再更新内存**：剥离覆盖层写 `courses` Box，覆盖层另交 `OverrideEngine` 写 `overrides` Box；落盘失败仍更新内存（本次会话的修改不丢）
+  - **Phase 4.3 修正**：入参不带覆盖层时，会把**内存里已有的覆盖层重新挂回去**
+    （来源优先级：入参自带的 > 内存里那条已有的 > Box 里存的）
 - `Future<void> deleteCourse(String id)` — 同时删除 `courses` 与 `overrides` 中的记录（避免孤儿覆盖层）。教务课程应改用 `userOverride.hidden`，见 CONTEXT 3.3
 - `Future<void> clearAll()` — 清空两个 Box 与内存（测试 / 重置用）
 
@@ -504,6 +548,12 @@ App 的全部视觉令牌集合，不可变（**30 个字段**，Phase 3.5 由 2
 - `void setCourses(List<Course> list)` / `void addCourse(Course c)`（同 id 替换）/ `void updateCourse(Course c)`（upsert）/ `void clear()`
 
 > 覆盖层保护：`saveCourse` 在课程**不带** `userOverride` 时**不会**删除 `overrides` Box 里的既有记录——插件重新同步原始数据时用户的修改必须保留（CONTEXT 3.3）。
+>
+> **Phase 4.3 补上了内存侧的同一个保护**。修正前只保护了落盘数据、没保护内存视图：
+> `_upsert` 会把列表里那条**带覆盖层**的课程整体换成入参，于是"课程名被用户改过"
+> 这类修改在**本次会话内**立刻消失（重启后又从 Box 读回来，表现为
+> "改完当场丢、重启复活"）。插件重同步每次都传入无覆盖层的原始课程，
+> 所以这条路径一定会被踩到。
 
 ---
 
@@ -776,6 +826,68 @@ UI 偏好设置（Phase 2.2b.1 新增）。目前只有"左右滑动切换周次
 - `static Course? courseAt(List<List<Course?>> grid, int day, int session)` — 越界返回 `null`
 - `static int filledCellCount(List<List<Course?>> grid)` — 有课的格子数（判断课表是否为空）
 - `static String formatWeeks(List<int> weeks)` — 压成展示文本，`[1,2,3,5]` → `"1-3,5"`
+
+### `course_sync_service.dart` — CourseSyncService（**Phase 4.3 新增**）
+
+插件数据同步服务（纯静态类）。把原先写死在 `PluginDetailPage._syncNow` 里的流程
+搬到服务层，原因是那一版把"网络重试 / 结果分类 / 落盘策略"全塞在页面里：
+
+1. 其它入口（Phase 4.4 课表页同步、将来的定时同步）无法复用；
+2. 失败原因只剩一句中文，无法判断"该不该重试"；
+3. UI 拿不到中间进度，只能"正在同步…"然后干等。
+
+**契约：任何情况都不抛异常**，失败一律返回带 `SyncOutcome` 的 `SyncReport`。
+
+常量：
+
+| 常量 | 值 | 说明 |
+|------|-----|------|
+| `kStageFetching` | `'fetching'` | 进度阶段名：正在请求数据 |
+| `kStageSaving` | `'saving'` | 进度阶段名：正在落盘 |
+| `kMaxAttempts` | `3` | 总尝试次数上限（首发 + 重试） |
+| `kRetryBackoff` | `[600ms, 1500ms]` | 第 N 次重试前的等待（指数退避） |
+| `kSyncTimeout` | `20s` | 单次调用插件的超时（比沙箱默认 1s 宽裕：内部要发 2 个网络请求） |
+
+- `typedef SyncProgressCallback = void Function(String stage, String message)`
+- `static Future<SyncReport> sync({required String pluginId, required PluginHandle? handle, required CourseProvider courses, SyncProgressCallback? onProgress})`
+- `static List<Course> parseCourses(Object? raw)` — 公开的容错解析（坏数据跳过、不抛异常），
+  页面不再自己实现一份
+
+**重试只针对网络类失败**（超时 / 连不上 / 5xx）。凭证过期、响应结构异常、
+插件不可用等一律不重试——重试只会让用户多等一轮还得到同样结果。
+
+**`_persist` 的增量策略**：
+
+| 情况 | 计数 | 动作 |
+|------|------|------|
+| 库里没有该 `id` | `added` | 写入 |
+| 有且原始字段**一致** | `unchanged` | **跳过落盘**（省一次 Hive 写 + 一次 `notifyListeners`） |
+| 有且原始字段不同 | `updated` | 覆盖写入；若该课带 `userOverride` 则 `userEdited++` |
+| 插件返回但解析失败 / 重复 `id` | `skipped` | 跳过并 `debugPrint` |
+
+- 字段指纹 `_normalize` **不含 `userOverride`**：用户的修改不该被算成"教务数据变了"，
+  否则用户每改一次课名，下次同步都会误判成 `updated` 而多写一次盘
+- `weeks` 归一为"去重 + 升序"，避免教务系统两次返回顺序不同造成假差异
+- **不删除任何课程**（CONTEXT 3.3：教务课程只能隐藏，不能真删）；
+  教务系统里消失的课程同样保留
+- 解析出的课程**原样**交给 `CourseProvider.saveCourse`，覆盖层的保留由
+  `saveCourse` 负责（见下方 4.3 修正）
+
+**`_classifyPluginError` 的可重试判定顺序**（从最可靠到最兜底）：
+
+1. 插件显式声明 `retryable: true`（Phase 4.3 起的约定，插件最清楚自己失败在哪一层）；
+2. 宿主的 HTTP 错误类别（`JsSandboxResult.httpErrors`）是 `timeout` / `connection` /
+   `bad_response` —— 给没升级契约的老插件兜底；
+3. 都没有 → 按不可重试处理（保守：宁可让用户手动重试，也不自动空转）。
+
+全程**不解析插件的 response body**，只用宿主的错误枚举与插件的布尔标志，
+因此不涉及任何学校相关字段（CONTEXT 3.1）。`_kHttpErrorHints` 给
+`bad_certificate` / `cancelled` / `unknown` 提供可执行的建议文案。
+
+`_looksLikeAuthProblem` 是**文案启发式**（关键词：未登录 / 登录已过期 / Cookie /
+凭证 / 401 / 403 …）。之所以只能靠文案：`fetchCourses` 在 Cookie 为空时
+**根本不发请求**，宿主侧没有任何 HTTP 错误可依据。它只影响提示文案与是否重试，
+不影响数据正确性；匹配不到就归为 `protocolError`（同样不重试）。
 
 ---
 
@@ -1249,13 +1361,16 @@ Body 为 `ListView`，分 6 组，每组 = 小标题 + 一张 `Card`（`color: t
 徽章实现为 `Tooltip` + `Semantics` + 圆形 `Container`，**Key 为 `ValueKey('plugin-status-<id>')`**，
 便于测试与调试定位；tooltip / 无障碍文案在失败时带上 `loadErrors` 的原因。
 
-### `settings/plugin_detail_page.dart` — PluginDetailPage（Phase 3.5）
+### `settings/plugin_detail_page.dart` — PluginDetailPage（Phase 3.5；**4.3 起为 StatefulWidget**）
 
 ```dart
-class PluginDetailPage extends StatelessWidget {
+class PluginDetailPage extends StatefulWidget {
   const PluginDetailPage({super.key, required this.pluginId});
   final String pluginId;
 }
+
+/// 同步进度最多展示的警告条数。
+const int kMaxVisibleSyncWarnings = 3;
 ```
 
 - **AppBar**：标题 = 插件名；**`isRemovable == true`** 才显示"卸载"（`Icons.delete_outline`）。
@@ -1268,7 +1383,7 @@ class PluginDetailPage extends StatelessWidget {
 |------|------|
 | 基本信息 | 插件 ID / 版本 / 作者 / 描述 / 能力 / 来源（中文）/ **安装路径** / 加载状态（带状态色） |
 | 运行时 | 沙箱（可用 / 不可用 / 未创建）、入口函数列表、降级原因（不可用时，红色） |
-- **操作** | `SwitchListTile` 启用；"登录"（**Phase 4.1 起接真实 WebView 登录**）、"立即同步"（SnackBar 占位，Phase 4.2/4.3）、"查看日志"（SnackBar 占位） |
+| 操作 | `SwitchListTile` 启用；"登录"（Phase 4.1 真实 WebView 登录）、"立即同步"（**Phase 4.3 走 `CourseSyncService`**）、"查看日志"（SnackBar 占位）；同步中追加 `_SyncProgressTile`，结束后常驻 `_SyncResultTile` |
 
 - **安装路径**用 `FutureBuilder` 异步读 `PluginStorageService.getPluginJsPath(pluginId)`：
   读取中 → `读取中…`；出错 → `读取失败`；`null` → `未安装（插件目录中找不到 .js 文件）`
@@ -1279,18 +1394,40 @@ class PluginDetailPage extends StatelessWidget {
   否则 push `WebViewLoginPage(pluginId: meta.id, ...)`（由登录页负责落盘），
   返回非空 Cookie → `SnackBar('登录成功（已保存 N 字符的 Cookie）')`，
   返回 `null`/空 → `SnackBar('已取消登录')`
-- **立即同步**（Phase 4.2，`_syncNow`）：
-  1. 无 Cookie → `SnackBar('请先登录，再点「立即同步」')`（**不白跑网络**）
-  2. 句柄不可用 → `SnackBar('插件未加载，无法同步：<原因>')`
-  3. `handle.execute('fetchCourses', timeout: kSyncJsTimeout)`（默认 5s；
-     HTTP 发生在宿主侧 dio，**不受该超时约束**）
-  4. 插件返回 `{error}` → 直接展示；`{courses}` → 逐条 `Course.fromJson`
-     （单条坏数据跳过并 `debugPrint`，不毁掉整次同步）→ `saveCourse` 逐条落盘
-  5. `SnackBar('已同步 N 门课程')`；有 `warnings` 时追加条数提示
-  - 用一个 `try/finally` 复位的静态闩锁 `_syncing` 防重复点击
-    （本页是 `StatelessWidget`；Phase 4.4 做同步进度 UI 时再改成页内状态）
-- 辅助私有组件：`_InfoCard`（分区卡片）、`_InfoRow`（标签 : 值，值可换行）、
-  `_InstallPathRow`、`_ActionRow`
+
+#### **立即同步（Phase 4.3 重写）** —— `_syncNow`
+
+页内状态（三个字段，不再用 `static` 闩锁）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `_syncing` | `bool` | 防重入；为 `true` 时"立即同步"入口 `onTap` 传 `null`（置灰不可点） |
+| `_progressMessage` | `String?` | 当前进度文案，由 `onProgress` 回调写入 |
+| `_lastReport` | `SyncReport?` | 上一次同步的报告，驱动 `_SyncResultTile` |
+
+流程：
+1. 无 Cookie → `SnackBar('请先登录，再点「立即同步」')`（**不白跑网络**，也省掉重试退避）
+2. `CourseSyncService.sync(pluginId:, handle:, courses:, onProgress:)`
+3. `_lastReport = report`；`SnackBar(_snackTextFor(report))`
+
+`_snackTextFor` 只给一句结论，细节交给 `_SyncResultTile`：
+
+| 情况 | SnackBar |
+|------|---------|
+| 失败 | `同步失败：<reason>` |
+| 0 门课 | `同步完成：这学期没有课程` |
+| 有课但无变化 | `同步完成：N 门课程已是最新` |
+| 有变化 | `已同步 N 门课程（新增 X、更新 Y）` |
+
+- 私有辅助组件：`_InfoCard`、`_InfoRow`、`_InstallPathRow`、`_ActionRow`（
+  **`onTap` 可空 = 禁用态**，Phase 4.3 起）、`_SyncProgressTile`、`_SyncResultTile`
+- **`_SyncResultTile`** 常驻展示：成功显示"新增/更新/未变"计数、跳过条数、
+  **"其中 N 门保留了你的修改"**（覆盖层未被冲掉的可见证据）、节次时间条数、总学分；
+  失败显示标题 + 原因（`SyncOutcome.authRequired` → "需要先登录"、
+  `networkError` → "网络失败（可重试）"等）；`attempts > 1` 时显示"共尝试 N 次"；
+  警告最多列 `kMaxVisibleSyncWarnings` 条，其余提示"详见日志"
+- **颜色只用主题语义令牌**：`theme.success` / `theme.warning` / `theme.error`
+  （CONTEXT 3.2 禁止硬编码绿 / 黄 / 红）
 
 > **注意（测试相关）**：`_InstallPathRow` 里的 `getPluginJsPath` 是**真实文件 I/O**，
 > `testWidgets` 默认的 fake-async **不会推进它**（会永远停在"读取中…"），
@@ -1352,7 +1489,7 @@ const EmptyState({
 
 ## lib/ 特性插件
 
-### `assets/plugins/ncst-jwxt.js` — NCST 教务插件（Phase 4.2）
+### `assets/plugins/ncst-jwxt.js` — NCST 教务插件（Phase 4.2；**4.3 加 `retryable`**）
 
 **第一个真实插件**，也是**唯一允许出现 NCST 具体 URL / 字段名的地方**
 （CONTEXT 3.1：内核不得硬编码任何学校信息）。文件格式见上方「插件文件格式」一节。
@@ -1387,6 +1524,7 @@ const EmptyState({
 ```json
 { "courses": [ <Course JSON>... ], "sectionTimes": 12, "allUnits": 8.8, "warnings": [...] }
 { "error": "人话原因" }
+{ "error": "人话原因", "retryable": true, "errorKind": "timeout" }
 ```
 
 - **宁可报错也不静默返回空数组**：空数组会被上层误当成"这学期没课"，比报错危险
@@ -1395,6 +1533,18 @@ const EmptyState({
 - 字段名按教务系统的原样（注意 `coureNumber` / `coureSequenceNumber` 是**官方的拼写**，不要"纠正"）
 - `Course.id = '<coureNumber>_<coureSequenceNumber>'`、
   `teacher` 会 trim 尾部空格、`sourcePluginId = 'ncst-jwxt'`
+
+**`retryable`（Phase 4.3 新增）**：宿主只知道"插件返回了一句 error"，无法分辨
+"校园网抖了一下（重试就好）"和"Cookie 过期了（重试一百次也没用）"。所以插件把
+**网络层**失败显式标出来：
+
+- `errorKind` 取 `ctx.lastHttpError`（宿主给的短标识，空串则退化为不标）
+- 判断依据是 `ctx.lastHttpError`，**不是响应正文** —— 因此依然没有解析任何教务字段
+- 只有三类会标：`ctx.http` 抛错（→ `timeout` / `connection` / `bad_certificate`…）、
+  `listResp.ok == false`、以及 `status >= 500`（服务端临时故障）
+- **4xx 不标**（多为权限 / 路径问题，重试无用），响应结构异常与未登录也不标
+- 统一由 `__ncst_netFail(message)` 构造，避免漏标；
+  它是**工具函数，放在 `__plugin` 外面**（否则会被误报成入口函数）
 
 **JS 侧周次解析**：`__ncst_parseWeeks` / `__ncst_parseWeekType` 是
 `TimetableLogic.parseWeeks` / `parseWeekType` 的 **JS 复刻**（沙箱里调不到 Dart）。
@@ -1470,15 +1620,25 @@ const EmptyState({
 > 所以"循环请求同一个 URL"是安全的。轮数上限 8（`PluginContext.kMaxReplayRounds`）。
 
 - `const String kPluginCtxScript` — 预置脚本，定义全局 `ctx` 与内部 primitive
-  （`__ctx_http` / `__ctx_storage_get|set|remove`）及本轮状态变量。
+  （`__ctx_http` / `__ctx_storage_get|set|remove` / `__ctx_note_http_error`）及本轮状态变量。
   **全部在 JS 侧实现**：未命中缓存只是 `push` 进 `__ctx_http_pending`，不发任何 Dart 通道
 - `String buildCtxStateScript({required Map<String,String> httpCache, required Map<String,String> storage, required String cookie})`
-  — 构造"本轮状态"脚本，宿主每轮执行插件函数前求值；同时清空待办/日志
+  — 构造"本轮状态"脚本，宿主每轮执行插件函数前求值；同时清空待办/日志/**错误列表**
+  （`__ctx_http_errors` 必须每轮清空，否则上一轮的失败会污染本轮判定）
 - `const String kCtxDumpScript` — 读回本轮副作用，返回
-  `{pending, storage, touched, logs, notifies}` 的 JSON
+  `{pending, storage, touched, logs, notifies, httpErrors}` 的 JSON
 - Dart ↔ JS 边界**只传字符串**：状态与副作用都用 `jsonEncode` 嵌成 JS 字面量 / 用 `jsonDecode` 解析
 
-### `plugin_context.dart` — PluginContext（Phase 3.6）
+**`ctx.lastHttpError`（Phase 4.3 新增）** —— 本轮最后一次"真失败"的短标识
+（`timeout` / `connection` / `bad_certificate` / `bad_response` / `cancelled` / `unknown`），
+没有失败则为空串。插件用它把 `{error:...}` 区分为**可重试**与**不可重试**：
+网络类失败返回 `retryable: true`，宿主据此自动重试（见 `CourseSyncService`）。
+
+> 记录点：`__ctx_note_http_error` 只看响应信封的 `ok` 标志，**不解析 body**
+> （"5xx 正文里写着 error 字段"不算网络失败）。命中缓存时也会重新登记一遍——
+> 否则"重放后从缓存拿到失败响应"那一轮的错误列表会是空的。
+
+### `plugin_context.dart` — PluginContext（Phase 3.6；**错误类别收集 4.3 新增**）
 
 宿主侧 ctx 实现 + 重放循环。
 
@@ -1490,7 +1650,10 @@ const EmptyState({
 
 - `Future<JsSandboxResult> execute({required JsSandbox sandbox, required String entryCallScript, Duration timeout = kDefaultJsTimeout})`
   — 驱动重放循环。**只要本轮登记了待办就重放**（无论本轮是成功、抛错还是 `pending`），
-  这样插件写不写 `try/catch` 都正确；轮数超过 `kMaxReplayRounds` 返回 `error` 防死循环
+  这样插件写不写 `try/catch` 都正确；轮数超过 `kMaxReplayRounds` 返回 `error` 防死循环。
+  **Phase 4.3**：跨轮累积 `_CtxRound.httpErrors` 并挂到返回的
+  `JsSandboxResult.httpErrors` 上（三条返回路径都挂：超时/不可用、
+  读不回副作用、最终轮、轮数超限），供上层判断"该不该重试"
 - `Future<String> loadCookie()` — 读 `flutter_secure_storage` 的 `<pluginId>:cookie`；
   不存在 / 读取失败（含测试环境无平台通道）一律返回空串，不抛异常
 - `Future<Map<String, String>> loadStorageSnapshot()` — 用 `pluginDataBox.toMap()` 一次读整表再按前缀过滤
@@ -1548,9 +1711,25 @@ const EmptyState({
 | `status` | `JsSandboxStatus` | 结果状态 |
 | `value` | `String?` | 成功时的 JS 返回值（`JsEvalResult.stringResult`） |
 | `message` | `String?` | 失败原因（错误信息 / 超时说明 / 不可用原因） |
+| `httpErrors` | `List<String>` | **Phase 4.3 新增**：本次执行期间宿主记录到的 HTTP 失败短标识（见下） |
 | `isSuccess` / `isUnavailable` / `isTimeout` | `bool` | 便捷判定 |
 
 命名构造：`JsSandboxResult.success(String)` / `.error(String)` / `.timeout(String)` / `.unavailable(String)`
+（`success` / `error` 接受可选具名参数 `httpErrors`）
+
+**`httpErrors`（Phase 4.3）**：由 `PluginContext` 从 `ctx.http` 置入，取值是**宿主自己的
+错误枚举**（`timeout` / `connection` / `bad_certificate` / `bad_response` / `cancelled` /
+`unknown`），**不含任何学校相关信息**。为空表示本次执行没有发生 HTTP 真失败。
+
+为什么需要它：插件把失败包装成 `{error: '人话原因'}` 之后就只剩一句中文，
+宿主无法判断"该不该重试"。保留原始错误类别后，重试决策就有据可依
+（见 `CourseSyncService._classifyPluginError`）。
+
+另有 `JsSandboxResult withHttpErrors(List<String> errors)` —— 复制并替换 `httpErrors`
+（其余字段不变），供 `PluginContext` 在返回结果上前挂错误类别。
+
+> ⚠️ `JsSandbox.execute()` 本身**不会**填 `httpErrors`——沙箱层不认识 HTTP。
+> 只有经过 `PluginContext.execute`（即 `PluginHandle` 持有 `_context`）的路径才有值。
 
 #### `class JsSandbox`
 

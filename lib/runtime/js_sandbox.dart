@@ -72,15 +72,24 @@ enum JsSandboxStatus {
 /// 据此把插件标记为不可用，而不是让异常冒泡崩掉页面。
 @immutable
 class JsSandboxResult {
-  const JsSandboxResult._(this.status, {this.value, this.message});
+  const JsSandboxResult._(
+    this.status, {
+    this.value,
+    this.message,
+    this.httpErrors = const <String>[],
+  });
 
   /// 成功。
-  const JsSandboxResult.success(String value)
-      : this._(JsSandboxStatus.success, value: value);
+  const JsSandboxResult.success(
+    String value, {
+    List<String> httpErrors = const <String>[],
+  }) : this._(JsSandboxStatus.success, value: value, httpErrors: httpErrors);
 
   /// JS 执行出错。
-  const JsSandboxResult.error(String message)
-      : this._(JsSandboxStatus.error, message: message);
+  const JsSandboxResult.error(
+    String message, {
+    List<String> httpErrors = const <String>[],
+  }) : this._(JsSandboxStatus.error, message: message, httpErrors: httpErrors);
 
   /// 执行超时。
   const JsSandboxResult.timeout(String message)
@@ -99,6 +108,17 @@ class JsSandboxResult {
   /// 失败原因（错误信息 / 超时说明 / 不可用原因）。
   final String? message;
 
+  /// 本次执行期间宿主记录到的 HTTP 失败短标识（Phase 4.3）。
+  ///
+  /// 由 `PluginContext` 从 `ctx.http` 置入，取值是宿主自己的错误枚举
+  /// （`timeout` / `connection` / `bad_certificate` / `bad_response` /
+  /// `cancelled` / `unknown`），**不含任何学校相关信息**。
+  ///
+  /// 为什么需要它：插件把失败包装成 `{error: '人话原因'}` 之后就只剩一句中文，
+  /// 宿主无法判断"该不该重试"。保留原始错误类别后，重试决策就有据可依
+  /// （见 `CourseSyncService`）。为空表示本次执行没有发生 HTTP 真失败。
+  final List<String> httpErrors;
+
   /// 是否成功。
   bool get isSuccess => status == JsSandboxStatus.success;
 
@@ -108,9 +128,17 @@ class JsSandboxResult {
   /// 是否超时。
   bool get isTimeout => status == JsSandboxStatus.timeout;
 
+  /// 复制并替换 [httpErrors]（其余字段不变）。
+  JsSandboxResult withHttpErrors(List<String> errors) => JsSandboxResult._(
+        status,
+        value: value,
+        message: message,
+        httpErrors: List<String>.unmodifiable(errors),
+      );
+
   @override
-  String toString() =>
-      'JsSandboxResult(${status.name}, value: $value, message: $message)';
+  String toString() => 'JsSandboxResult(${status.name}, value: $value, '
+      'message: $message, httpErrors: $httpErrors)';
 }
 
 /// 子 isolate 的启动配置（跨 isolate 传递，只能用可发送的普通对象）。
