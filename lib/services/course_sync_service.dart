@@ -25,6 +25,14 @@ import '../runtime/plugin_handle.dart';
 /// `message` 是可以直接显示的进度文案。
 typedef SyncProgressCallback = void Function(String stage, String message);
 
+/// 同步结束回调（**Phase 7**）：无论成功失败都会被调用一次。
+///
+/// 用途：让调用方把同步结果**沉淀成一条站内消息**（`MessageProvider`），
+/// 而不是只弹一个转瞬即逝的 SnackBar。
+/// 本服务不直接依赖 `MessageProvider`——那是 Provider 层的职责，
+/// 服务层只负责"告诉调用方结果"。
+typedef SyncReportCallback = void Function(SyncReport report);
+
 /// 课程同步服务（纯静态类）。
 ///
 /// 契约：**任何情况都不抛异常**，失败一律返回带 [SyncOutcome] 的 [SyncReport]。
@@ -82,6 +90,29 @@ class CourseSyncService {
   /// 重试语义：**只重试网络类失败**（超时 / 连不上 / 5xx）。凭证过期、
   /// 响应结构异常、插件不可用等一律不重试——重试只会让用户多等一轮。
   static Future<SyncReport> sync({
+    required String pluginId,
+    required PluginHandle? handle,
+    required CourseProvider courses,
+    SyncProgressCallback? onProgress,
+    SyncReportCallback? onReport,
+  }) async {
+    final SyncReport report = await _sync(
+      pluginId: pluginId,
+      handle: handle,
+      courses: courses,
+      onProgress: onProgress,
+    );
+    // 无论成败都通知一次：调用方（页面）用它落一条站内消息。
+    // 放在这里而不是每个 return 前，是为了**不可能漏掉**某条失败路径。
+    onReport?.call(report);
+    return report;
+  }
+
+  /// `sync` 的实际实现。
+  ///
+  /// 拆出来是因为 [sync] 要在**所有**返回路径之后统一回调 `onReport`，
+  /// 而原实现有 7 个 return —— 逐个加回调必然会漏。
+  static Future<SyncReport> _sync({
     required String pluginId,
     required PluginHandle? handle,
     required CourseProvider courses,

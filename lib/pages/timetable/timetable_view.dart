@@ -1,12 +1,16 @@
 // 课表页：顶部日期栏 + 课程网格 + 三种状态（未配学期 / 无课程 / 有数据）
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/course.dart';
+import '../../models/message.dart';
 import '../../models/plugin_meta.dart';
 import '../../models/semester_config.dart';
 import '../../models/sync_report.dart';
 import '../../providers/course_provider.dart';
+import '../../providers/message_provider.dart';
 import '../../providers/plugin_provider.dart';
 import '../../providers/semester_provider.dart';
 import '../../providers/settings_provider.dart';
@@ -425,6 +429,12 @@ class _TimetableViewState extends State<TimetableView> {
         pluginId: meta.id,
         handle: pluginProvider.getHandle(meta.id),
         courses: courseProvider,
+        // Phase 7：与插件详情页一致，把结果沉淀成站内消息。
+        onReport: (SyncReport r) => unawaited(
+          context.read<MessageProvider>().addMessagePersisted(
+                Message.fromSyncReport(report: r, pluginName: meta.name),
+              ),
+        ),
       );
     } catch (e) {
       debugPrint('[TimetableView] 同步抛出未预期异常：$e');

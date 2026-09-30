@@ -12,21 +12,23 @@
 
 > 给新会话 AI 用。每次阶段切换时更新。
 
-- **最新完成**：**Phase 6（皮肤系统 / 创意工坊 / 暗色模式）** ——
-  暗色配色改为**推导**（保留皮肤色相），明暗三态（亮/暗/跟随系统），
-  创意工坊 4 套内置皮肤 + `assets/skins/` 目录皮肤，新增皮肤预览页。
-  **自验证通过**：`dart analyze` 全绿 + 临时脚本 28 组 + widget 测试 10 组 +
-  Windows 桌面实跑。**过程中抓到并修掉 3 个真实 bug**（见 Phase 6 备注）。
-- **Phase 5（课程编辑 / 删除 / 隐藏）** —— 编辑两种课程的落点刻意分开
-  （自建写原始字段、教务写覆盖层），新增「已隐藏的课程」恢复页。
+- **最新完成**：**Phase 7（消息模块接真实数据 + `ctx.notify` 落地）** ——
+  `MessageProvider` 从纯内存改为 **Hive 持久化**（CONTEXT 3.5 早就这么规定），
+  消息页可用（已读/删除/下拉刷新），插件 `ctx.notify` 与同步结果都落地为站内消息。
+  **自验证通过**：`dart analyze` 全绿 + 临时脚本 22 组 + Windows 桌面实跑。
+  系统通知（`flutter_local_notifications`）**有意未做**，理由见 Phase 7 备注。
+- **Phase 6（皮肤系统 / 创意工坊 / 暗色模式）** —— 暗色配色**推导**（保留皮肤色相），
+  明暗三态，4 套内置皮肤 + `assets/skins/`，皮肤预览页。抓到并修掉 3 个真实 bug。
+- **Phase 5（课程编辑 / 删除 / 隐藏）** —— 编辑两种课程的落点刻意分开，
+  新增「已隐藏的课程」恢复页。
 - **Phase 4 全部完成**：4.1 ✅ → 4.2 ✅ → 4.2.1 ✅ → 4.2.2 ✅ → 4.3 ✅ →
-  4.4 ✅（含真机）→ release 包冒烟 ✅（2026-09-30）。
-  真机复验结论见 4.3 备注开头的"真机复验已完成"
-- **代码状态**：Phase 4 已提交（最新 `c981efb`）；Phase 5 `dbec21a`；Phase 6 见下
+  4.4 ✅（含真机）→ release 包冒烟 ✅（2026-09-30）
+- **代码状态**：Phase 4 已提交（最新 `c981efb`）；Phase 5 `dbec21a`；Phase 6 `f3412ef`；
+  Phase 7 见下
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
 - **Phase 3 全部完成**：插件运行时（沙箱 → 加载 → 多插件管理 → 文件持久化 → 管理 UI → **ctx**）
-- **下一步**：**Phase 7（通知 + 消息）** —— `ctx.notify` 目前只打日志、
-  消息模块还是空态
+- **下一步**：Phase 8 / 9（见下方计划表）；**唯一需要项目所有者决定的**
+  是是否引入 `flutter_local_notifications` 做系统通知
 - **⚠️ 环境提示（4.3 复验踩到）**：
   ① 设备可能把 App 当**横屏**应用（`uiautomator` 报 `rotation="3"`），
   会让截图旋转 90° 且 `adb input tap` 坐标全落空；
@@ -2015,10 +2017,84 @@
 
 ---
 
-## Phase 7：通知 + 消息（未开始）
+## Phase 7：通知 + 消息（✅ 完成，系统通知除外）
 
-- [ ] `lib/services/notify_service.dart`
-- [ ] 消息模块接入真实数据
+- [ ] `lib/services/notify_service.dart` —— **有意不做**，理由见 Phase 7 备注
+- [x] 消息模块接入真实数据 —— **Phase 7**：Hive 持久化 + 列表 UI + 已读/删除
+- [x] `MessageProvider` 落盘（计划外但必需）：CONTEXT 3.5 早就规定消息存 Hive，
+      而它在此之前一直是**纯内存**，重启即丢
+- [x] `ctx.notify.schedule` 落地为**站内消息**（计划外）：之前只打一行日志
+- [x] 同步结果沉淀成消息（计划外）：SnackBar 一闪而过，消息页能回头查
+
+> 自验证：`dart analyze` 全绿 + 临时脚本 22 组（含真实 Hive + widget 测试）+
+> Windows 桌面实跑。详见下方 **Phase 7 备注**。
+
+---
+
+### Phase 7 备注（消息模块接真实数据）
+
+> **目标**：`ctx.notify` 从"只打日志"变成用户真的能看到；消息模块从空态变成可用。
+
+> **验证状态（自验证，未用实体机）**：
+> - ✅ `dart analyze`（整包）→ `No issues found!`
+> - ✅ 临时脚本 **22 组全部通过**：
+>   - `Message.fromSyncReport` 文案 6 组：成功有变化 / 无变化 / 0 门课（说"没课"而不是失败）/
+>     失败带原因与尝试次数 / 跳过与用户修改与警告都体现 / **同秒调用 id 相同**（重试不刷屏）
+>   - 内存语义 2 组：倒序 + 未读计数 + 全部已读、同 id 覆盖
+>   - **Hive 持久化 9 组**：落盘后重建能读回（含已读状态）、删除同时清存储、
+>     全部已读落盘、**过期消息载入时被丢弃并清出 Box**、
+>     `clearOldMessages` 同时清两边、`clearAll`、
+>     坏数据跳过不影响整次载入、**没有 id 的消息视为坏数据**
+>   - 插件 notify 适配 1 组：字段与 JSON 往返
+>   - **MessageView widget 测试 5 组**：空态、列表 + 未读计数 + 点卡片标已读、
+>     全部已读按钮、**左滑删除**、不同类型显示不同标签与图标
+
+> **改动清单**：
+>
+> | 文件 | 改动 |
+> |------|------|
+> | `lib/providers/message_provider.dart` | Hive 读写（`loadFromStorage` / `*Persisted` / `clearAll`）、`isLoaded`、载入时清过期 |
+> | `lib/pages/message/message_view.dart` | 重写：真实列表、未读高亮、全部已读、左滑删除、下拉刷新 |
+> | `lib/models/message.dart` | `Message.fromSyncReport` 工厂 |
+> | `lib/runtime/plugin_context.dart` | `PluginNotifyHandler` + `onNotify`，`_emitNotifies` 真正落地 |
+> | `lib/runtime/plugin_runtime.dart` | 透传 `onNotify` |
+> | `lib/providers/plugin_provider.dart` | 接 `onNotify` 并用它构造 `PluginRuntime` |
+> | `lib/services/course_sync_service.dart` | `SyncReportCallback` + `sync({onReport})`（拆出 `_sync` 以便统一回调） |
+> | `lib/pages/settings/plugin_detail_page.dart` | 同步结果写成消息 |
+> | `lib/pages/timetable/timetable_view.dart` | 同上（课表页同步入口） |
+> | `lib/main.dart` | 接 `MessageProvider`（预加载 + 传进 `buildApp`）、插件 notify → 消息 |
+
+> **⚠️ 有意不做：系统通知（`flutter_local_notifications`）**
+>
+> 原计划的 `notify_service.dart` 需要 `flutter_local_notifications ^16.3.0`——
+> 它出现在 CONTEXT 技术栈表里，**但 `pubspec.yaml` 里从来没有**，代码也从未用过。
+> 而 CONTEXT 第 6 节禁止"引入未在本文档技术栈中声明的依赖"。
+>
+> 判断：**加依赖是架构决定，应该由项目所有者批准**，不该由我在"自主推进"里顺手做掉。
+> 所以本阶段把 `ctx.notify` 落地为**站内消息**——用户已经真的能看到，
+> 只是"App 不在前台时弹不出来"。要补系统通知，只需：
+> ① `pubspec.yaml` 加依赖（CONTEXT 表已列，属"已声明但未安装"）；
+> ② 新建 `NotifyService`，把 `main.dart` 里那个 `onNotify` 回调改成
+>    "写消息 **+** 排系统通知"两件事。**其余代码不用动**。
+
+> **`onReport` 回调为什么要拆出 `_sync`**：
+> `sync()` 原本有 7 个 `return`（成功 / 各类失败 / 重试耗尽 / 兜底）。
+> 如果逐个 `return` 前加回调，**必然会漏掉某条失败路径**。
+> 所以把主体拆成 `_sync()`，`sync()` 只做"调用 + 统一回调 + 返回"——
+> 结构上保证不可能漏。
+
+> **消息 id 的幂等设计**：
+> - 同步消息：`sync_<pluginId>_<秒级时间戳>`。`CourseSyncService` 会重试，
+>   但重试都在同一次点击内（同一秒），所以只得到一条消息而不是三条。
+> - 插件通知：`notify_<pluginId>_<triggerAtIso>`。插件入口函数会被执行多次
+>   （CONTEXT 3.6），但 `ctx.notify` 的副作用**只在最终轮提交**，
+>   加上同 id 覆盖，双保险。
+
+> **`clearOldMessages` 从"纯内存"改成"同时落盘"**：
+> 原来只从内存删——**下次启动过期消息又从 Box 读回来了**。
+> 顺手把 `loadFromStorage` 也改成"载入时直接丢弃过期的并清出 Box"，
+> 这样历史数据不会一直堆着。
+
 - [ ] WorkManager 定时任务
 - [ ] 上课/考试/作业提醒
 

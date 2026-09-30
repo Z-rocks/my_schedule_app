@@ -1,4 +1,6 @@
 // 消息模型：本地通知与模块内消息的统一载体
+import 'sync_report.dart';
+
 /// 消息类型，决定图标、分组与点击后的跳转目标。
 enum MessageType {
   /// 上课提醒。
@@ -122,6 +124,56 @@ class Message {
       createdAt.year == now.year &&
       createdAt.month == now.month &&
       createdAt.day == now.day;
+
+  /// 由一次同步结果构造一条系统消息（**Phase 7**）。
+  ///
+  /// 只读 [SyncReport] 的公开字段——报告里的统计全部是内核自己算的，
+  /// 不含任何学校信息（CONTEXT 3.1）。
+  ///
+  /// 幂等：id 用 `pluginId + 秒级时间戳`。`CourseSyncService` 会重试，
+  /// 但重试发生在同一次点击内（同一秒），所以只会得到一条消息。
+  factory Message.fromSyncReport({
+    required SyncReport report,
+    required String pluginName,
+    DateTime? now,
+  }) {
+    final DateTime created = now ?? DateTime.now();
+    final List<String> lines = <String>[];
+
+    if (!report.isSuccess) {
+      lines.add(report.reason.isEmpty ? '同步失败' : report.reason);
+    } else if (report.totalCourses == 0) {
+      lines.add('这学期没有课程');
+    } else if (!report.hasChanges) {
+      lines.add('${report.totalCourses} 门课程已是最新，无需更新');
+    } else {
+      lines.add('新增 ${report.added} · 更新 ${report.updated} '
+          '· 未变 ${report.unchanged}');
+    }
+    if (report.skipped > 0) lines.add('跳过 ${report.skipped} 条（数据不完整）');
+    if (report.userEdited > 0) {
+      lines.add('其中 ${report.userEdited} 门保留了你的修改');
+    }
+    if (report.sectionTimes > 0) lines.add('节次时间 ${report.sectionTimes} 条');
+    if (report.attempts > 1) lines.add('共尝试 ${report.attempts} 次');
+    if (report.warnings.isNotEmpty) {
+      lines.add('${report.warnings.length} 条警告（详见日志）');
+    }
+
+    return Message(
+      id: 'sync_${report.pluginId}_${created.millisecondsSinceEpoch ~/ 1000}',
+      type: MessageType.system,
+      title: report.isSuccess
+          ? (report.hasChanges
+              ? '$pluginName 同步完成'
+              : '$pluginName 无需更新')
+          : '$pluginName 同步失败',
+      body: lines.join('\n'),
+      createdAt: created,
+      sourcePluginId: report.pluginId,
+      extra: <String, dynamic>{'outcome': report.outcome.name},
+    );
+  }
 
   /// 序列化为可写入 Hive / JSON 的 Map。
   Map<String, dynamic> toJson() {

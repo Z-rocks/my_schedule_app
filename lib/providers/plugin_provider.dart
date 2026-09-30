@@ -7,8 +7,10 @@ import 'package:flutter/foundation.dart';
 
 import '../models/plugin_meta.dart';
 import '../runtime/js_sandbox.dart';
+import '../runtime/plugin_context.dart' show PluginNotifyHandler;
 import '../runtime/plugin_handle.dart';
 import '../runtime/plugin_manager.dart';
+import '../runtime/plugin_runtime.dart';
 import '../services/plugin_storage_service.dart';
 import '../services/storage_service.dart';
 
@@ -40,12 +42,29 @@ class PluginProvider extends ChangeNotifier {
   PluginProvider({
     List<PluginMeta>? plugins,
     PluginManager? manager,
-  }) : _manager = manager ?? PluginManager() {
+    PluginNotifyHandler? onNotify,
+  })  : _manager = manager ??
+            PluginManager(
+              runtime: onNotify == null
+                  ? null
+                  : PluginRuntime(onNotify: onNotify),
+            ),
+        _onNotify = onNotify {
     if (plugins != null) _plugins.addAll(plugins);
   }
 
   /// 多插件运行时管理器。可注入以便测试（沿用 `ThemeProvider({ThemeEngine?})` 的先例）。
   final PluginManager _manager;
+
+  /// `ctx.notify.schedule` 的落地回调（Phase 7）。
+  ///
+  /// 传 `null` 时插件通知退化为只记日志（测试 / 无 UI 场景）。
+  /// `main.dart` 负责把它接到 `MessageProvider` 上——**Provider 之间不互相引用**
+  /// （CONTEXT 4.5），所以用回调注入而不是让本类持有 `MessageProvider`。
+  final PluginNotifyHandler? _onNotify;
+
+  /// 当前的通知落地回调（供 `main.dart` 在 `MessageProvider` 就绪后补挂）。
+  PluginNotifyHandler? get onNotify => _onNotify;
 
   final List<PluginMeta> _plugins = <PluginMeta>[];
 

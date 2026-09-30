@@ -73,6 +73,18 @@ class PluginHttpRequest {
   String toString() => 'PluginHttpRequest($method $url)';
 }
 
+/// 插件上下文的构造函数。
+///
+/// [onNotify] 是 `ctx.notify.schedule(...)` 的**落地回调**（Phase 7）：
+/// 宿主把它变成一条站内消息（`MessageProvider`），而不是只打一行日志。
+/// 为 `null` 时退化为"只记日志"（测试 / 无 UI 场景）。
+typedef PluginNotifyHandler = void Function(
+  String pluginId,
+  String title,
+  String body,
+  String triggerAtIso,
+);
+
 /// 插件上下文：宿主注入给插件的 API 实现。
 ///
 /// **不做权限系统**（本阶段所有插件都能用全部 ctx，见任务范围）；
@@ -82,11 +94,15 @@ class PluginContext {
     required this.pluginId,
     Dio? dio,
     FlutterSecureStorage? secureStorage,
+    this.onNotify,
   })  : _dio = dio ?? _defaultDio(),
         _secureStorage = secureStorage ?? const FlutterSecureStorage();
 
   /// 本上下文所属的插件 id（用于 storage 命名空间与日志前缀）。
   final String pluginId;
+
+  /// `ctx.notify.schedule` 的落地回调（Phase 7）；`null` 表示只记日志。
+  final PluginNotifyHandler? onNotify;
 
   final Dio _dio;
   final FlutterSecureStorage _secureStorage;
@@ -378,11 +394,25 @@ class PluginContext {
     }
   }
 
-  /// `ctx.notify.schedule` 占位实现：只记日志，不真弹通知（Phase 7 接）。
+  /// `ctx.notify.schedule` 的落地（**Phase 7**）。
+  ///
+  /// 行为分两种：
+  /// - 注册了 [onNotify] → 交给宿主变成一条站内消息（用户能在"消息"里看到）；
+  /// - 没注册 → 退化为只记日志（测试 / 无 UI 场景）。
+  ///
+  /// ⚠️ 不接真实系统通知：`flutter_local_notifications` **未在 CONTEXT 技术栈
+  /// 中声明**，引入它需要先改 CONTEXT（CONTEXT 第 6 节禁止引入未声明依赖）。
+  /// 所以本阶段落地为**站内消息**——这已经是"用户真的能看到"的程度，
+  /// 剩下的是"App 不在前台时也能弹"，那才是系统通知要解决的问题。
   void _emitNotifies(List<_CtxNotify> notifies) {
     for (final _CtxNotify notify in notifies) {
-      debugPrint('[Plugin:$pluginId][notify] 计划提醒「${notify.title}」'
-          '（${notify.triggerAtIso}）：${notify.body} —— Phase 7 接真实通知');
+      final PluginNotifyHandler? handler = onNotify;
+      if (handler != null) {
+        handler(pluginId, notify.title, notify.body, notify.triggerAtIso);
+      } else {
+        debugPrint('[Plugin:$pluginId][notify] 计划提醒「${notify.title}」'
+            '（${notify.triggerAtIso}）：${notify.body} —— 未注册落盘回调，仅记录');
+      }
     }
   }
 }

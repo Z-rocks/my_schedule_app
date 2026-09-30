@@ -1,8 +1,11 @@
 // App 入口：装配 Provider 树（含 PluginProvider → ModuleProvider 的能力联动）
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'app.dart';
+import 'models/message.dart';
 import 'providers/course_provider.dart';
 import 'providers/message_provider.dart';
 import 'providers/module_provider.dart';
@@ -40,8 +43,29 @@ Future<void> main() async {
   // 不因为"皮肤没了"就让启动失败。
   await themeProvider.restoreStoredSkin();
 
+  // 消息：Phase 7 起从 Hive 载入（之前是纯内存，重启即丢）。
+  final MessageProvider messageProvider = MessageProvider();
+  await messageProvider.loadFromStorage();
+
   // 插件：先读列表，再加载所有已启用插件的运行时（失败只降级，不影响启动）。
-  final PluginProvider pluginProvider = PluginProvider();
+  // `onNotify` 把插件的 `ctx.notify.schedule(...)` 变成一条**站内消息**——
+  // 用回调注入而不是让 PluginProvider 持有 MessageProvider（CONTEXT 4.5：
+  // Provider 之间不直接互相引用）。
+  final PluginProvider pluginProvider = PluginProvider(
+    onNotify: (String pluginId, String title, String body, String triggerAtIso) {
+      debugPrint('[Notify] 插件 $pluginId 计划提醒「$title」@$triggerAtIso');
+      unawaited(
+        messageProvider.addMessagePersisted(
+          buildPluginNotifyMessage(
+            pluginId: pluginId,
+            title: title,
+            body: body,
+            triggerAtIso: triggerAtIso,
+          ),
+        ),
+      );
+    },
+  );
   await pluginProvider.loadFromStorage();
   await pluginProvider.loadAllEnabledPlugins();
 
@@ -52,7 +76,42 @@ Future<void> main() async {
     settingsProvider: settingsProvider,
     themeProvider: themeProvider,
     pluginProvider: pluginProvider,
+    messageProvider: messageProvider,
   ));
+}
+
+/// 把插件的 `ctx.notify.schedule(...)` 参数变成一条站内消息（**Phase 7**）。
+///
+/// 放在 `main.dart` 顶层而不是 `MessageProvider` 里：它是"插件调用约定 →
+/// 内核消息模型"的**适配**，不属于消息状态管理本身。
+///
+/// 幂等性说明：插件入口函数会被执行多次，但 `ctx.notify` 的副作用**只在最终轮
+/// 提交**（CONTEXT 3.6），所以这里不会收到重复通知。消息 id 用
+/// `notify_<pluginId>_<triggerAtIso>` 也是第二道防线——即便重复提交，
+/// 同 id 会覆盖而不是新增一条。
+Message buildPluginNotifyMessage({
+  required String pluginId,
+  required String title,
+  required String body,
+  required String triggerAtIso,
+}) {
+  final DateTime? triggerAt = DateTime.tryParse(triggerAtIso);
+  return Message(
+    id: 'notify_${pluginId}_$triggerAtIso',
+    type: MessageType.other,
+    title: title.isEmpty ? '插件提醒' : title,
+    body: triggerAt == null
+        ? body
+        : '${body.isEmpty ? '' : '$body\n'}计划时间：'
+            '${triggerAt.year}/${triggerAt.month}/${triggerAt.day} '
+            '${triggerAt.hour.toString().padLeft(2, '0')}:'
+            '${triggerAt.minute.toString().padLeft(2, '0')}',
+    // createdAt 用"现在"（消息的产生时间），计划时间写在正文里：
+    // 列表按产生时间倒序才符合直觉，用计划时间排序会让未来的提醒排到最前。
+    createdAt: DateTime.now(),
+    sourcePluginId: pluginId,
+    extra: <String, dynamic>{'triggerAt': triggerAtIso},
+  );
 }
 
 /// 构建完整的 App（Provider 树 + 根组件）。
@@ -63,9 +122,9 @@ Future<void> main() async {
 /// 五个可选参数由 `main()` 传入**已完成存储加载**的实例；
 /// 不传时（测试、预览）内部自建空实例，此时不会访问 Hive。
 ///
-/// 生命周期：`CourseProvider` / `SemesterProvider` / `SettingsProvider` /
-/// `ThemeProvider` / `PluginProvider` 走 `.value`，实例归调用方所有，
-/// 不随 Provider 树销毁而 dispose。
+/// 生命周期：`CourseProvider` / `MessageProvider` / `SemesterProvider` /
+/// `SettingsProvider` / `ThemeProvider` / `PluginProvider` 走 `.value`，
+/// 实例归调用方所有，不随 Provider 树销毁而 dispose。
 /// `ModuleProvider` 由 `ChangeNotifierProxyProvider` 创建（该 Provider 没有
 /// `.value` 变体），因此注入的实例会被 Provider 树接管生命周期——
 /// 在 App 生命周期内不会销毁，所以实际没有差别；但**不要**把同一个
@@ -77,6 +136,7 @@ Widget buildApp({
   SettingsProvider? settingsProvider,
   ThemeProvider? themeProvider,
   PluginProvider? pluginProvider,
+  MessageProvider? messageProvider,
 }) {
   return MultiProvider(
     // Provider 顺序即依赖顺序：被依赖者必须排在依赖者之前。
@@ -131,9 +191,13 @@ Widget buildApp({
           create: (BuildContext context) => CourseProvider(),
         ),
       // 5. 消息（无依赖）
-      ChangeNotifierProvider<MessageProvider>(
-        create: (BuildContext context) => MessageProvider(),
-      ),
+      // Phase 7 起可由 main() 传入已从 Hive 载入的实例。
+      if (messageProvider != null)
+        ChangeNotifierProvider<MessageProvider>.value(value: messageProvider)
+      else
+        ChangeNotifierProvider<MessageProvider>(
+          create: (BuildContext context) => MessageProvider(),
+        ),
       // 6. 学期（无依赖）
       if (semesterProvider != null)
         ChangeNotifierProvider<SemesterProvider>.value(value: semesterProvider)

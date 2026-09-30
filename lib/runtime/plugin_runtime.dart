@@ -27,6 +27,7 @@ class PluginRuntime {
     this.loadTimeout = kDefaultJsTimeout,
     this.executeTimeout = kDefaultJsTimeout,
     this.onLog,
+    this.onNotify,
     @visibleForTesting this.simulateSandboxFailure = false,
     Dio? dio,
     // 命名参数不能以下划线开头，故无法用 initializing formal 直接赋给私有字段。
@@ -41,6 +42,9 @@ class PluginRuntime {
 
   /// 插件经 `sendMessage('log', ...')` 打出的日志回调（在父 isolate 上执行）。
   final void Function(String message)? onLog;
+
+  /// `ctx.notify.schedule` 的落地回调（Phase 7）；`null` 表示只记日志。
+  final PluginNotifyHandler? onNotify;
 
   /// 仅测试用：让沙箱创建失败，用于验证"沙箱不可用 → 插件降级"路径。
   @visibleForTesting
@@ -250,7 +254,11 @@ class PluginRuntime {
       sourcePath: path,
       sandbox: sandbox,
       // 宿主侧 ctx：真正发网络 / 读写 Hive / 读凭证 + 驱动重放。
-      context: PluginContext(pluginId: manifest.id, dio: _dio),
+      context: PluginContext(
+        pluginId: manifest.id,
+        dio: _dio,
+        onNotify: onNotify,
+      ),
     );
     _handles.add(handle);
     return handle;

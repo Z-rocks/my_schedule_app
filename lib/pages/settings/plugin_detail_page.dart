@@ -1,10 +1,14 @@
 // 插件详情页：展示单个插件的元信息、运行时状态与操作入口
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/message.dart';
 import '../../models/plugin_meta.dart';
 import '../../models/sync_report.dart';
 import '../../providers/course_provider.dart';
+import '../../providers/message_provider.dart';
 import '../../providers/plugin_provider.dart';
 import '../../runtime/plugin_handle.dart';
 import '../../runtime/plugin_manifest.dart';
@@ -306,6 +310,13 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
           if (!mounted) return;
           setState(() => _progressMessage = message);
         },
+        // Phase 7：把同步结果沉淀成一条站内消息——SnackBar 一闪而过，
+        // 而"上次同步到底同步了什么"是用户回头会想看的信息。
+        onReport: (SyncReport r) => unawaited(
+          context.read<MessageProvider>().addMessagePersisted(
+                Message.fromSyncReport(report: r, pluginName: meta.name),
+              ),
+        ),
       );
     } catch (e) {
       // 最后一道保险：服务层的契约是"不抛"，真抛了也要给用户一个交代。

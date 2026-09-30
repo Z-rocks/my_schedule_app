@@ -899,18 +899,40 @@ UI 偏好设置（Phase 2.2b.1 新增）。目前只有"左右滑动切换周次
 
 ### `message_provider.dart` — MessageProvider（`ChangeNotifier`）
 
-消息列表状态。**Phase 1 仅内存**。
+消息列表状态。**Phase 1 仅内存；Phase 7 起接入 Hive**（`messages` Box，key = 消息 ID），
+与 CONTEXT 3.5「消息 → Hive Box」对齐。
+
+消息来源两类：
+- **插件**：`ctx.notify.schedule(...)` → `main.dart` 的回调把它变成一条消息；
+- **内核**：同步结束（`CourseSyncService` 的 `onReport`）写一条。
 
 常量：`const int kMessageRetentionDays = 30`
 
+**内存视图**
 - `List<Message> get messages` — **始终按 `createdAt` 倒序**（新的在前；同时间按 id 稳定排序），不可变视图
 - `int get unreadCount` / `int get length`
+- `bool get isLoaded` — 是否已从 Hive 载入过（**Phase 7**）
 - `Message? getById(String id)`
+
+**持久化（Phase 7 新增）**
+- `Future<void> loadFromStorage()` — 读 `messages` Box，**替换**内存列表；
+  解析失败的单条跳过；**过期的（>30 天）直接丢弃并从 Box 删掉**
+- `Future<void> addMessagePersisted(Message m)` — 先落盘再更新内存；
+  落盘失败仍更新内存（本次会话的提示不该因存储问题而丢）
+- `Future<void> markAsReadPersisted(String id)` / `Future<void> markAllAsReadPersisted()`
+- `Future<void> removeMessagePersisted(String id)` / `Future<void> clearAll()`
+- `Future<int> clearOldMessages({DateTime? now})` — **改为同时清内存与存储**
+  （原来只清内存 → 下次启动过期消息又回来了）；`now` 供测试注入
+
+**纯内存操作（不落盘，供测试 / 预览）**
 - `void addMessage(Message m)` — 同 id 替换，插入后重排
 - `void markAsRead(String id)` — 已读或不存在的 id 为空操作
 - `void markAllAsRead()` — 无未读时不通知
-- `int clearOldMessages({DateTime? now})` — 删除早于 `now - 30 天` 的消息，返回删除条数；`now` 供测试注入
 - `void removeMessage(String id)` / `void clear()`
+
+> `Message.fromSyncReport({required SyncReport report, required String pluginName, DateTime? now})`
+> —— **Phase 7 新增**：把一次同步结果转成一条系统消息。
+> id 用 `sync_<pluginId>_<秒级时间戳>`，所以同一次点击内的重试只会得到一条消息。
 
 ---
 
@@ -1284,9 +1306,27 @@ const TimetableView({super.key, int totalWeeks = 20, int initialWeek = 1});
 
 `const HomeworkView({super.key})` — AppBar"作业" + `EmptyState(Icons.edit_note, '暂无作业', subtitle: '安装学习通等插件后可查看')`。
 
-### `message/message_view.dart` — MessageView
+### `message/message_view.dart` — MessageView（**Phase 7 重写**）
 
-`const MessageView({super.key})` — AppBar"消息"，右侧"全部已读"按钮 → `SnackBar('已全部标记为已读')`；Body `EmptyState(Icons.notifications_none, '暂无消息')`。
+`const MessageView({super.key})` — 真实消息列表。
+
+- 数据源：`MessageProvider.messages`（已从 Hive 载入）
+- **AppBar**：标题"消息"；右侧"全部已读(N)"——**N 为 0 时按钮置灰且文案变"已全部已读"**
+  （可点与不可点必须看起来不一样）
+- 空态：`EmptyState(notifications_none, '暂无消息', '同步结果与插件提醒会出现在这里')`
+- 列表：`ListView.builder` + `RefreshIndicator`（下拉刷新重新读存储并清理过期消息）
+- 单条卡片 `_MessageCard`：
+  - 未读 → 标题用 `titleFontWeight` + 右侧主色小圆点 + 卡片描一圈主色边
+    （比只靠小圆点更容易扫到）
+  - 图标与强调色按 `MessageType` 取自主题令牌（`examHighlight` / `homeworkHighlight` /
+    `success` / `primary`，**不硬编码**）
+  - 底部一行：`<类型标签> · <相对时间>`
+  - 点卡片 → 标为已读（**不做跳转**：`Message.targetId` 目前没有产生方，
+    写一条永远走不到的分支不如不写）
+- 左滑删除：`Dismissible`，key 用**消息 id**（不用下标），背景为错误色 + 垃圾桶图标
+- 相对时间 `_formatTime`：`刚刚` / `N 分钟前` / `N 小时前` / `昨天` / `M月d日`。
+  手写而不引入 `intl`——它虽在 pubspec 里但项目至今没用过
+  （`formatDateYmd` 也是手写的），为一句相对时间引入格式化体系不划算
 
 ### `timetable/timetable_view.dart` — TimetableView
 
