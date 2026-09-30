@@ -31,9 +31,9 @@
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
 - **Phase 3 全部完成**：插件运行时（沙箱 → 加载 → 多插件管理 → 文件持久化 → 管理 UI → **ctx**）
 - **Phase 4 进度**：4.1 ✅ → 4.2 ✅ → 4.2.1 ✅ → 4.2.2 ✅ → 4.3 ✅ → **4.4 ✅（含真机）**
-- **下一步**：**Phase 4 只剩 release 包冒烟**（`flutter build apk --release`，
-  本轮及此前所有验证都在 debug 包上做的）。之后进 Phase 5（课程编辑/删除）
-  或 Phase 6（皮肤 / 创意工坊）
+  → **release 包冒烟 ✅（2026-09-30）** —— **Phase 4 全部完成**
+- **下一步**：**Phase 5（课程编辑 / 删除）** 或 **Phase 6（皮肤 / 创意工坊）**。
+  Phase 4 已无遗留待办。
 - **⚠️ 环境提示（4.3 复验踩到）**：
   ① 设备可能把 App 当**横屏**应用（`uiautomator` 报 `rotation="3"`），
   会让截图旋转 90° 且 `adb input tap` 坐标全落空；
@@ -1265,8 +1265,11 @@
       `20:50-21:35` / `21:40-22:25`，而非硬编码的 `20:40-21:25` / `21:30-22:15`）
 - [x] 同步进度 UI（**Phase 4.3**：转圈 + 阶段文案 + 常驻结果卡片；
       **Phase 4.4** 又在课表页顶部加了同步入口 ⟳）
-- [ ] **⚠️ 收尾必做：`flutter build apk --release` 发布包冒烟**
-      （装到设备上跑通"安装插件 → `ctx.http` 拉数据"；此前所有网络验证都在 debug 包）
+- [x] **⚠️ 收尾必做：`flutter build apk --release` 发布包冒烟** ✅ **2026-09-30 通过**：
+  打包 56.7 MB → 装真机 → 插件加载（QuickJS 三个 ABI 的 .so 齐全，R8 未破坏 FFI）
+  → 登录 → `ctx.http` 拉回 4 门课程。详见下方"Phase 4 收尾：release 包冒烟"。
+  ⚠️ 过程中踩到：MIUI 需开「USB 调试（安全设置）」才能 adb 装包；
+  且 debug/release 签名不同必须先卸载，**卸载会清掉应用数据**
 
 ### Phase 4.4 备注（课表显示节次时间 + 课表页同步入口）
 
@@ -1311,6 +1314,49 @@
 > 混起来会得到"第 3 节 10:25，第 5 节却是另一个学校的时间"这种错乱结果。
 > 课表页顶部只在**恰好一个**候选插件时显示同步按钮；多个候选时课表页放不下
 > "选哪个"，引导去插件管理页。
+
+### Phase 4 收尾：release 包冒烟（✅ 2026-09-30 通过）
+
+> 3.6 起就挂着的待办："此前所有网络验证都在 debug 包上做的，
+> release 是否有权限 / 混淆（R8）问题完全没验证过"。**现已完成。**
+
+> **包内容检查**（`aapt2` + 直接读 zip 条目）：
+>
+> | 检查项 | 结果 |
+> |--------|------|
+> | `libfastdev_quickjs_runtime.so` | ✅ arm64-v8a / armeabi-v7a / x86_64 **三个 ABI 齐全**（插件运行时必需） |
+> | `android.permission.INTERNET` | ✅ 在 |
+> | `android:networkSecurityConfig` | ✅ 在 |
+> | `android:usesCleartextTraffic` | ✅ **无**（确认没做全局明文放行） |
+> | 构建产物 | `app-release.apk` 56.7 MB，`assembleRelease` 206s |
+>
+> **设备实测**（真机装 release 包，`setprop log.tag.Flutter VERBOSE`
+> 让 release 下的 `debugPrint` 也落 logcat）：
+>
+> ```
+> [JsSandbox] 子 isolate 就绪
+> [PluginRuntime] 插件加载成功：ncst-jwxt，入口函数 [fetchCourses]
+> [PluginProvider] 内置插件已安装并启用：ncst-jwxt
+> [WebViewLoginPage] 提取到 3 个 Cookie，拼接后 96 字符
+> [Plugin:ncst-jwxt] 第 1 轮登记了 1 个 HTTP 请求，取回后重放
+> [Plugin:ncst-jwxt] 第 2 轮登记了 1 个 HTTP 请求，取回后重放
+> [Plugin:ncst-jwxt] NCST 同步：解析出 4 门课程，节次时间 12 条
+> [CourseSyncService] ncst-jwxt 同步完成：新增 4、更新 0、未变 0、跳过 0
+> ```
+>
+> 结论：**R8 没有破坏 QuickJS 的 FFI 绑定与 `.so` 加载**；
+> `ctx.http` 在 release 下能真发请求并拿到数据；**明文白名单在 release 同样生效**
+> （同步成功即证明，因为部分请求走 http）。
+> 截图：`docs/verify/4.4-release-smoke.png`（该图是**卸载重装后**的状态，
+> 所以显示"还没有配置学期"——学期配置也在卸载时被清掉了）
+
+> ⚠️ **踩到的坑：MIUI 会拦 adb 安装**
+> `adb install` 报 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`，
+> 需在手机 **开发者选项 →「USB 调试（安全设置）」** 打开后才能装 release 包。
+>
+> ⚠️ **卸载会清数据**：debug 与 release 签名不同，必须先 `adb uninstall` 再装，
+> 而卸载会**连应用数据一起清掉**（课程、学期配置、Cookie 全没）。
+> 以后做这类验证前要先告知用户，或用 `adb install -r` 配相同签名。
 
 ### Phase 4.3 备注（数据同步打通：增量 / 覆盖层保留 / 失败重试）
 
