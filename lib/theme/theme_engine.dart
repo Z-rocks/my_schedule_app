@@ -25,22 +25,40 @@ class ThemeEngine extends ChangeNotifier {
   String _currentSkinId = '';
   bool _disposed = false;
 
+  /// 当前皮肤（`null` = 内置默认主题）。
+  ///
+  /// Phase 6 需要它：切换明暗模式时要**用同一份皮肤**重新合成主题，
+  /// 不能只把已合成的结果再推导一遍（那会丢掉皮肤的原始色表）。
+  SkinPack? _skin;
+
+  /// 当前生效的明暗模式（Phase 6）。
+  Brightness _brightness = Brightness.light;
+
   /// 当前生效的主题。
   AppTheme get current => _current;
 
   /// 当前生效的皮肤 ID，空字符串表示使用内置默认主题。
-  ///
-  /// Phase 2 会把它写入 Hive `settings`（见 CONTEXT.md 3.5）。
   String get currentSkinId => _currentSkinId;
+
+  /// 当前皮肤；`null` 表示内置默认主题。
+  SkinPack? get skin => _skin;
+
+  /// 当前生效的明暗模式。
+  Brightness get brightness => _brightness;
 
   /// 加载并应用一份皮肤。
   ///
   /// 流程：`SkinPack` → 主题 JSON → [AppTheme.fromJson] → merge 到默认主题 → 通知。
   /// 任何解析异常都被吞掉并 `debugPrint`，保证皮肤有问题时 App 仍能用默认主题运行。
-  Future<void> loadSkin(SkinPack skin) async {
+  ///
+  /// **Phase 6**：`skin.mode == 'system'` 时按 [brightness] 选色表——
+  /// 这让"同一个皮肤在明暗两种模式下都好看"成为可能（皮肤给了两套色表时）。
+  Future<void> loadSkin(SkinPack skin, {Brightness? brightness}) async {
     try {
-      final AppTheme merged = AppTheme.defaultTheme().merge(_themeOf(skin));
-      _current = merged;
+      _skin = skin;
+      final Brightness target = brightness ?? _brightness;
+      _brightness = target;
+      _current = _compose(skin, target);
       _currentSkinId = skin.id;
       _notify();
     } catch (error, stackTrace) {
@@ -52,18 +70,34 @@ class ThemeEngine extends ChangeNotifier {
   /// 预览一份皮肤的效果，**不改变**当前状态。
   ///
   /// 返回值与 [loadSkin] 应用后的结果一致（同样以默认主题为基线）。
-  AppTheme preview(SkinPack skin) {
+  AppTheme preview(SkinPack skin, {Brightness? brightness}) {
     try {
-      return AppTheme.defaultTheme().merge(_themeOf(skin));
-    } catch (error) {
+      return _compose(skin, brightness ?? _brightness);
+    } catch (error, stackTrace) {
       debugPrint('ThemeEngine.preview 失败（已回退默认主题）: $error');
+      debugPrint('$stackTrace');
       return AppTheme.defaultTheme();
     }
   }
 
+  /// 切换明暗模式（**Phase 6**）。
+  ///
+  /// 有皮肤时**用同一份皮肤重新合成**（而不是把已合成的主题再推导一次）；
+  /// 没有皮肤时对内置默认主题做推导。两种情况都会重算并通知。
+  void setBrightness(Brightness brightness) {
+    if (_brightness == brightness) return;
+    _brightness = brightness;
+    final SkinPack? skin = _skin;
+    _current = skin == null
+        ? AppTheme.defaultTheme().withBrightness(brightness)
+        : _compose(skin, brightness);
+    _notify();
+  }
+
   /// 恢复内置默认主题。
   Future<void> reset() async {
-    _current = AppTheme.defaultTheme();
+    _skin = null;
+    _current = AppTheme.defaultTheme().withBrightness(_brightness);
     _currentSkinId = '';
     _notify();
   }
@@ -72,7 +106,19 @@ class ThemeEngine extends ChangeNotifier {
   void applyTheme(AppTheme theme) {
     _current = theme;
     _currentSkinId = '';
+    _skin = null;
     _notify();
+  }
+
+  /// 皮肤 + 明暗模式 → 最终主题。
+  ///
+  /// 两步（顺序很重要）：
+  /// 1. 按 [brightness] 选皮肤的色表并 merge 到默认主题 —— 得到"皮肤原始配色"；
+  /// 2. `withBrightness(brightness)` 校正明暗关系 —— 皮肤只给了一套亮色表时，
+  ///    这一步保证暗色模式下背景深、文字浅、卡片分层。
+  AppTheme _compose(SkinPack skin, Brightness brightness) {
+    final AppTheme merged = AppTheme.defaultTheme().merge(_themeOf(skin, brightness));
+    return merged.withBrightness(brightness);
   }
 
   @override
@@ -92,11 +138,23 @@ class ThemeEngine extends ChangeNotifier {
   /// 把皮肤包转换成"主题 JSON"，交给 [AppTheme.fromJson] 解析。
   ///
   /// 颜色直接用 ARGB 整数传入（`AppTheme.fromJson` 兼容整数与 hex 字符串）。
-  AppTheme _themeOf(SkinPack skin) {
+  ///
+  /// [brightness] 决定优先用哪张色表（**Phase 6**）：
+  /// - 皮肤 `mode == 'dark'` → 暗色表；
+  /// - 皮肤 `mode == 'system'` → 按 [brightness] 选，**这才让同一个皮肤在
+  ///   明暗两种模式下都好看**（皮肤给了两套色表时）；
+  /// - 皮肤 `mode == 'light'` → 强制亮色表（皮肤作者的明确意图，不随系统变）。
+  ///
+  /// 所选色表缺 `darkColors` 时回落亮色表，再由
+  /// [AppTheme.withBrightness] 推导出可用的暗色取值。
+  AppTheme _themeOf(SkinPack skin, [Brightness brightness = Brightness.light]) {
     final Map<String, dynamic> json = <String, dynamic>{};
 
-    // 按皮肤声明的模式选色表；暗色表缺失时回落亮色表。
-    final bool preferDark = skin.mode.trim().toLowerCase() == 'dark';
+    final String mode = skin.mode.trim().toLowerCase();
+    final bool preferDark = mode == 'dark' ||
+        (mode != 'light' &&
+            brightness == Brightness.dark &&
+            skin.supportsDarkMode);
     final Map<String, int> palette =
         preferDark && skin.supportsDarkMode ? skin.darkColors : skin.lightColors;
 

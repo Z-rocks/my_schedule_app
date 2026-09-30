@@ -1,6 +1,9 @@
 // 设置主页：分组列出账号 / 扩展 / 外观 / 布局 / 数据 / 关于入口
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../../providers/theme_provider.dart';
+import '../../theme/default_skins.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
 import 'module_config_page.dart';
@@ -27,6 +30,82 @@ class SettingsPage extends StatelessWidget {
   void _showSnack(BuildContext context, String message) {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// 「当前主题」的展示值（**Phase 6**）。
+  ///
+  /// 只在内置皮肤里查名字：asset 皮肤的名字要异步读 bundle，
+  /// 而这是同步的 `trailingText`。查不到就显示"自定义皮肤"——
+  /// 比显示一串 id 友好。
+  static String _currentThemeLabel(BuildContext context) {
+    final String id = context.watch<ThemeProvider>().currentSkinId;
+    if (id.isEmpty) return '默认蓝';
+    for (final skin in builtinSkins()) {
+      if (skin.id == id) return skin.name;
+    }
+    return '自定义皮肤';
+  }
+
+  /// 选择明暗模式（**Phase 6**）：亮色 / 暗色 / 跟随系统。
+  ///
+  /// 用底部弹层而不是三态循环点击：三态循环要用户记住"点几下到哪一档"，
+  /// 而三选一的语义直接列出来更清楚。
+  Future<void> _pickBrightnessMode(BuildContext context) async {
+    final ThemeProvider provider = context.read<ThemeProvider>();
+    final AppTheme theme = AppThemeExtension.of(context);
+    final ThemeBrightnessMode current = provider.mode;
+
+    final ThemeBrightnessMode? picked =
+        await showModalBottomSheet<ThemeBrightnessMode>(
+      context: context,
+      builder: (BuildContext sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Padding(
+              padding: EdgeInsets.all(theme.cardPadding),
+              child: Text(
+                '深色模式',
+                style: TextStyle(
+                  fontSize: theme.titleSize,
+                  fontWeight: theme.titleFontWeight,
+                  color: theme.onBackground,
+                ),
+              ),
+            ),
+            for (final ThemeBrightnessMode mode
+                in ThemeBrightnessMode.values)
+              ListTile(
+                title: Text(
+                  mode.label,
+                  style: TextStyle(
+                    fontSize: theme.bodySize,
+                    color: theme.onBackground,
+                  ),
+                ),
+                subtitle: mode == ThemeBrightnessMode.system
+                    ? Text(
+                        '当前系统为'
+                        '${provider.systemBrightness == Brightness.dark ? '暗色' : '亮色'}',
+                        style: TextStyle(
+                          fontSize: theme.captionSize,
+                          color: theme.onBackground.withValues(alpha: 0.6),
+                        ),
+                      )
+                    : null,
+                trailing: mode == current
+                    ? Icon(Icons.check, color: theme.primary)
+                    : null,
+                onTap: () => Navigator.of(sheetContext).pop(mode),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    if (picked == null || !context.mounted) return;
+    provider.setMode(picked);
+    _showSnack(context, '已切换为「${picked.label}」');
   }
 
   void _push(BuildContext context, Widget page) {
@@ -102,12 +181,16 @@ class SettingsPage extends StatelessWidget {
             children: <Widget>[
               _SettingsTile(
                 title: '深色模式',
-                onTap: () => _showSnack(context, '深色模式（待实现）'),
+                // Phase 6：显示当前偏好（亮色 / 暗色 / 跟随系统）
+                trailingText: context.watch<ThemeProvider>().mode.label,
+                showChevron: true,
+                onTap: () => _pickBrightnessMode(context),
               ),
               _SettingsTile(
                 title: '当前主题',
-                trailingText: '默认蓝',
-                onTap: () => _showSnack(context, '主题切换（待实现）'),
+                trailingText: _currentThemeLabel(context),
+                showChevron: true,
+                onTap: () => _push(context, const WorkshopPage()),
               ),
             ],
           ),

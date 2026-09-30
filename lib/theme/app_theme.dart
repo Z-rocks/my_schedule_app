@@ -399,13 +399,100 @@ class AppTheme {
     );
   }
 
-  /// 返回指定明暗模式下的主题。
+  /// 返回指定明暗模式下的主题（**Phase 6 起为真实实现**）。
   ///
-  /// **Phase 1 简化实现**：直接返回 `this`，不做颜色推导。
-  /// 原因：`AppTheme` 只有一套颜色令牌，暗色配色要到 Phase 6 由
-  /// `SkinPack.darkColors` 提供（届时按 [brightness] 选取色表并重算本方法）。
-  /// 保留该方法是为了让调用方（Phase 1.4 的 `app.dart`）的接口先稳定下来。
-  AppTheme withBrightness(Brightness brightness) => this;
+  /// 设计取舍：**不把两套配色都写成常量**，而是从已有令牌**推导**另一套。
+  /// 原因：皮肤（`SkinPack`）只提供一套（或明暗两套）色表，
+  /// 若这里写死一套暗色常量，皮肤的颜色就会被常量覆盖掉——那就不叫皮肤了。
+  /// 推导能保证：**皮肤选什么色相，暗色模式就跟着什么色相**，
+  /// 而明暗关系（背景深 / 文字浅 / 卡片分层）始终正确。
+  ///
+  /// 推导规则（只动"明暗相关"的令牌，强调色一律保留皮肤的取值）：
+  ///
+  /// | 令牌 | 规则 |
+  /// |------|------|
+  /// | `background` | 目标暗色 → HSL 亮度压到 [kDarkBackgroundLightness] |
+  /// | `surface` | 同上，但比背景**略亮**，保证卡片有层次 |
+  /// | `onBackground` / `onPrimary` | 目标亮色 → 压暗（深色文字）；目标暗色 → 提亮 |
+  /// | `courseCardColors` | 同上按目标模式调整（浅色卡配深字 / 深色卡配浅字） |
+  /// | `cardShadowColor` | 暗色下阴影要更明显（暗背景上 8% 黑几乎看不见） |
+  /// | `primary` / `secondary` / `error` / `success` / `warning` | **不动** |
+  ///
+  /// 已经是目标模式时返回 `this`（避免无意义地重建对象）。
+  AppTheme withBrightness(Brightness brightness) {
+    if (this.brightness == brightness) return this;
+    final bool toDark = brightness == Brightness.dark;
+
+    return AppTheme(
+      // 强调色保留：皮肤的色相是它的身份
+      primary: primary,
+      secondary: secondary,
+      error: error,
+      examHighlight: examHighlight,
+      homeworkHighlight: homeworkHighlight,
+      success: success,
+      warning: warning,
+      // 背景 / 表面：按目标模式重算明度
+      background: toDark
+          ? _withLightness(background, kDarkBackgroundLightness)
+          : _withLightness(background, kLightBackgroundLightness),
+      surface: toDark
+          ? _withLightness(background, kDarkSurfaceLightness)
+          : _withLightness(background, kLightSurfaceLightness),
+      // 前景色：主色之上的文字要保证可读（与明暗无关，取对比色即可）
+      onPrimary: _legibleOn(primary),
+      onBackground: _contrastTextOn(
+        toDark
+            ? _withLightness(background, kDarkBackgroundLightness)
+            : _withLightness(background, kLightBackgroundLightness),
+      ),
+      // 课程卡片配色池：整池按目标模式调整
+      courseCardColors: courseCardColors
+          .map((Color c) =>
+              toDark ? _withLightness(c, kDarkCardLightness) : c)
+          .toList(growable: false),
+      fontFamily: fontFamily,
+      titleSize: titleSize,
+      bodySize: bodySize,
+      captionSize: captionSize,
+      fontWeightTitle: fontWeightTitle,
+      cardRadius: cardRadius,
+      buttonRadius: buttonRadius,
+      chipRadius: chipRadius,
+      cardPadding: cardPadding,
+      gridGap: gridGap,
+      sectionGap: sectionGap,
+      cardShadowColor: toDark ? kDarkShadowColor : cardShadowColor,
+      cardShadowBlur: cardShadowBlur,
+      cardShadowOffsetY: cardShadowOffsetY,
+      timetableCellHeight: timetableCellHeight,
+      timetableTimeColumnWidth: timetableTimeColumnWidth,
+      showWeekend: showWeekend,
+      timeFormat: timeFormat,
+      // 显式字段集合原样带过去：`withBrightness` 只是换一套取值，
+      // 不改变"这个主题由皮肤显式指定了哪些字段"的事实。
+      explicitKeys: _explicitFields,
+    );
+  }
+
+  // ———————————— 明暗推导用的取值（Phase 6） ————————————
+
+  /// 暗色模式的页面背景亮度（0–1）。压得很低但保留色相，皮肤色调仍在。
+  static const double kDarkBackgroundLightness = 0.10;
+
+  /// 暗色模式的卡片 / 表面亮度：比背景略亮，卡片才有层次。
+  static const double kDarkSurfaceLightness = 0.16;
+
+  /// 亮色模式的页面 / 表面亮度（把皮肤给的颜色校正到"确实是浅色"）。
+  static const double kLightBackgroundLightness = 0.97;
+  static const double kLightSurfaceLightness = 1.0;
+
+  /// 暗色模式下课程卡片底色亮度：够深，才能承载浅色文字。
+  static const double kDarkCardLightness = 0.26;
+
+  /// 暗色模式下的卡片阴影：黑 40%，比亮色模式的 8% 明显得多
+  /// （暗背景上低透明度阴影完全看不见）。
+  static const Color kDarkShadowColor = Color(0x66000000);
 
   @override
   String toString() => 'AppTheme(primary: $primary, secondary: $secondary, '
@@ -426,6 +513,41 @@ class AppTheme {
       'timetableTimeColumnWidth: $timetableTimeColumnWidth, '
       'showWeekend: $showWeekend, timeFormat: $timeFormat)';
 }
+
+/// 把颜色搬到指定 HSL 亮度上（保留色相与饱和度）。
+///
+/// 这是明暗推导的核心：**只改明度、不动色相**，所以皮肤的色调在暗色模式下
+/// 依然认得出（蓝色皮肤暗色下还是蓝的，不会变成中性灰）。
+///
+/// 灰色（饱和度 0）也能正确处理——HSL 转换对无彩色一样成立。
+Color _withLightness(Color color, double lightness) {
+  final HSLColor hsl = HSLColor.fromColor(color);
+  return hsl.withLightness(lightness.clamp(0.0, 1.0)).toColor();
+}
+
+/// 在给定背景色上取"可读的正文色"。
+///
+/// 判据是背景的相对亮度（`computeLuminance`，已含 sRGB 线性化，
+/// 比直接看 HSL 亮度更贴近人眼感受）：背景偏暗 → 用浅色文字，反之用深色。
+///
+/// 用 [kDarkModeTextOn] / [kLightModeTextOn] 这两个"接近纯白 / 纯黑"的取值，
+/// 而不是动态反色——纯反色会得到彩色文字（例如深蓝底反成浅黄），
+/// 正文色应当是中性且高对比的。
+Color _contrastTextOn(Color background) =>
+    background.computeLuminance() > 0.5 ? kLightModeTextOn : kDarkModeTextOn;
+
+/// 亮背景上的正文色（近黑，带一点柔和不刺眼）。
+const Color kLightModeTextOn = Color(0xFF1A1A1A);
+
+/// 暗背景上的正文色（近白，避免纯白在暗色下过于刺眼）。
+const Color kDarkModeTextOn = Color(0xFFEDEDED);
+
+/// 取"叠在 [background] 上仍可读"的前景色（用于 `onPrimary`）。
+///
+/// 与 [_contrastTextOn] 的关系：这里返回**纯白或纯黑**，
+/// 因为主色之上的通常是按钮文字 / 图标，需要最大对比度。
+Color _legibleOn(Color background) =>
+    background.computeLuminance() > 0.5 ? Colors.black : Colors.white;
 
 /// 解析颜色：接受 `"#RRGGBB"` / `"#AARRGGBB"` 字符串（可省略 `#` 或写 `0x` 前缀），
 /// 也接受 ARGB 整数与已经是 `Color` 的值。无法解析返回 `null`。

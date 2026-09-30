@@ -12,27 +12,21 @@
 
 > 给新会话 AI 用。每次阶段切换时更新。
 
-- **最新完成**：**Phase 5（课程编辑 / 删除 / 隐藏）** ——
-  编辑两种课程的落点刻意分开（自建写原始字段、教务写覆盖层），
-  新增「已隐藏的课程」恢复页。**自验证通过**：`dart analyze` 全绿 +
-  临时脚本 12 组 + widget 测试 6 组 + Windows 桌面实跑。
-- **Phase 4.2 / 4.2.1 / 4.2.2 / 4.3 真机复验全部通过（2026-09-30）** ——
-  校园 WiFi 下跑通「登录 → 同步 → 课表显示」：无证书/明文错误，提取 3 个 Cookie，
-  同步解析 4 门课程 + 12 条节次时间，`未变 4` 印证增量策略，
-  `force-stop` 冷启动后课程仍在。详见 4.3 备注开头的"真机复验已完成"。
-- **Phase 4 已全部完成**（含 4.4 插件真实作息、release 包冒烟）；
-  **Phase 5 已完成**；**下一步 Phase 6（皮肤 / 创意工坊 / 暗色模式）**
-- **Phase 4.3**：**已 `dart analyze` 全绿 + 临时脚本 16 组通过 + 真机复验通过**。
-  同步逻辑从 `PluginDetailPage` 抽到 `lib/services/course_sync_service.dart`，
-  结果形状抽到 `lib/models/sync_report.dart`；顺带**修掉一个真实的数据丢失 bug**
-  （`CourseProvider.saveCourse` 会冲掉内存里的用户覆盖层）。
-- **代码状态**：Phase 4 各阶段已提交（最新 `c981efb`）；Phase 5 见下；
-  `dart analyze` 整包 `No issues found`
+- **最新完成**：**Phase 6（皮肤系统 / 创意工坊 / 暗色模式）** ——
+  暗色配色改为**推导**（保留皮肤色相），明暗三态（亮/暗/跟随系统），
+  创意工坊 4 套内置皮肤 + `assets/skins/` 目录皮肤，新增皮肤预览页。
+  **自验证通过**：`dart analyze` 全绿 + 临时脚本 28 组 + widget 测试 10 组 +
+  Windows 桌面实跑。**过程中抓到并修掉 3 个真实 bug**（见 Phase 6 备注）。
+- **Phase 5（课程编辑 / 删除 / 隐藏）** —— 编辑两种课程的落点刻意分开
+  （自建写原始字段、教务写覆盖层），新增「已隐藏的课程」恢复页。
+- **Phase 4 全部完成**：4.1 ✅ → 4.2 ✅ → 4.2.1 ✅ → 4.2.2 ✅ → 4.3 ✅ →
+  4.4 ✅（含真机）→ release 包冒烟 ✅（2026-09-30）。
+  真机复验结论见 4.3 备注开头的"真机复验已完成"
+- **代码状态**：Phase 4 已提交（最新 `c981efb`）；Phase 5 `dbec21a`；Phase 6 见下
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
 - **Phase 3 全部完成**：插件运行时（沙箱 → 加载 → 多插件管理 → 文件持久化 → 管理 UI → **ctx**）
-- **Phase 4 进度**：4.1 ✅ → 4.2 ✅ → 4.2.1 ✅ → 4.2.2 ✅ → 4.3 ✅ → **4.4 ✅（含真机）**
-  → **release 包冒烟 ✅（2026-09-30）** —— **Phase 4 全部完成**
-- **下一步**：Phase 6（皮肤 / 创意工坊 / 暗色模式）
+- **下一步**：**Phase 7（通知 + 消息）** —— `ctx.notify` 目前只打日志、
+  消息模块还是空态
 - **⚠️ 环境提示（4.3 复验踩到）**：
   ① 设备可能把 App 当**横屏**应用（`uiautomator` 报 `rotation="3"`），
   会让截图旋转 90° 且 `adb input tap` 坐标全落空；
@@ -1910,13 +1904,114 @@
 
 ---
 
-## Phase 6：创意工坊 + 皮肤（未开始）
+## Phase 6：创意工坊 + 皮肤（✅ 完成）
 
-- [ ] SkinPack 模型接入
-- [ ] ThemeEngine 加载皮肤
-- [ ] `lib/pages/settings/skin_preview_page.dart`
-- [ ] GitHub 索引拉取
-- [ ] 下载/应用/切换皮肤
+- [x] SkinPack 模型接入 —— Phase 1.1 已有，Phase 6 起真正被使用
+- [x] ThemeEngine 加载皮肤 —— Phase 1.2 已有；**Phase 6 加明暗合成与"记住皮肤"**
+- [x] `lib/pages/settings/skin_preview_page.dart` —— **Phase 6 新建**
+- [x] 下载 / 应用 / 切换皮肤 —— **Phase 6**：应用 / 切换 / 恢复默认 / 撤销
+- [ ] ~~GitHub 索引拉取~~ —— **有意不做**，理由见 Phase 6 备注
+- [x] **`lib/theme/default_skins.dart`**（计划外）：4 套内置皮肤
+- [x] **`assets/skins/sunset.skin.json`**（计划外）：随包皮肤 + 格式示例
+- [x] **暗色模式真实现**（计划外，Phase 6 补完）：`withBrightness` 真实推导 +
+      亮色/暗色/跟随系统三态
+
+> 自验证：`dart analyze` 全绿 + 临时脚本 28 组 + widget 测试 10 组 + Windows 桌面实跑。
+> 详见下方 **Phase 6 备注**。
+
+---
+
+### Phase 6 备注（皮肤系统 / 创意工坊 / 暗色模式）
+
+> **目标**：把 Phase 1 就搭好骨架但一直没接线的皮肤系统跑通——
+> 创意工坊从空态变成能选、能预览、能应用；暗色模式从"返回 `this` 的空实现"
+> 变成真能用的东西。
+
+> **验证状态（自验证，未用实体机）**：
+> - ✅ `dart analyze`（整包）→ `No issues found!`
+> - ✅ 临时脚本 **28 组全部通过**：
+>   - 明暗推导 9 组：背景确实变暗、正文比背景亮、卡片比背景略亮（有层次）、
+>     强调色**一律保留**（皮肤色相不变）、课程卡片配色池也变暗、
+>     暗色阴影更明显、非颜色令牌不受影响、`onPrimary` 恒为黑或白
+>   - 内置皮肤 3 组：4 套、id 唯一、必备令牌齐全
+>   - 三态与合成 10 组：默认跟随系统、`themeMode` 解析、
+>     `system` 跟随/非 `system` 忽略、应用皮肤后主色变化、暗色用暗色表、
+>     **切明暗不丢皮肤**、`mode:dark` 皮肤强制暗色、`resetTheme`、
+>     `previewSkin` 不改状态、`decodeBrightness` 旧语义
+>   - 持久化 6 组（真实 Hive）：mode 往返、皮肤 id 往返 + 恢复、
+>     **皮肤不见了会静默回默认并清记录**、旧数据（只有 light/dark）可读、坏值不崩
+> - ✅ 临时 **widget 测试 10 组全部通过**：创意工坊皮肤列表（4 套 + 按钮）、
+>   应用后"使用中/正在使用/恢复默认"、预览跳转不改状态、插件 Tab 空态、
+>   预览页三段内容 + 取消不改状态 + 应用生效（暗色偏好下用暗色表）、
+>   设置页显示当前偏好与皮肤名、明暗弹层三个选项 + 系统亮度说明
+> - ✅ **Windows 桌面实跑**：`flutter build windows --debug` 成功，启动无异常，
+>   **无皮肤加载报错**（说明 `assets/skins/` 的目录级声明与 `AssetManifest` 读取正常）
+
+> **改动清单**：
+>
+> | 文件 | 改动 |
+> |------|------|
+> | `lib/theme/app_theme.dart` | `withBrightness` **真实实现**（推导另一套明暗配色）+ 8 个公开常量 + 3 个私有颜色助手 |
+> | `lib/theme/theme_engine.dart` | 记住当前皮肤、`setBrightness`、`_compose`（合成两步）、色表选择纳入 `mode` |
+> | `lib/theme/default_skins.dart` | **新建**：4 套内置皮肤 + 8 个令牌名常量 |
+> | `lib/providers/theme_provider.dart` | `ThemeBrightnessMode` 三态、`themeMode`、`_resolvedBrightness`、`restoreStoredSkin`、`loadAssetSkins`、皮肤 id 落盘 |
+> | `lib/services/storage_service.dart` | 新增 `kThemeSkinIdKey` |
+> | `lib/app.dart` | 改 `StatefulWidget`：`didChangePlatformBrightness`、`theme`/`darkTheme`/`themeMode`、显式 `brightness` 的 `ColorScheme` |
+> | `lib/main.dart` | 启动时 `restoreStoredSkin()` |
+> | `lib/pages/settings/workshop_page.dart` | 重写：皮肤列表（内置 + assets）、色板、应用/预览、当前状态、插件 Tab |
+> | `lib/pages/settings/skin_preview_page.dart` | **新建**：局部 `Theme` 套用候选皮肤，课表/组件效果预览，应用/取消 |
+> | `lib/pages/settings/settings_page.dart` | 外观分组两行接真实数据 + 明暗三选一弹层 |
+> | `pubspec.yaml` | 声明 `assets/skins/`（目录级） |
+> | `assets/skins/sunset.skin.json` | **新建**：随包皮肤 + 皮肤格式示例 |
+
+> **🔑 最关键的设计决定：暗色配色是"推导"出来的，不是写死的常量**
+>
+> 皮肤只提供一套（或明暗两套）色表。如果 `withBrightness` 里写死一套暗色常量，
+> **皮肤的颜色就会被常量覆盖掉——那就不叫皮肤了**。
+> 所以实现是从已有令牌**推导**：保留色相、只调明度。
+> 效果：蓝色皮肤暗色下还是蓝的，抹茶皮肤暗色下还是绿的，而
+> 背景深 / 文字浅 / 卡片分层的明暗关系始终正确。
+>
+> 被推导的只有"明暗相关"的令牌（背景、表面、前景、课程卡片、阴影）；
+> **强调色（primary/secondary/error/success/warning）一律不动**——
+> 那是皮肤的身份。
+
+> **⚠️ 有意不做的两件事（不是遗漏）**：
+>
+> 1. **GitHub 远程皮肤索引**：原计划写的是"GitHub 索引拉取"。
+>    要落地就得在**内核里硬编码一个仓库地址**，而那个仓库并不存在——
+>    写进去就是一条永远返回失败的代码路径，还会让"创意工坊"看起来像坏了。
+>    取而代之的是**两条真实可用的皮肤来源**：代码内置 4 套 + `assets/skins/`
+>    目录（新增皮肤文件**不用改代码、不用改 pubspec**，与 `assets/plugins/` 同一约定）。
+>    将来真有了索引仓库，`SkinPack.fromJson` 已经就绪，
+>    只需加一个"下载 → 存 → 走同一套解析"的服务，UI 不用改。
+> 2. **`AppThemeExtension.lerp` 仍是返回 `this`**：明暗/皮肤切换是瞬时的，
+>    没有渐变过渡。正确插值要逐字段处理 30 个令牌（含 `List<Color>`），
+>    收益只是"切换时有淡入"，优先级低于功能本身。
+
+> **🐛 本阶段实测抓到的 3 个真实 bug**（都是"写了测试才暴露"的类型）：
+>
+> 1. **`mode: 'dark'` 的皮肤在亮色偏好下变成了亮色**。`_compose` 无条件用
+>    用户偏好去 `withBrightness`，把皮肤声明的暗色又推回亮色。
+>    修法：`_effectiveBrightnessFor(skin)` —— 皮肤 `mode` 优先于用户偏好。
+> 2. **`saveToStorage` 写的是引擎的 id 而不是用户的皮肤 id**。
+>    `resetTheme()` 清的是 `_skinId` 字段，但落盘读的是 `_engine.currentSkinId`，
+>    于是"恢复默认"之后又把旧皮肤 id 写了回去 → 重启后皮肤回来了。
+>    修法：落盘只用 `_skinId` 字段。
+> 3. **`restoreStoredSkin` 清记录时是 fire-and-forget**，
+>    调用方（`main`）与测试都无法确定它写完了。修法：改成 `await`。
+>    （这条是"竞态"而不是"错误"，但同样会让行为不可预测。）
+
+> **暗色模式的行为约定**：
+> - **默认"跟随系统"**（不是默认亮色）——这是绝大多数用户的期望
+> - 系统切换深色时通过 `MyApp.didChangePlatformBrightness` +
+>   `syncSystemBrightness` 立刻生效（非 `system` 模式不受影响）
+> - `ColorScheme.fromSeed` 的 `brightness` 必须**显式传**，
+>   不能用 `theme.brightness` 推断：否则"暗色模式 + 亮色皮肤"会得到一个
+>   声明亮色、实际配深色文字的 `colorScheme`，对话框 / SnackBar 的默认配色就会错
+> - `scaffoldBackgroundColor` 显式取自主题令牌，避免 Material 默认背景
+>   在暗色下与 `theme.background` 不一致（页面切换时会闪一下白）
+
 
 ---
 

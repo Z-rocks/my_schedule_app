@@ -26,8 +26,18 @@ const String kPluginDataBoxName = 'plugin_data';
 /// 导航栏模块的启用状态，值为 JSON 对象 `{"<capabilityId>": bool}`。
 const String kModuleEnabledStateKey = 'module_enabled_state';
 
-/// 明暗模式偏好，值为 `"light"` 或 `"dark"`。
+/// 明暗模式偏好，值为 `"light"` / `"dark"` / `"system"`。
+///
+/// **Phase 6** 起多出 `"system"`（跟随系统）；旧数据里的 `light` / `dark`
+/// 语义不变，因此无需迁移。
 const String kThemeBrightnessKey = 'theme_brightness';
+
+/// 当前皮肤 ID（Phase 6），值为 `SkinPack.id`。
+///
+/// 为空 / 缺键表示使用内置默认主题。
+/// 与 [kThemeBrightnessKey] **分开存**：明暗偏好与"用哪套皮肤"是两个独立的
+/// 用户选择，合在一个键里会让"只换明暗"变成一次读改写。
+const String kThemeSkinIdKey = 'theme_skin_id';
 
 /// 学期配置，值为 `SemesterConfig` 的 JSON 字符串。
 ///

@@ -87,6 +87,8 @@ flutter:
   assets:
     # 内置示例插件（Phase 3.5 UI 验证用；Phase 4 完成后连同 example.js 一起删除）
     - assets/plugins/
+    # 随包皮肤（Phase 6）：目录级声明 → 新增皮肤文件不用改 pubspec、不用改代码
+    - assets/skins/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

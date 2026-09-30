@@ -434,7 +434,31 @@ App 的全部视觉令牌集合，不可变（**30 个字段**，Phase 3.5 由 2
 - `factory AppTheme.fromJson(Map<String, dynamic> json)` — 缺失/非法字段回落默认值且不计入显式字段；颜色接受 `"#RRGGBB"` / `"#AARRGGBB"` / 无 `#` / `0x` 前缀 / ARGB 整数
 - `Map<String, dynamic> toJson()` — 颜色输出 hex（不透明写 `#RRGGBB`，否则 `#AARRGGBB`）；输出全部 28 个键
 - `AppTheme merge(AppTheme other)` — 仅 `other` 显式设置的字段覆盖 `this`；结果显式字段为并集
-- `AppTheme withBrightness(Brightness brightness)` — **Phase 1 简化实现：返回 `this`**（暗色配色留待 Phase 6 由 `SkinPack.darkColors` 提供）
+- `AppTheme withBrightness(Brightness brightness)` — **Phase 6 起为真实实现**：推导另一套明暗配色。
+  已经是目标模式时返回 `this`（不做无意义重建）。
+
+  **设计取舍：不把两套配色都写成常量，而是从已有令牌推导。**
+  原因：皮肤只提供一套（或明暗两套）色表，若这里写死暗色常量，
+  皮肤的颜色就会被常量覆盖掉——那就不叫皮肤了。推导保证
+  **皮肤选什么色相，暗色模式就跟着什么色相**，而明暗关系始终正确。
+
+  推导规则（只动"明暗相关"的令牌）：
+
+  | 令牌 | 规则 |
+  |------|------|
+  | `background` | 按目标模式设 HSL 亮度（暗 0.10 / 亮 0.97），**保留色相** |
+  | `surface` | 同上但比背景略亮（暗 0.16 / 亮 1.0），保证卡片有层次 |
+  | `onBackground` | 取对比色（近黑 `#1A1A1A` / 近白 `#EDEDED`） |
+  | `onPrimary` | 与明暗无关，取主色的对比色（纯黑或纯白，保证按钮文字可读） |
+  | `courseCardColors` | 暗色下整池压到亮度 0.26（浅卡配浅字会看不清） |
+  | `cardShadowColor` | 暗色下用 `kDarkShadowColor`（黑 40%，8% 在暗背景上看不见） |
+  | `primary`/`secondary`/`error`/`success`/`warning` | **不动**（皮肤色相是它的身份） |
+  | 字号 / 圆角 / 间距 / 布局 | **不动** |
+
+  公开常量：`kDarkBackgroundLightness`(0.10)、`kDarkSurfaceLightness`(0.16)、
+  `kLightBackgroundLightness`(0.97)、`kLightSurfaceLightness`(1.0)、
+  `kDarkCardLightness`(0.26)、`kDarkShadowColor`(0x66000000)、
+  `kLightModeTextOn`(0xFF1A1A1A)、`kDarkModeTextOn`(0xFFEDEDED)
 
 ---
 
@@ -444,16 +468,56 @@ App 的全部视觉令牌集合，不可变（**30 个字段**，Phase 3.5 由 2
 
 ---
 
+### `default_skins.dart` — 内置皮肤（**Phase 6 新增**）
+
+随 App 打包的几套配色，保证"创意工坊"开箱有内容（Phase 6 之前它是纯空态）。
+同时是皮肤 JSON 结构的**活文档**——想写自己的皮肤，照抄一份改颜色即可。
+
+常量：`kTokenPrimary` / `kTokenSecondary` / `kTokenBackground` / `kTokenSurface` /
+`kTokenOnBackground` / `kTokenError` / `kTokenSuccess` / `kTokenWarning`
+（皮肤作者写的是这套"通用令牌"，`ThemeEngine` 负责映射到语义化字段名）
+
+- `List<SkinPack> builtinSkins()` — 全部内置皮肤（顺序即创意工坊展示顺序）：
+  **默认蓝**（与 `AppTheme.defaultTheme()` 一致，给用户一个"回到原样"的选择）、
+  **抹茶**（低饱和绿）、**樱花**（暖粉 + 更大圆角）、
+  **暗夜紫**（`mode: 'dark'`，本身就是暗色皮肤）
+- `SkinPack? builtinSkinById(String id)` — 按 id 查；找不到返回 `null`
+
+> 内置皮肤的 `installedAt` 用**固定常量**而不是 `DateTime.now()`：
+> 它们是 App 的一部分、不是"某次安装"，每次启动都变会让排序结果不稳定。
+
+---
+
 ### `theme_engine.dart` — ThemeEngine（`ChangeNotifier`）
 
 把 `SkinPack` 解析成 `AppTheme` 并管理"当前主题"状态。
 
 - `AppTheme get current` — 当前生效主题
-- `String get currentSkinId` — 当前皮肤 ID，`''` 表示内置默认（Phase 2 持久化到 Hive `settings`）
-- `Future<void> loadSkin(SkinPack skin)` — 皮肤 → 主题 JSON → `fromJson` → merge 到默认主题 → `notifyListeners()`；异常被捕获并 `debugPrint`，保持原主题不崩
-- `AppTheme preview(SkinPack skin)` — 返回合并结果，**不改状态**（与 `loadSkin` 结果一致）
-- `Future<void> reset()` — 恢复默认主题
-- `void applyTheme(AppTheme theme)` — 直接应用已构造的主题（并清空 `currentSkinId`）
+- `String get currentSkinId` — 当前皮肤 ID，`''` 表示内置默认
+- `SkinPack? get skin` — 当前皮肤（**Phase 6**）；`null` 表示内置默认主题。
+  切换明暗时要**用同一份皮肤重新合成**，所以必须记着它是谁
+- `Brightness get brightness` — 当前生效的明暗模式（**Phase 6**）
+- `Future<void> loadSkin(SkinPack skin, {Brightness? brightness})` — 皮肤 → 主题 JSON → `fromJson` → merge 到默认主题 → `withBrightness` 校正明暗 → `notifyListeners()`；异常被捕获并 `debugPrint`，保持原主题不崩
+- `AppTheme preview(SkinPack skin, {Brightness? brightness})` — 返回合成结果，**不改状态**
+- `void setBrightness(Brightness brightness)` — **Phase 6 新增**：切换明暗。
+  有皮肤时用同一份皮肤重新合成（而不是把已合成的主题再推导一次——
+  那会丢掉皮肤的原始色表）；没有皮肤时对默认主题推导
+- `Future<void> reset()` — 恢复默认主题（保留当前明暗）
+- `void applyTheme(AppTheme theme)` — 直接应用已构造的主题（并清空皮肤）
+
+**Phase 6 的合成是两步，顺序很重要**（`_compose`）：
+
+1. 按 [brightness] 选皮肤的色表并 merge 到默认主题 → 得到"皮肤原始配色"；
+2. `withBrightness(brightness)` 校正明暗关系 → 皮肤只给了一套亮色表时，
+   这一步保证暗色模式下背景深、文字浅、卡片分层。
+
+色表选择规则（**Phase 6 起 `mode` 参与决策**）：
+
+| 皮肤 `mode` | 选哪张色表 |
+|-------------|-----------|
+| `dark` | **强制**暗色表（皮肤作者的意图，不随用户偏好变） |
+| `light` | **强制**亮色表 |
+| `system` / 缺省 | 按传入的 [brightness] 选；缺 `darkColors` 时回落亮色表 |
 
 皮肤令牌映射（私有，见 `_kSkinTokenAliases`）：
 
@@ -464,7 +528,7 @@ App 的全部视觉令牌集合，不可变（**30 个字段**，Phase 3.5 由 2
 | `courseColors` | `courseCardColors` |
 | 其余同名令牌（`primary`/`background`/`error`/…） | 直接同名映射 |
 
-其他映射：`borderRadius` → `cardRadius`；`fontFamily` → `fontFamily`（非空才映射）；`elevation` → `cardShadowOffsetY`；`mode == 'dark'` 且有 `darkColors` 时选暗色表，否则用 `lightColors`。
+其他映射：`borderRadius` → `cardRadius`；`fontFamily` → `fontFamily`（非空才映射）；`elevation` → `cardShadowOffsetY`。
 
 ---
 
@@ -477,7 +541,10 @@ App 的全部视觉令牌集合，不可变（**30 个字段**，Phase 3.5 由 2
 - `static AppTheme of(BuildContext context)` — 读当前主题；未注册扩展时回退 `AppTheme.defaultTheme()`
 - `static AppTheme? maybeOf(BuildContext context)` — 未注册返回 `null`
 - `AppThemeExtension copyWith({AppTheme? theme})`
-- `AppThemeExtension lerp(ThemeExtension<AppThemeExtension>? other, double t)` — **Phase 1 简化实现：返回 `this`**（不做插值）
+- `AppThemeExtension lerp(ThemeExtension<AppThemeExtension>? other, double t)` — **仍是 Phase 1 简化实现：返回 `this`**（不做插值）。
+  影响：明暗切换 / 皮肤切换是**瞬时**的，没有渐变过渡。这是已知的取舍，
+  不是遗漏——`lerp` 要正确插值需要逐字段处理 30 个令牌（含 `List<Color>`），
+  收益只是"切换时有个淡入"，当前优先级低于功能本身
 
 ---
 
@@ -666,18 +733,60 @@ Android 上 `<appDocuments>` 是 `/data/user/0/<package>/app_flutter`，
 
 构造：`ThemeProvider({ThemeEngine? engine})` — 可注入外部引擎（测试用），默认自建
 
-- `AppTheme get currentTheme`
+常量：`kSkinAssetDir = 'assets/skins/'`（assets 皮肤目录，**目录级声明**）
+（`settings` Box 键：`kThemeBrightnessKey` / `kThemeSkinIdKey`，见 `storage_service.dart`）
+
+#### `enum ThemeBrightnessMode`（**Phase 6 新增**）
+
+`light` / `dark` / `system`（**默认 `system`**）。另有 `storageValue`（= 枚举名）、
+`label`（中文：亮色 / 暗色 / 跟随系统）、`static ThemeBrightnessMode? decode(String?)`。
+
+- `AppTheme get currentTheme` — 已按明暗模式合成
 - `String get currentSkinId` — `''` 表示内置默认主题
-- `Brightness get brightness` — 用户明暗偏好，默认 `Brightness.light`
+- `String get pendingSkinId` — `loadFromStorage` 读出的皮肤 ID，供 `restoreStoredSkin` 消费
+- `ThemeBrightnessMode get mode` — 用户偏好（三态）
+- `Brightness get systemBrightness` — 上次解析出的系统亮度
+- `Brightness get brightness` — **最终生效**的亮度（把 `system` 解析成实际值）
+- `ThemeMode get themeMode` — 换算成 `MaterialApp.themeMode`
 - `AppTheme get themedForBrightness` — `currentTheme.withBrightness(brightness)`
-- `Future<void> applySkin(SkinPack skin)` — 调 `engine.loadSkin` 后 `notifyListeners`
-- `Future<void> resetTheme()` — 调 `engine.reset` 后 `notifyListeners`
-- `void setBrightness(Brightness b)` — 同值不通知；**变更后自动落盘**
+- `Future<void> applySkin(SkinPack skin)` — 应用皮肤；**同时落盘皮肤 ID**、
+  并按皮肤的 `mode` 覆盖强制亮度（见下）
+- `Future<void> resetTheme()` — 调 `engine.reset`；用**解析后的**亮度重建默认主题
+  （用户偏好暗色时，"恢复默认"该恢复到**暗色的**默认主题，而不是把他踢回亮色）
+- `void setMode(ThemeBrightnessMode mode)` — 切换偏好；同值不通知；**变更后自动落盘**
+- `void setBrightness(Brightness b)` — 保留的旧接口（等价于 `setMode`）
+- `bool syncSystemBrightness(Brightness value)` — 系统亮度变化时由 `MyApp` 调用；
+  返回是否**真的**改变了生效亮度（非 `system` 模式返回 `false`）
 - `AppTheme previewSkin(SkinPack skin)` — 不改状态、不通知
-- `Future<void> loadFromStorage()` — 从 `settings` Box 恢复明暗偏好（键 `kThemeBrightnessKey`，值为 `light` / `dark`）；没存过或值无法识别则保持默认 `Brightness.light`
-- `Future<void> saveToStorage()` — 写入 `_brightness.name`
-- `static Brightness? decodeBrightness(String? raw)` — 无法识别返回 `null`（调用方保持默认）
+- `Future<void> loadFromStorage()` — 恢复明暗偏好**与皮肤 ID**；坏值保持默认，不崩
+- `Future<bool> restoreStoredSkin()` — **Phase 6 新增**：启动时恢复上次的皮肤。
+  皮肤源 = assets 的 `.skin.json` + 代码内置；**找不到就静默回默认并清掉记录**
+  （皮肤被删后不该让 App 一直显示一个不存在的主题名）。任何异常都被吞掉
+- `static Future<List<SkinPack>> loadAssetSkins()` — 读 `assets/skins/*.json`。
+  用 `AssetManifest` 列目录，所以**新增皮肤文件不用改代码、不用改 pubspec**
+  （沿用 Phase 4.2 给 `assets/plugins/` 定的做法）。单个文件坏掉只跳过它
+- `Future<void> saveToStorage()` — 写 `theme_brightness` + `theme_skin_id`
+  （皮肤 ID 为空时**删键**，不留无意义空记录）
+- `static Brightness? decodeBrightness(String? raw)` — 保留的旧接口；`system` → `null`
 - `dispose()` 会一并 `dispose()` 内部引擎
+
+#### 皮肤 `mode` 与用户偏好的优先级（**Phase 6**）
+
+**皮肤的 `mode: 'dark'` / `'light'` 优先于用户偏好**：
+
+| 情况 | 结果 |
+|------|------|
+| 皮肤 `mode: 'system'`（或缺省） | 跟随用户偏好（含"跟随系统"解析出的实际值） |
+| 皮肤 `mode: 'dark'`（如"暗夜紫"） | **强制暗色**，即使用户偏好是亮色 |
+| 皮肤 `mode: 'light'` | **强制亮色** |
+
+理由：作者标了 `mode: 'dark'` 就是"这套是暗的"，强行按用户偏好给亮色会破坏它的配色。
+`applySkin` 会把这次实际用的亮度**记进用户偏好**，所以切走再切回同一个暗色皮肤时行为一致。
+
+> ⚠️ 一个容易踩的点：`saveToStorage` 里的皮肤 ID 取 **`_skinId` 字段**，
+> 不是 `_engine.currentSkinId`。两者含义不同——字段是"用户选了哪个皮肤"，
+> 引擎那个是"当前合成用的是哪个"。用错会让 `resetTheme()` 之后的落盘
+> 把引擎的旧 id 又写回去（**Phase 6 实测踩到过**）。
 
 ---
 

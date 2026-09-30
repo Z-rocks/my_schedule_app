@@ -1,0 +1,37 @@
+{
+  "id": "asset-sunset",
+  "name": "落日",
+  "version": "1.0.0",
+  "author": "MySchedule",
+  "description": "暖橙落日色调。这份文件同时是皮肤格式的示例——复制它改颜色即可做出自己的皮肤。",
+  "mode": "system",
+  "lightColors": {
+    "primary": "#E65100",
+    "secondary": "#FB8C00",
+    "background": "#FFF8F2",
+    "surface": "#FFFFFF",
+    "onBackground": "#2B1A10",
+    "error": "#D32F2F",
+    "success": "#2E7D32",
+    "warning": "#EF6C00"
+  },
+  "darkColors": {
+    "primary": "#FFB74D",
+    "secondary": "#FFCC80",
+    "background": "#16100B",
+    "surface": "#221913",
+    "onBackground": "#F5EAE0"
+  },
+  "courseColors": [
+    "#FFE0B2",
+    "#FFCCBC",
+    "#FFECB3",
+    "#F8BBD0",
+    "#FFE0B2",
+    "#FFF3E0",
+    "#FFD54F",
+    "#FFAB91"
+  ],
+  "borderRadius": 10,
+  "elevation": 2
+}

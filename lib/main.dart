@@ -35,6 +35,10 @@ Future<void> main() async {
 
   final ThemeProvider themeProvider = ThemeProvider();
   await themeProvider.loadFromStorage();
+  // Phase 6：把上次用的皮肤重新套上（皮肤 ID 已由 loadFromStorage 读出）。
+  // 找不到对应皮肤时 rootBundle 会返回 null，此时保持默认主题——
+  // 不因为"皮肤没了"就让启动失败。
+  await themeProvider.restoreStoredSkin();
 
   // 插件：先读列表，再加载所有已启用插件的运行时（失败只降级，不影响启动）。
   final PluginProvider pluginProvider = PluginProvider();
