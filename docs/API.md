@@ -1017,6 +1017,48 @@ UI 偏好设置（Phase 2.2b.1 新增）。目前只有"左右滑动切换周次
 - `static int filledCellCount(List<List<Course?>> grid)` — 有课的格子数（判断课表是否为空）
 - `static String formatWeeks(List<int> weeks)` — 压成展示文本，`[1,2,3,5]` → `"1-3,5"`
 
+**"哪些周有课"（Phase 5.1 新增）** —— 让 UI 能说清"本周没课"而不是甩一片空白：
+
+- `static bool hasAnyClassInWeek(List<Course> courses, int week)` —
+  某一周是否至少有一门课。跳过 `hidden` 的课程（与 `buildGrid` 同口径）
+- `static List<int> weeksWithClass(List<Course> courses, {required int totalWeeks})` —
+  全部有课周次（升序去重），裁到 `1..totalWeeks`
+- `static int? nearestWeekWithClass(List<Course> courses, {required int week, required int totalWeeks})` —
+  最近的有课周；**平局取更早的**（用户更可能想回看而不是跳未来）；无课返回 `null`
+
+**周次文本归一化（Phase 5.1 新增，顶层函数）**
+
+- `String normalizeWeekText(String rawText)` — 把自由文本压成 `"4,6-14"`
+- `String chineseToArabic(String text)` — 十位组合的中文数字 → 阿拉伯数字
+
+归一化顺序（**顺序本身是契约，JS 侧必须一致**）：
+
+1. 中文数字 → 阿拉伯数字（含十位组合）
+2. 全角数字 → 半角
+3. 中文标点 → 半角（逗号类 → `,`；连字符类 → `-`）；`至` / `到` → `-`
+4. 丢弃 `第` / `周` / `星期`
+
+支持的写法（覆盖标准写法 + 全角 + 中文数字）：
+
+| 输入 | 输出 |
+|------|------|
+| `"4,6-14周"` | `[4,6,7,...,14]` |
+| `"１－１６周"`（全角） | `[1..16]` |
+| `"四至十四周"`（中文数字 + `至`） | `[4..14]` |
+| `"第十六周"` | `[16]` |
+| `"第二十周"` / `"第二十五周"` | `[20]` / `[25]` |
+| `"一、三、五周"` | `[1,3,5]` |
+
+> ⚠️ **中文数字不能逐字替换**：`"十"` 是位权而不是值 10，
+> 逐字替换会让 `"十六"` 变成 `"1"+"10"+"6"` = `"106"` → 冲出 `kMaxWeekNumber` → 空结果。
+> 所以 `chineseToArabic` 用**逐字符扫描**：扫描点永远落在"可能是一个数字的开头"，
+> 于是 `"第十六周"` 里的 `'第'` 被原样跳过、随后从 `'十'` 正确识别出 16。
+> 只支持 1–99（周次不会超过 60），「百 / 千」不值得为此实现。
+>
+> ⚠️ `assets/plugins/ncst-jwxt.js` 的 `__ncst_parseWeeks` 是本文件的 **JS 复刻**
+> （沙箱里调不到 Dart）。改任何规则都必须同步改那边——Phase 5.1 已用 **37 组样本**
+> 在 Node 里直接调用插件的这几个函数与 Dart **逐条对拍**。
+
 ### `course_sync_service.dart` — CourseSyncService（**Phase 4.3 新增**）
 
 插件数据同步服务（纯静态类）。把原先写死在 `PluginDetailPage._syncNow` 里的流程
@@ -1342,6 +1384,19 @@ const TimetableView({super.key, int totalWeeks = 20, int initialWeek = 1});
 | 有学期但 `visibleCourses` 为空 | `EmptyState(Icons.add_circle_outline, '还没有课程', '点击下方按钮添加第一门课', '添加课程')` → **Phase 2.2c.2 起 `_openCourseEdit()`**：有学期则 push `CourseEditPage`，无学期则弹 `SnackBar('请先配置学期')` + `去配置` action |
 | 有数据 + `gestureSwitchWeek == true` | `PageView.builder(itemCount: totalWeeks)`，每页一周；`initialPage = _week - 1` |
 | 有数据 + `gestureSwitchWeek == false` | 单个 `TimetableGrid`（只能通过顶部周次面板切周） |
+
+**"本周没有课"提示（Phase 5.1 新增）**
+
+课程可能是 `4,6-14周` 这类**跳过某几周**的安排，于是"有课程但本周全空"是**正常状态**。
+但空白网格与"一门课都没有"长得一模一样，用户会以为同步失败——所以本周为空时，
+在网格**上方**插一条 `_EmptyWeekNotice`（用 `theme.warning` 令牌，不硬编码黄色）：
+
+| 情况 | 显示 |
+|------|------|
+| 课程有周次信息但不含本周 | `第 N 周没有课` + `本学期有课的周次：第 4,6-14 周（最近有课：第 4 周）` + **「跳到第 4 周」**按钮 |
+| 课程**完全没有**周次信息（教务没给 / 解析不出） | `第 N 周没有课` + `课程缺少周次信息，无法判断它们在第几周上课。请到「课程」页检查这些课程的上课周次。`（无跳转按钮） |
+
+跳转走 `_setWeek(nearest, ...)`（与顶部周次面板同一条路径），所以是 250ms 动画。
 
 **顶部栏（Phase 2.2b.3）** —— 一行日期栏，**不再有 AppBar、也没有常驻的周次 chips 行**：
 

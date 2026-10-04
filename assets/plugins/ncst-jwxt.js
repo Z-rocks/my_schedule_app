@@ -240,15 +240,114 @@ function __ncst_netFail(message) {
 
 /// 周次解析（`TimetableLogic.parseWeeks` 的 JS 复刻）。
 ///
-/// 沙箱里调不到 Dart，所以这里必须有一份等价实现；与 Dart 版的差异必须为零
-/// —— 已用 20+ 组样本在测试里逐一对拍（含乱码、反向区间、超大区间、全角标点）。
+/// 沙箱里调不到 Dart，所以这里必须有一份等价实现；与 Dart 版的差异必须为零。
+/// Phase 5.1 用 **37 组样本逐条对拍**（标准写法 / 全角数字 / 中文数字 /
+/// 坏数据 / 超大区间），对拍脚本跑在 Node 上直接调用本文件的这几个函数。
+///
+/// ⚠️ 归一化规则与 Dart 侧逐条对应，**顺序也是契约**：
+///   1. 中文数字 → 阿拉伯数字（含十位组合）
+///   2. 全角数字 → 半角
+///   3. 标点 / 关系词归一，丢弃修饰字
+/// 改一边必须同步改另一边，否则同一门课在"插件解析出的周次"与
+/// "内核再解析一次"两条路径上会得到不同的周次，课表就会莫名缺课。
+function __ncst_normalizeWeekText(rawText) {
+  if (rawText === undefined || rawText === null) { return ''; }
+  // Dart 侧先转全角数字再转中文数字；两步互不影响（表里没有全角字符），
+  // 但为了逐条对应仍然保持同样的顺序。
+  var converted = __ncst_replaceFullWidthDigits(String(rawText));
+  converted = __ncst_chineseToArabic(converted);
+
+  var out = '';
+  for (var i = 0; i < converted.length; i++) {
+    var ch = converted.charAt(i);
+    if (ch === '，' || ch === '、' || ch === '；' || ch === ';') { out += ','; continue; }
+    if (ch === '－' || ch === '—' || ch === '–' || ch === '~' ||
+        ch === '～' || ch === 'ー' || ch === '至' || ch === '到') {
+      out += '-';
+      continue;
+    }
+    if (ch === '第' || ch === '周' || ch === '星期') { continue; }
+    out += ch;
+  }
+  return out;
+}
+
+/// 全角数字 → 半角数字（与 Dart 的 `_replaceFullWidthDigits` 对应）。
+function __ncst_replaceFullWidthDigits(text) {
+  var out = '';
+  for (var i = 0; i < text.length; i++) {
+    var code = text.charCodeAt(i);
+    if (code >= 0xFF10 && code <= 0xFF19) {
+      out += String.fromCharCode(0x30 + (code - 0xFF10));
+    } else {
+      out += text.charAt(i);
+    }
+  }
+  return out;
+}
+
+/// 十位组合的中文数字 → 阿拉伯数字（与 Dart 的 `chineseToArabic` 对应）。
+///
+/// ⚠️ **不能逐字替换**：`"十"` 在中文里是位权而不是"10"这个值，
+/// 逐字替换会让 `"十六"` 变成 `"1"+"10"+"6"` = `"106"`（冲出 60 → 解析成空）。
+///
+/// 逐字符扫描，扫描点永远落在"可能是一个数字的开头"，
+/// 所以 `"第十六周"` 里的 `'第'` 会被原样跳过，随后从 `'十'` 正确识别出 16。
+/// 只支持 1–99：周次不可能超过 60，「百 / 千」不值得为此实现。
+function __ncst_chineseToArabic(text) {
+  var length = text.length;
+  var out = '';
+  var i = 0;
+
+  while (i < length) {
+    var ch = text.charAt(i);
+    var current = Object.prototype.hasOwnProperty.call(__NCST_CN_DIGITS, ch)
+        ? __NCST_CN_DIGITS[ch] : null;
+
+    // 情形 1：当前字是 "十" —— 位权
+    if (ch === '十') {
+      var tail = (i + 1 < length &&
+          Object.prototype.hasOwnProperty.call(__NCST_CN_DIGITS, text.charAt(i + 1)))
+          ? __NCST_CN_DIGITS[text.charAt(i + 1)] : null;
+      if (tail !== null) { out += String(10 + tail); i += 2; }
+      else { out += '10'; i += 1; }
+      continue;
+    }
+
+    // 情形 2：当前字是个位数字
+    if (current !== null) {
+      if (i + 1 < length && text.charAt(i + 1) === '十') {
+        var base = current * 10;
+        var tail2 = (i + 2 < length &&
+            Object.prototype.hasOwnProperty.call(__NCST_CN_DIGITS, text.charAt(i + 2)))
+            ? __NCST_CN_DIGITS[text.charAt(i + 2)] : null;
+        if (tail2 !== null) { out += String(base + tail2); i += 3; }
+        else { out += String(base); i += 2; }
+        continue;
+      }
+      out += String(current);
+      i += 1;
+      continue;
+    }
+
+    // 情形 3：不是中文数字，原样保留
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
+/// 中文数字字符 → 数值（与 Dart 的 `_kChineseDigitValue` 对应）。
+///
+/// `十` 也映射成 10：它既是位权（"十六"的十位），也可以是独立值（"第十周"）。
+var __NCST_CN_DIGITS = {
+  '〇': 0, '零': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4,
+  '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10
+};
+
 function __ncst_parseWeeks(rawText) {
   if (rawText === undefined || rawText === null) { return []; }
-  var cleaned = String(rawText)
-    .replace(/（/g, '(').replace(/）/g, ')')
-    .replace(/，/g, ',').replace(/、/g, ',')
-    .replace(/－/g, '-').replace(/—/g, '-').replace(/~/g, '-')
-    .replace(/第/g, '').replace(/周/g, '').replace(/星期/g, '')
+  var cleaned = __ncst_normalizeWeekText(rawText)
     .replace(/\([^)]*\)/g, '')   // 去掉 "(单)" / "(双)"
     .replace(/^\s+|\s+$/g, '');
   if (cleaned === '') { return []; }

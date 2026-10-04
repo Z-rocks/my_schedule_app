@@ -28,6 +28,7 @@ class TimetableLogic {
   /// - `"1-16周"` → `[1, ..., 16]`
   /// - `"4,6-14周(单)"` → `[4, 6, ..., 14]`（**不**过滤单双周，
   ///   单双周由 [parseWeekType] 记录、由 [hasClassInWeek] 过滤）
+  /// - `"四,六至十四周"` / `"１－１６周"`（中文数字 / 全角数字）→ 同 `"4,6-14周"`
   /// - `""` / 乱码 → `[]`
   ///
   /// 容错：逐片段解析，无法识别的片段直接跳过；区间起始大于结束、超出
@@ -35,18 +36,9 @@ class TimetableLogic {
   static List<int> parseWeeks(String rawText) {
     if (rawText.isEmpty) return const <int>[];
 
-    // 去掉中文标点与"周/第"等修饰，只留下数字、逗号和连字符。
-    final String cleaned = rawText
-        .replaceAll('（', '(')
-        .replaceAll('）', ')')
-        .replaceAll('，', ',')
-        .replaceAll('、', ',')
-        .replaceAll('－', '-')
-        .replaceAll('—', '-')
-        .replaceAll('~', '-')
-        .replaceAll('第', '')
-        .replaceAll('周', '')
-        .replaceAll('星期', '')
+    // 归一化（含全角数字与中文数字）在 [normalizeWeekText] 里做，
+    // 这样 JS 侧的复刻只需要照抄一份同样的归一化顺序。
+    final String cleaned = normalizeWeekText(rawText)
         .replaceAll(RegExp(r'\([^)]*\)'), '') // 去掉 "(单)" / "(双)" 等括号内容
         .trim();
     if (cleaned.isEmpty) return const <int>[];
@@ -221,9 +213,221 @@ class TimetableLogic {
     return parts.join(',');
   }
 
+  // ——————————————— "哪些周有课"（Phase 5.1 新增） ———————————————
+  //
+  // 为什么需要：课表只画"当前周"，于是"有课程但本周恰好没课"长得和
+  // "一门课都没有"一模一样——用户会以为同步失败。
+  // 下面几个方法让 UI 能说清"本周没课（课程在第 4、6-14 周）"，
+  // 而不是甩给用户一个空白网格。
+
+  /// 某一周是否至少有一门课（按 [hasClassInWeek] 的真值口径判断）。
+  ///
+  /// 会跳过 `userOverride.hidden == true` 的课程——与 [buildGrid] 保持一致，
+  /// 否则"提示有课的周"里会包含用户已经隐藏掉的课。
+  static bool hasAnyClassInWeek(List<Course> courses, int week) {
+    for (final Course course in courses) {
+      if (course.isHidden) continue;
+      for (final TimePlace tp in course.displayTimePlaces) {
+        if (hasClassInWeek(tp, week)) return true;
+      }
+    }
+    return false;
+  }
+
+  /// 全部"有课"的周次（升序去重），限制在 `1..totalWeeks` 内。
+  ///
+  /// [totalWeeks] 用来裁掉超出学期的周次（教务数据可能带 16 周而学期只配了 12 周）。
+  static List<int> weeksWithClass(
+    List<Course> courses, {
+    required int totalWeeks,
+  }) {
+    final int limit = totalWeeks < 1 ? 1 : totalWeeks;
+    final Set<int> found = <int>{};
+    for (final Course course in courses) {
+      if (course.isHidden) continue;
+      for (final TimePlace tp in course.displayTimePlaces) {
+        for (final int week in tp.weeks) {
+          if (week >= 1 && week <= limit) found.add(week);
+        }
+      }
+    }
+    final List<int> sorted = found.toList()..sort();
+    return sorted;
+  }
+
+  /// 距离 [week] **最近**的有课周次；没有任何有课周时返回 `null`。
+  ///
+  /// 平局（前后一样远）取**更早**的那一周：用户更可能是想回看而不是跳未来。
+  static int? nearestWeekWithClass(
+    List<Course> courses, {
+    required int week,
+    required int totalWeeks,
+  }) {
+    final List<int> weeks = weeksWithClass(courses, totalWeeks: totalWeeks);
+    if (weeks.isEmpty) return null;
+    int? best;
+    int bestDistance = 1 << 30;
+    for (final int candidate in weeks) {
+      final int distance = (candidate - week).abs();
+      // 严格小于 → 平局时保留先遇到的（即更早的周，因为 weeks 升序）
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = candidate;
+      }
+    }
+    return best;
+  }
+
   /// 只在 1..[kMaxWeekNumber] 范围内的周次才会被收进集合。
   static void _addWeek(Set<int> weeks, int week) {
     if (week < 1 || week > kMaxWeekNumber) return;
     weeks.add(week);
   }
 }
+
+// ————————————————— 周次文本归一化（Phase 5.1） —————————————————
+//
+// 为什么单独抽出来：教务系统的周次文本框是自由文本，各校写法差异很大。
+// 归一化把"各种写法"压成 `"4,6-14"` 这种统一形式，后面的解析只面对一种形状。
+//
+// ⚠️ `assets/plugins/ncst-jwxt.js` 的 `__ncst_parseWeeks` 是本文件的 **JS 复刻**
+// （沙箱里调不到 Dart）。改这里的任何规则都必须同步改那边，否则同一门课在
+// "插件解析出的周次"与"内核再解析一次"两条路径上结果会不一致。
+
+/// 把周次文本归一化成 `"4,6-14"` 形式。
+///
+/// 归一化顺序（顺序本身是契约，JS 侧必须一致）：
+/// 1. 中文数字 → 阿拉伯数字（含十位组合，见 [chineseToArabic]）；
+/// 2. 全角数字 → 半角（`"１－１６周"`，移动端中文输入法常见）；
+/// 3. 中文标点 → 半角（逗号类 → `,`；连字符类 → `-`）；
+/// 4. `至` / `到` → `-`（`"四至十六周"`、`"4到16周"` 都是常见写法）；
+/// 5. 去掉 `第` / `周` / `星期` 等修饰字。
+///
+/// ⚠️ 中文数字**不能逐字替换**：`"十六"` 会变成 `"1"+"10"+"6"` = `"106"`，
+/// 直接冲出 [kMaxWeekNumber] 变成空结果。所以先走 [chineseToArabic]。
+String normalizeWeekText(String rawText) {
+  if (rawText.isEmpty) return '';
+  final String converted = _replaceFullWidthDigits(chineseToArabic(rawText));
+  final StringBuffer out = StringBuffer();
+
+  for (final int rune in converted.runes) {
+    final String ch = String.fromCharCode(rune);
+    if (ch == '，' || ch == '、' || ch == '；' || ch == ';') {
+      out.write(',');
+    } else if (ch == '－' ||
+        ch == '—' ||
+        ch == '–' ||
+        ch == '~' ||
+        ch == '～' ||
+        ch == 'ー' ||
+        ch == '至' ||
+        ch == '到') {
+      out.write('-');
+    } else if (ch == '第' || ch == '周' || ch == '星期') {
+      // 丢弃：修饰字，不承载信息
+    } else {
+      out.write(ch);
+    }
+  }
+  return out.toString();
+}
+
+/// 全角数字 → 半角数字。
+String _replaceFullWidthDigits(String text) {
+  final StringBuffer out = StringBuffer();
+  for (final int rune in text.runes) {
+    if (rune >= _kFullWidthZero && rune <= _kFullWidthZero + 9) {
+      out.writeCharCode(0x30 + (rune - _kFullWidthZero));
+    } else {
+      out.writeCharCode(rune);
+    }
+  }
+  return out.toString();
+}
+
+/// 把十位组合的中文数字转成阿拉伯数字。
+///
+/// 覆盖：`"四"`→`4`、`"十六"`→`16`、`"二十"`→`20`、`"二十五"`→`25`、`"十"`→`10`。
+///
+/// **必须整体处理而不是逐字替换**：`"十"` 在中文里是位权而不是"10"这个值，
+/// 逐字替换会让 `"十六"` 变成 `"1"+"10"+"6"` = `"106"`。
+///
+/// 实现是**逐字符扫描**而不是正则：扫描点永远落在"可能是一个数字的开头"，
+/// 于是 `"第十六周"` 里的 `'第'` 会被原样跳过，随后从 `'十'` 正确识别出 16。
+/// （用正则找"数字开头"会把 `'第'` 之前的上下文搅进来，反而更容易出错。）
+///
+/// 只支持 1–99：周次不可能超过 [kMaxWeekNumber]（60），
+/// 「百 / 千」不值得为此实现——需要时在这里加一个 '百' 分支即可。
+String chineseToArabic(String text) {
+  final int length = text.length;
+  final StringBuffer out = StringBuffer();
+  int i = 0;
+
+  while (i < length) {
+    final int? current = _kChineseDigitValue[text[i]];
+
+    // ── 情形 1：当前字是 "十" —— 它是位权 ──
+    if (text[i] == '十') {
+      final int? tail =
+          (i + 1 < length) ? _kChineseDigitValue[text[i + 1]] : null;
+      if (tail != null) {
+        out.write('${10 + tail}'); // "十六" → 16
+        i += 2;
+      } else {
+        out.write('10'); // "十周" → 10
+        i += 1;
+      }
+      continue;
+    }
+
+    // ── 情形 2：当前字是个位数字（一/二/…/九）──
+    if (current != null) {
+      if (i + 1 < length && text[i + 1] == '十') {
+        final int base = current * 10;
+        final int? tail =
+            (i + 2 < length) ? _kChineseDigitValue[text[i + 2]] : null;
+        if (tail != null) {
+          out.write('${base + tail}'); // "二十五" → 25
+          i += 3;
+        } else {
+          out.write('$base'); // "二十" → 20
+          i += 2;
+        }
+        continue;
+      }
+      out.write('$current'); // "四" → 4
+      i += 1;
+      continue;
+    }
+
+    // ── 情形 3：不是中文数字，原样保留（'第' / '至' / '4' / ',' … 由调用方处理）──
+    out.write(text[i]);
+    i += 1;
+  }
+  return out.toString();
+}
+
+/// 中文数字 `'０'` 的码位（`'１'` 是 0xFF11，依此类推）。
+const int _kFullWidthZero = 0xFF10;
+
+/// 中文数字字符 → 数值。
+///
+/// `十` **也**在这里映射成 10：它既是位权（`"十六"` 里的十位），
+/// 也可以是独立的值（`"第十周"` 就是第 10 周）。
+/// [chineseToArabic] 会先特判 `'十'` 作为位权的两种情形，所以这张表里的 10
+/// 只在"没有个位可结合"时才被用到。
+const Map<String, int> _kChineseDigitValue = <String, int>{
+  '〇': 0,
+  '零': 0,
+  '一': 1,
+  '二': 2,
+  '两': 2,
+  '三': 3,
+  '四': 4,
+  '五': 5,
+  '六': 6,
+  '七': 7,
+  '八': 8,
+  '九': 9,
+  '十': 10,
+};

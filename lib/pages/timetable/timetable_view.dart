@@ -536,13 +536,20 @@ class _TimetableViewState extends State<TimetableView> {
   }
 
   /// 某一周的网格（PageView 的每一页 / 无滑动模式下的唯一一页）。
+  ///
+  /// **本周没课时不是给一片空白**：课程可能是 `4,6-14周` 这类"跳过某几周"的安排，
+  /// 那时网格本来就该是空的。但空白网格与"一门课都没有"长得一模一样，
+  /// 用户会以为同步失败——所以在网格上方给一条说明 + 跳到最近有课周的入口。
   Widget _buildWeekGrid(
     AppTheme theme,
     SemesterConfig config,
     List<Course> courses,
     int week,
   ) {
-    return TimetableGrid(
+    final int totalWeeks = config.totalWeeks < 1 ? 1 : config.totalWeeks;
+    final bool weekIsEmpty = !TimetableLogic.hasAnyClassInWeek(courses, week);
+
+    final Widget grid = TimetableGrid(
       grid: TimetableLogic.buildGrid(courses, week),
       // Phase 4.4：优先用插件同步下来的**真实作息**；没有插件提供时
       // 回退到内置默认值（各校作息不同，硬编码只是最后兜底）。
@@ -552,6 +559,133 @@ class _TimetableViewState extends State<TimetableView> {
       onTapCourse: (Course course) => showCourseDetailSheet(context, course),
       // Phase 5：长按直接进编辑页（原来只弹一句"待实现"）。
       onLongPressCourse: _openCourseEdit,
+    );
+
+    if (!weekIsEmpty) return grid;
+
+    // 本周空：列表只在"当前页"算一次（PageView 的每一页都会调到这里，
+    // 但只有空周才需要它，非空周直接早退，不影响滑动性能）。
+    final List<int> weeks = TimetableLogic.weeksWithClass(
+      courses,
+      totalWeeks: totalWeeks,
+    );
+    final int? nearest = TimetableLogic.nearestWeekWithClass(
+      courses,
+      week: week,
+      totalWeeks: totalWeeks,
+    );
+
+    return Column(
+      children: <Widget>[
+        _EmptyWeekNotice(
+          theme: theme,
+          week: week,
+          weeksWithClass: weeks,
+          nearestWeek: nearest,
+          onJump: nearest == null
+              ? null
+              : () => _setWeek(nearest, totalWeeks: totalWeeks),
+        ),
+        Expanded(child: grid),
+      ],
+    );
+  }
+}
+
+/// 本周没有课时显示在网格上方的说明条。
+///
+/// 三种情况分别说清楚（都不留空白）：
+/// - 课程有周次信息但都不含本周 → 列出全部有课周 + 跳最近一周；
+/// - 课程**完全没有**周次信息（教务没给 / 解析不出）→ 提示去课程页检查；
+/// - 兜底（有课但本周没排）→ 一句话说明。
+class _EmptyWeekNotice extends StatelessWidget {
+  const _EmptyWeekNotice({
+    required this.theme,
+    required this.week,
+    required this.weeksWithClass,
+    required this.nearestWeek,
+    required this.onJump,
+  });
+
+  final AppTheme theme;
+  final int week;
+  final List<int> weeksWithClass;
+  final int? nearestWeek;
+  final VoidCallback? onJump;
+
+  @override
+  Widget build(BuildContext context) {
+    final String title;
+    final String detail;
+
+    if (weeksWithClass.isEmpty) {
+      // 有课程，但没有任何一条安排带周次信息 —— 网格永远是空的。
+      title = '第 $week 周没有课';
+      detail = '课程缺少周次信息，无法判断它们在第几周上课。'
+          '请到「课程」页检查这些课程的上课周次。';
+    } else {
+      title = '第 $week 周没有课';
+      detail = '本学期有课的周次：第 ${TimetableLogic.formatWeeks(weeksWithClass)} 周'
+          '${nearestWeek == null ? '' : '（最近有课：第 $nearestWeek 周）'}';
+    }
+
+    return Container(
+      margin: EdgeInsets.only(bottom: theme.gridGap * 2),
+      padding: EdgeInsets.all(theme.cardPadding),
+      decoration: BoxDecoration(
+        // 用 warning 令牌而不是硬编码黄色（CONTEXT 3.2）。
+        color: theme.warning.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(theme.buttonRadius),
+        border: Border.all(color: theme.warning.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Icon(Icons.event_busy_outlined,
+              size: theme.captionSize * 1.4, color: theme.warning),
+          SizedBox(width: theme.gridGap * 2),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: theme.bodySize,
+                    fontWeight: theme.titleFontWeight,
+                    color: theme.onBackground,
+                  ),
+                ),
+                SizedBox(height: theme.gridGap),
+                Text(
+                  detail,
+                  style: TextStyle(
+                    fontSize: theme.captionSize,
+                    color: theme.onBackground.withValues(alpha: 0.75),
+                  ),
+                ),
+                if (onJump != null && weeksWithClass.isNotEmpty) ...<Widget>[
+                  SizedBox(height: theme.gridGap),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      icon: const Icon(Icons.arrow_forward, size: 18),
+                      label: Text('跳到第 $nearestWeek 周'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: theme.primary,
+                        padding: EdgeInsets.zero,
+                        minimumSize: const Size(0, 32),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: onJump,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
