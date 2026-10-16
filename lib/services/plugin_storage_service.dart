@@ -114,10 +114,10 @@ class PluginStorageService {
     return jsPath;
   }
 
-  /// 从 assets 安装插件（用于**随 App 打包**的内置插件 / 示例插件）。
+  /// 从 assets 安装插件（用于**随 App 打包**的内置插件）。
   ///
   /// 与 [installPlugin] 的区别只在"源码从哪来"：这里用 `rootBundle` 读
-  /// Flutter asset（路径形如 `assets/plugins/example.js`），读出内容后
+  /// Flutter asset（路径形如 `assets/plugins/chaoxing.js`），读出内容后
   /// 走同一条安装路径落盘——因为**运行时只能从文件系统加载**
   /// （`PluginManager.defaultSourceResolver` 取的是 `<id>.js` 文件路径），
   /// 而 `rootBundle` 只能异步读、拿不到文件路径。

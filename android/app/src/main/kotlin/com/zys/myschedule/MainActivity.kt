@@ -1,4 +1,4 @@
-package com.example.my_schedule_app
+package com.zys.myschedule
 
 import io.flutter.embedding.android.FlutterActivity
 
