@@ -14,12 +14,6 @@ import '../runtime/plugin_runtime.dart';
 import '../services/plugin_storage_service.dart';
 import '../services/storage_service.dart';
 
-/// 内置示例插件的 id（**临时**，Phase 4 完成后连同 `assets/plugins/example.js` 删除）。
-const String kExamplePluginId = 'example-plugin';
-
-/// 内置示例插件的 asset 路径（**临时**，同上）。
-const String kExamplePluginAssetPath = 'assets/plugins/example.js';
-
 /// 内置 NCST 教务插件的 id（Phase 4.2）。
 const String kNcstPluginId = 'ncst-jwxt';
 
@@ -28,6 +22,12 @@ const String kNcstPluginId = 'ncst-jwxt';
 /// 注意：`pubspec.yaml` 里声明的是**目录** `assets/plugins/`，
 /// 所以新增插件文件**不需要**改 pubspec。
 const String kNcstPluginAssetPath = 'assets/plugins/ncst-jwxt.js';
+
+/// 内置学习通（超星）插件的 id（Phase 8）。
+const String kChaoxingPluginId = 'chaoxing';
+
+/// 内置学习通插件的 asset 路径（同 [kNcstPluginAssetPath]，不必改 pubspec）。
+const String kChaoxingPluginAssetPath = 'assets/plugins/chaoxing.js';
 
 /// 已安装插件状态。
 ///
@@ -139,6 +139,36 @@ class PluginProvider extends ChangeNotifier {
 
   /// 取某个插件的运行时句柄；不存在返回 `null`。
   PluginHandle? getHandle(String id) => _manager.getHandle(id);
+
+  /// 找出第一个**已启用且声明了** [capability] 的插件；没有则返回 `null`。
+  ///
+  /// "已启用"与"运行时可用"是两件事：本方法**不看**加载结果，
+  /// 因此适合用来给出准确的错误提示（"插件启用了但没加载成功"）。
+  /// 要"确实能调用"的插件请用 [firstUsableWithCapability]。
+  PluginMeta? firstEnabledWithCapability(String capability) {
+    for (final PluginMeta plugin in _plugins) {
+      if (!plugin.enabled) continue;
+      if (plugin.effectiveCapabilities.contains(capability)) return plugin;
+    }
+    return null;
+  }
+
+  /// 找出第一个**已启用、运行时可用、且声明了** [capability] 的插件。
+  ///
+  /// Phase 8 新增：作业 / 考试页需要"从哪个插件抓数据"，
+  /// 而能力集合（[allCapabilities]）只回答"有没有这种能力"、不回答"是谁提供的"。
+  ///
+  /// 多个插件声明同一能力时取**安装顺序最靠前**的那个（列表顺序即安装顺序），
+  /// 保证行为可预期；不按"最新安装"取是为了让用户重装插件不会静默换源。
+  PluginMeta? firstUsableWithCapability(String capability) {
+    for (final PluginMeta plugin in _plugins) {
+      if (!plugin.enabled) continue;
+      if (!plugin.effectiveCapabilities.contains(capability)) continue;
+      final PluginHandle? handle = getHandle(plugin.id);
+      if (handle != null && handle.isUsable) return plugin;
+    }
+    return null;
+  }
 
   // ─────────────────────────── 存储 ───────────────────────────
 
@@ -309,17 +339,6 @@ class PluginProvider extends ChangeNotifier {
     return true;
   }
 
-  /// 安装内置示例插件（**Phase 3.5 的 UI 验证用，Phase 4 完成后可删除**）。
-  Future<bool> installExamplePluginForDemo() {
-    return installBuiltinPlugin(
-      pluginId: kExamplePluginId,
-      assetPath: kExamplePluginAssetPath,
-      fallbackName: '示例插件',
-      fallbackCapabilities: const <String>['exam'],
-      description: '内置示例，用于验证插件管理页与运行时链路',
-    );
-  }
-
   /// 安装内置的 **NCST 教务插件**（Phase 4.2）。
   ///
   /// 装完即为"已启用"，用户接着在插件详情页点「登录」→「立即同步」。
@@ -331,6 +350,24 @@ class PluginProvider extends ChangeNotifier {
       fallbackName: '华北理工大学教务系统',
       fallbackCapabilities: const <String>['timetable'],
       description: '从 NCST 教务系统拉取本学期课表（需先登录）',
+    );
+  }
+
+  /// 安装内置的**学习通（超星）插件**（Phase 8）。
+  ///
+  /// 装完即为"已启用"。用户在插件详情页点「登录」完成学习通登录后，
+  /// 到作业页 / 考试页点右上角「抓取」→ 勾选课程 → 抓取。
+  ///
+  /// 声明 `homework` + `exam` 两个能力，所以装上之后导航栏里的作业、
+  /// 考试两个模块会自动可用（能力 → 模块可用性由 `ModuleProvider` 联动）。
+  /// 所有学习通 URL 只在 `assets/plugins/chaoxing.js` 里（CONTEXT 3.1）。
+  Future<bool> installChaoxingPlugin() {
+    return installBuiltinPlugin(
+      pluginId: kChaoxingPluginId,
+      assetPath: kChaoxingPluginAssetPath,
+      fallbackName: '学习通（超星）',
+      fallbackCapabilities: const <String>['homework', 'exam'],
+      description: '从学习通拉取课程、作业（含正文）与考试安排（需先登录）',
     );
   }
 

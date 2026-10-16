@@ -7,6 +7,8 @@ import 'package:provider/provider.dart';
 import 'app.dart';
 import 'models/message.dart';
 import 'providers/course_provider.dart';
+import 'providers/exam_provider.dart';
+import 'providers/homework_provider.dart';
 import 'providers/message_provider.dart';
 import 'providers/module_provider.dart';
 import 'providers/plugin_provider.dart';
@@ -26,6 +28,14 @@ Future<void> main() async {
   // （例如导航栏先显示默认 4 个模块、再跳成用户配置的样子）。
   final CourseProvider courseProvider = CourseProvider();
   await courseProvider.loadFromStorage();
+
+  // 作业与考试（Phase 8）：同样先把持久化状态读进内存，再起 UI——
+  // 否则用户切到作业页时会先看到一瞬间的"暂无作业"再跳成真实列表。
+  final HomeworkProvider homeworkProvider = HomeworkProvider();
+  await homeworkProvider.loadFromStorage();
+
+  final ExamProvider examProvider = ExamProvider();
+  await examProvider.loadFromStorage();
 
   final ModuleProvider moduleProvider = ModuleProvider();
   await moduleProvider.loadFromStorage();
@@ -71,6 +81,8 @@ Future<void> main() async {
 
   runApp(buildApp(
     courseProvider: courseProvider,
+    homeworkProvider: homeworkProvider,
+    examProvider: examProvider,
     moduleProvider: moduleProvider,
     semesterProvider: semesterProvider,
     settingsProvider: settingsProvider,
@@ -119,11 +131,12 @@ Message buildPluginNotifyMessage({
 /// 抽成函数是为了让 widget 测试能直接 `pumpWidget(buildApp())`，
 /// 验证的即是 `main()` 真正使用的这棵 Provider 树，而不是测试里另写一份。
 ///
-/// 五个可选参数由 `main()` 传入**已完成存储加载**的实例；
+/// 各可选参数由 `main()` 传入**已完成存储加载**的实例；
 /// 不传时（测试、预览）内部自建空实例，此时不会访问 Hive。
 ///
-/// 生命周期：`CourseProvider` / `MessageProvider` / `SemesterProvider` /
-/// `SettingsProvider` / `ThemeProvider` / `PluginProvider` 走 `.value`，
+/// 生命周期：`CourseProvider` / `HomeworkProvider` / `ExamProvider` /
+/// `MessageProvider` / `SemesterProvider` / `SettingsProvider` /
+/// `ThemeProvider` / `PluginProvider` 走 `.value`，
 /// 实例归调用方所有，不随 Provider 树销毁而 dispose。
 /// `ModuleProvider` 由 `ChangeNotifierProxyProvider` 创建（该 Provider 没有
 /// `.value` 变体），因此注入的实例会被 Provider 树接管生命周期——
@@ -131,6 +144,8 @@ Message buildPluginNotifyMessage({
 /// ModuleProvider 实例同时传给两棵 Provider 树（先卸载的那棵会 dispose 它）。
 Widget buildApp({
   CourseProvider? courseProvider,
+  HomeworkProvider? homeworkProvider,
+  ExamProvider? examProvider,
   ModuleProvider? moduleProvider,
   SemesterProvider? semesterProvider,
   SettingsProvider? settingsProvider,
@@ -190,7 +205,23 @@ Widget buildApp({
         ChangeNotifierProvider<CourseProvider>(
           create: (BuildContext context) => CourseProvider(),
         ),
-      // 5. 消息（无依赖）
+      // 5. 作业（无依赖，Phase 8）
+      // 作业与考试页各自 watch 自己的 Provider；两者都实现 `EntityStore`，
+      // 由 `PluginEntitySyncService` 落盘（服务层不认识 Provider，只认接口）。
+      if (homeworkProvider != null)
+        ChangeNotifierProvider<HomeworkProvider>.value(value: homeworkProvider)
+      else
+        ChangeNotifierProvider<HomeworkProvider>(
+          create: (BuildContext context) => HomeworkProvider(),
+        ),
+      // 6. 考试（无依赖，Phase 8）
+      if (examProvider != null)
+        ChangeNotifierProvider<ExamProvider>.value(value: examProvider)
+      else
+        ChangeNotifierProvider<ExamProvider>(
+          create: (BuildContext context) => ExamProvider(),
+        ),
+      // 7. 消息（无依赖）
       // Phase 7 起可由 main() 传入已从 Hive 载入的实例。
       if (messageProvider != null)
         ChangeNotifierProvider<MessageProvider>.value(value: messageProvider)
@@ -198,14 +229,14 @@ Widget buildApp({
         ChangeNotifierProvider<MessageProvider>(
           create: (BuildContext context) => MessageProvider(),
         ),
-      // 6. 学期（无依赖）
+      // 8. 学期（无依赖）
       if (semesterProvider != null)
         ChangeNotifierProvider<SemesterProvider>.value(value: semesterProvider)
       else
         ChangeNotifierProvider<SemesterProvider>(
           create: (BuildContext context) => SemesterProvider(),
         ),
-      // 7. UI 偏好（无依赖）
+      // 9. UI 偏好（无依赖）
       if (settingsProvider != null)
         ChangeNotifierProvider<SettingsProvider>.value(value: settingsProvider)
       else

@@ -11,10 +11,25 @@ import '../../services/cookie_service.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
 
+/// 去掉 URL 的 scheme（`http://` / `https://`），其余原样保留。
+///
+/// 只剥离开头那一段，不做别的规范化——本函数只服务于
+/// [isLoginSuccessUrl] 的"同一站点、scheme 可能不同"判断。
+String _stripUrlScheme(String url) =>
+    url.replaceFirst(RegExp(r'^https?://', caseSensitive: false), '');
+
 /// 判定"当前 URL 是否表示登录成功"。
 ///
 /// 这是**主方案**（Phase 4.1 决策 1 的方案 A：URL 前缀匹配）：
 /// 通用、不需要知道任何学校的页面结构、失败模式可预期。
+///
+/// **scheme 不敏感**（Phase 8 真机实测追加）：很多站点登录成功后会在
+/// http / https 之间跳一次。例如学习通登录成功会 302 到
+/// `http://i.mooc.chaoxing.com/...`，而插件按惯例声明的是
+/// `https://i.mooc.chaoxing.com/` —— 若按字面前缀匹配就永远命中不了，
+/// 表现为"登录明明成功了，登录页却卡住不返回"。
+/// 因此先按原样比，不中再剥掉 scheme 比一次；两者都只在**开头**匹配，
+/// 不会把 `https://evil.com/http://i.mooc...` 这类 URL 误判为成功。
 ///
 /// 纯函数，便于单测（不需要真的起一个 WebView）。
 /// 空前缀（未声明）时返回 `false` —— 表示"不靠 URL 判定"，
@@ -22,7 +37,9 @@ import '../../theme/theme_extension.dart';
 bool isLoginSuccessUrl(String currentUrl, String successUrlPrefix) {
   final String prefix = successUrlPrefix.trim();
   if (prefix.isEmpty) return false;
-  return currentUrl.trim().startsWith(prefix);
+  final String url = currentUrl.trim();
+  if (url.startsWith(prefix)) return true;
+  return _stripUrlScheme(url).startsWith(_stripUrlScheme(prefix));
 }
 
 /// 判定"这个 SSL 证书错误该不该放行"，返回**放行后允许的 host**；
@@ -73,6 +90,43 @@ String _hostOf(String url) {
 
   final String hostPart = Uri.tryParse('https://$trimmed')?.host ?? '';
   return hostPart.trim().toLowerCase();
+}
+
+/// 把 WebView 的原始英文错误，翻译成一句**能直接照着排查**的人话提示。
+///
+/// 起因（Phase 8 真机实测）：学习通登录成功后 302 到 http，
+/// 被 Android 的明文 HTTP 策略拦成 `net::ERR_CLEARTEXT_NOT_PERMITTED`。
+/// 界面上原本只有一句英文原始报错，看到它的人无法一眼判断"该改哪里"——
+/// 很容易误以为是"接口挂了"或"网络不通"（其实请求**根本没有发出去**）。
+///
+/// 返回 `null` 表示没有对应提示，界面就只显示原始报错。
+///
+/// 纯函数，便于单测。
+String? loadErrorHint(String description) {
+  final String d = description.toLowerCase();
+  if (d.contains('err_cleartext_not_permitted')) {
+    return '该站点走的是明文 HTTP（http://），被 Android 的网络策略拦下了。\n'
+        '注意：这不是网络不通、也不是接口报错——请求根本没有发出去。\n'
+        '解决：把该站点域名加进 android/app/src/main/res/xml/'
+        'network_security_config.xml 的白名单，然后重新打包安装。';
+  }
+  if (d.contains('err_name_not_resolved')) {
+    return '域名解析失败：多半是断网、DNS 异常，或该站点在当前网络下不可达。';
+  }
+  if (d.contains('err_internet_disconnected')) {
+    return '设备当前没有网络连接。';
+  }
+  if (d.contains('err_timed_out') || d.contains('err_connection_timed_out')) {
+    return '连接超时：站点无响应，或当前网络（校园网 / VPN）不允许访问。';
+  }
+  if (d.contains('err_connection_refused')) {
+    return '连接被拒绝：对方端口没开，或这个地址已经失效。';
+  }
+  if (d.contains('err_ssl') || d.contains('err_cert')) {
+    return 'SSL 证书校验失败：站点用了自签 / 过期证书。'
+        '若确认该站点可信，重新进入登录页时会按登录站点 host 放行。';
+  }
+  return null;
 }
 
 /// 通用 WebView 登录页。
@@ -206,9 +260,11 @@ class _WebViewLoginPageState extends State<WebViewLoginPage> {
       return;
     }
 
+    final String? hint = loadErrorHint(error.description);
     setState(() {
       _loading = false;
-      _loadError = '页面加载失败（${error.errorCode}）：${error.description}';
+      _loadError = '页面加载失败（${error.errorCode}）：${error.description}'
+          '${hint == null ? '' : '\n\n$hint'}';
     });
   }
 

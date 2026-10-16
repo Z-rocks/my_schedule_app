@@ -46,3 +46,24 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# ⚠️ 正式签名（Phase 8.1）：**丢了就无法给已装用户发更新，且无法找回**
+#    密码在 android/key.properties，keystore 在 android/key/*.jks —— 绝不入库，
+#    两份文件务必离线备份（网盘/移动硬盘各一份）。
+android/key.properties
+android/key/
+
+# 学习通抓包工具（Phase 8）本地临时产物
+/tools/chaoxing/.profile/
+/tools/chaoxing/shots/
+/tools/chaoxing/netlog-*.jsonl
+
+# ⚠️ 学习通**抓取产物 = 真实账号的个人数据**（68 门课程、教师姓名、班级、
+#    作业与考试页面 HTML），绝不入库。`.profile/` 里还有浏览器登录态。
+/tools/chaoxing/out/
+/tools/chaoxing/courses.json
+/tools/chaoxing/raw-*.html
+/tools/chaoxing/*.png
+
+# WorkBuddy 会话数据（本机：记忆、临时截图、驱动脚本），与项目代码无关
+/.workbuddy-ai/

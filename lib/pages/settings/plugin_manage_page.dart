@@ -115,12 +115,12 @@ class PluginManagePage extends StatelessWidget {
                 child: Text('安装 NCST 教务插件'),
               ),
               const PopupMenuItem<_AddAction>(
-                value: _AddAction.importFile,
-                child: Text('从文件导入（Phase 6+）'),
+                value: _AddAction.installChaoxing,
+                child: Text('安装学习通（超星）插件'),
               ),
               const PopupMenuItem<_AddAction>(
-                value: _AddAction.installExample,
-                child: Text('安装示例插件（Phase 3.5 验证用）'),
+                value: _AddAction.importFile,
+                child: Text('从文件导入（Phase 6+）'),
               ),
             ],
           ),
@@ -165,23 +165,29 @@ class PluginManagePage extends StatelessWidget {
                 : 'NCST 插件安装失败，详见日志'),
           ),
         );
+      case _AddAction.installChaoxing:
+        final bool ok = await provider.installChaoxingPlugin();
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(ok
+                ? '学习通插件已安装并启用，去详情页点「登录」，再到作业页抓取'
+                : '学习通插件安装失败，详见日志'),
+          ),
+        );
       case _AddAction.importFile:
         messenger.showSnackBar(
           const SnackBar(content: Text('从文件导入（Phase 6+ 实现）')),
-        );
-      case _AddAction.installExample:
-        final bool ok = await provider.installExamplePluginForDemo();
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(ok ? '示例插件已安装并启用' : '示例插件安装失败，详见日志'),
-          ),
         );
     }
   }
 }
 
 /// `+` 菜单的动作。
-enum _AddAction { installNcst, importFile, installExample }
+///
+/// **Phase 8.1 移除 `installExample`**：示例插件只是 Phase 3.5 验证插件管理
+/// UI 用的，Phase 4 约定在真实插件就位后删除（当时不能删，是因为它是
+/// 唯一能证明"装上 → 启用 → 详情页 → 同步"整条链路的用例）。
+enum _AddAction { installNcst, installChaoxing, importFile }
 
 /// 单个插件卡片。
 class _PluginCard extends StatelessWidget {

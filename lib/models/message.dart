@@ -130,29 +130,36 @@ class Message {
   /// 只读 [SyncReport] 的公开字段——报告里的统计全部是内核自己算的，
   /// 不含任何学校信息（CONTEXT 3.1）。
   ///
+  /// [itemLabel] / [itemUnit] 是**被同步条目的量词**（Phase 8 新增）：
+  /// 课程是「门课程」，作业是「份作业」，考试是「场考试」。
+  /// 默认值与 Phase 7 完全一致，因此课程同步的文案没有任何变化。
+  ///
   /// 幂等：id 用 `pluginId + 秒级时间戳`。`CourseSyncService` 会重试，
   /// 但重试发生在同一次点击内（同一秒），所以只会得到一条消息。
   factory Message.fromSyncReport({
     required SyncReport report,
     required String pluginName,
     DateTime? now,
+    String itemLabel = '课程',
+    String itemUnit = '门',
   }) {
     final DateTime created = now ?? DateTime.now();
     final List<String> lines = <String>[];
+    final String counted = '$itemUnit$itemLabel';
 
     if (!report.isSuccess) {
       lines.add(report.reason.isEmpty ? '同步失败' : report.reason);
     } else if (report.totalCourses == 0) {
-      lines.add('这学期没有课程');
+      lines.add(itemLabel == '课程' ? '这学期没有课程' : '没有$itemLabel');
     } else if (!report.hasChanges) {
-      lines.add('${report.totalCourses} 门课程已是最新，无需更新');
+      lines.add('${report.totalCourses}$counted已是最新，无需更新');
     } else {
       lines.add('新增 ${report.added} · 更新 ${report.updated} '
           '· 未变 ${report.unchanged}');
     }
     if (report.skipped > 0) lines.add('跳过 ${report.skipped} 条（数据不完整）');
     if (report.userEdited > 0) {
-      lines.add('其中 ${report.userEdited} 门保留了你的修改');
+      lines.add('其中 ${report.userEdited}$counted保留了你的修改');
     }
     if (report.sectionTimes > 0) lines.add('节次时间 ${report.sectionTimes} 条');
     if (report.attempts > 1) lines.add('共尝试 ${report.attempts} 次');

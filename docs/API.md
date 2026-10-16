@@ -5,7 +5,7 @@
 > 每次生成新代码前，把本文件内容作为上下文提供给 AI，确保字段名、方法名一致。
 > 只列**公开**接口，不列私有方法。
 
-- 最后更新：2026-09-25（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService；3.5 插件管理 UI 接入；3.5.1 插件可卸载性 isRemovable；3.6 插件上下文 ctx；4.1 WebView 登录页 + Cookie 提取；4.2 NCST 教务插件 + 同步接线；4.2.1 WebView SSL 证书放行 + 诊断日志；4.2.2 Android 明文流量定向白名单 `network_security_config.xml`；**4.3 数据同步打通：`CourseSyncService` 增量/覆盖层保留/失败重试 + `SyncReport` + 同步进度 UI + `ctx.lastHttpError`/`JsSandboxResult.httpErrors` 错误类别通道 + `saveCourse` 内存覆盖层修正**）
+- 最后更新：2026-10-16（1.1–1.6 内核骨架；2.1 存储层；2.1.5 配置落盘；2.2a 学期配置 + 周次解析；2.2b 课表网格；2.2b.1 字号 + 滑动切周；2.2b.3 视觉重构；2.2b.4 卡片只显示教室；2.2c.1 学期配置页；2.2c.2 添加课程页；3.1 flutter_js 集成验证；3.2a JS 运行时沙箱与兜底；3.2b.1 插件文件加载 + PluginRuntime 骨架；3.3 多插件管理 PluginManager；3.4 插件文件持久化 PluginStorageService；3.5 插件管理 UI 接入；3.5.1 插件可卸载性 isRemovable；3.6 插件上下文 ctx；4.1 WebView 登录页 + Cookie 提取；4.2 NCST 教务插件 + 同步接线；4.2.1 WebView SSL 证书放行 + 诊断日志；4.2.2 Android 明文流量定向白名单 `network_security_config.xml`；4.3 数据同步打通：`CourseSyncService` 增量/覆盖层保留/失败重试 + `SyncReport` + 同步进度 UI + `ctx.lastHttpError`/`JsSandboxResult.httpErrors` 错误类别通道 + `saveCourse` 内存覆盖层修正；**4.4 节次时间服务；5 课程编辑/删除/隐藏；6 皮肤系统/创意工坊/暗色模式；7 消息模块接真实数据 + `ctx.notify` 落地；8 学习通插件 + 作业/考试内核接线（`PluginCourseRef`、`PluginEntitySyncService`、`HomeworkProvider`、`ExamProvider`、`PluginEntitySyncPage`、`Exam.note`/`courseName`、`Message.fromSyncReport` 量词参数）**）
 
 ---
 
@@ -146,15 +146,18 @@
 | `unit` | `double` | 学分 |
 | `durationMinutes` | `int` | 时长（分钟） |
 | `courseId` | `String` | 关联课程 ID |
+| `courseName` | `String` | 所属课程名（**Phase 8 新增**，用于展示；与 `courseId` 分工：ID 跳转、名字显示） |
+| `note` | `String` | 插件给的备注原文（**Phase 8 新增**），如 `"待做 · 完成任务点80%"` |
 | `sourcePluginId` | `String` | 来源插件 ID |
 | `remindMinutesBefore` | `int` | 提前提醒分钟数，0 为不提醒 |
 | `userOverride` | `UserOverride?` | 用户覆盖层 |
 
-构造：`const Exam({required id, required name, required startTime, DateTime? endTime, String location = '', String seatNumber = '', String examType = '', double unit = 0, int durationMinutes = 0, String courseId = '', required sourcePluginId, int remindMinutesBefore = 0, UserOverride? userOverride})`
+构造：`const Exam({required id, required name, required startTime, DateTime? endTime, String location = '', String seatNumber = '', String examType = '', double unit = 0, int durationMinutes = 0, String courseId = '', String courseName = '', String note = '', required sourcePluginId, int remindMinutesBefore = 0, UserOverride? userOverride})`
 
 方法：
 - `bool get isUserCreated` / `bool get isHidden`
 - `String get displayName` / `String get displayLocation` / `DateTime get displayStartTime` / `int? get displayColor`
+- `String get displayNote` — **Phase 8 新增**：用户备注（`userOverride.note`）优先，否则回落插件原文 `note`
 - `DateTime get effectiveEndTime` — 优先 `endTime`，否则 `displayStartTime + durationMinutes`
 - `bool hasStarted(DateTime now)`
 - `Duration timeUntil(DateTime now)` — 已开始返回 `Duration.zero`
@@ -200,6 +203,33 @@
 
 ---
 
+### `plugin_course_ref.dart` — PluginCourseRef（**Phase 8 新增**）
+
+**插件自报的"课程引用"** —— "勾选课程 → 抓取作业/考试"的中间载体。
+
+> **为什么是"不透明对象"**：作业与考试的抓取入口需要插件自己那套课程标识
+> （学习通是 `courseId` + `classId` + `cpi`，别的学校可能是别的字段）。
+> 内核**不允许知道**这些字段名（CONTEXT 3.1），因此本模型把它们当**不透明数据**：
+> `raw` 原样保存、回传时一个键都不改；内核只读几个**约定的展示字段**。
+
+- `const PluginCourseRef(Map<String, dynamic> raw)` — 直接持有 `raw`，不做拷贝
+- `static PluginCourseRef? tryFromJson(Object? value)` — 非 Map 返回 `null`（调用方跳过）
+- `Map<String, dynamic> toJson()` — **原样返回 `raw`**（不改名、不增删）
+- `String get id` — 约定字段 `id`；缺失时退化为 `anon_<name>_<hashCode>`（仍稳定，仅本次会话有效）
+- `String get name` / `String get teacher` / `String get className` — 约定展示字段，缺失即空串
+- `String get subtitle` — `教师 · 班级`，都空时为空串
+- `String get displayName` — `name` 为空时回落 `id`（避免显示空白行）
+
+顶层函数：
+- `List<PluginCourseRef> parseCourseRefs(Object? raw)` — 解析插件的 `courses` 数组；非列表返回空、元素非对象跳过、**不抛异常**
+- `List<PluginCourseRef> dedupeCourseRefs(Iterable<PluginCourseRef> refs)` — 按 `id` 去重（后者覆盖前者），保持首次出现顺序
+
+**插件侧契约**（写在 `assets/plugins/chaoxing.js` 注释里）：
+`fetchCourseList` → `{ courses: [{ id, name, teacher?, className?, ...任意字段 }] }`；
+`fetchHomeworks` / `fetchExams` 的 `args.courses` 收到被勾选的那些对象**原样**。
+
+---
+
 ### `message.dart` — MessageType + Message
 
 #### `enum MessageType`
@@ -230,6 +260,10 @@
 - `factory Message.fromJson(Map<String, dynamic> json)` — `type` 存枚举名字符串
 - `Map<String, dynamic> toJson()`
 - `Message copyWith({...})`
+- `factory Message.fromSyncReport({required SyncReport report, required String pluginName, DateTime? now, String itemLabel = '课程', String itemUnit = '门'})`
+  — **Phase 8 新增** `itemLabel` / `itemUnit`（被同步条目的名词与量词：课程「门课程」、
+  作业「份作业」、考试「场考试」）。**默认值与 Phase 7 逐字一致**，课程同步文案零变化
+  （已有回归用例锁定）。幂等：id 用 `pluginId + 秒级时间戳`，同一次点击的重试只产生一条
 
 ---
 
@@ -630,6 +664,52 @@ App 的全部视觉令牌集合，不可变（**30 个字段**，Phase 3.5 由 2
 
 ---
 
+### `homework_provider.dart` — HomeworkProvider（`ChangeNotifier`，**Phase 8 新增**）
+
+作业列表状态。实现 `EntityStore<Homework>`（`PluginEntitySyncService` 的落盘接口）。
+**Phase 8 起接入 Hive**：原始数据与覆盖层**同存 `homeworks` Box**（key = 作业 ID）。
+
+- `List<Homework> get homeworks` — 全部（含隐藏），不可变视图
+- `List<Homework> get displayHomeworks` — 展示用：过滤隐藏 + 排序（**未完成在前 → 截止时间升序 → 无截止时间垫底 → 标题**）。排序用 `displayDeadline`（用户改过期就按改的排）
+- `List<Homework> get hiddenHomeworks` / `int get hiddenCount` / `int get length`
+- `int get pendingCount` — 未完成且未隐藏
+- `int overdueCount(DateTime now)` — 未完成、未隐藏且已过截止
+- `bool get isLoaded`
+- `Homework? getById(String id)` — **`@override`**（`EntityStore`）
+
+**Hive 读写（异步，内部 try-catch + `debugPrint`，失败不抛异常）**
+
+- `Future<void> loadFromStorage()` — 读 `homeworks` Box，解析失败的跳过；**替换**内存列表
+- `Future<void> save(Homework homework)` — **`@override`**。先落盘再更新内存；**入参不带覆盖层时把内存里已有的覆盖层重新挂回去**（否则这次写入就把用户改动删了——覆盖层与原始字段在同一条 JSON 里）
+- `Future<bool> setCompleted(String id, bool completed)` — 用户勾选完成。状态写进 `userOverride.customCompleted`，因此**插件重新同步不会冲掉**
+- `Future<bool> setHidden(String id, bool hidden)` — 隐藏（CONTEXT 3.3：插件数据只能隐藏不能真删）。覆盖层其他字段原样保留
+- `Future<void> deleteHomework(String id)` — 真删（内存 + 存储），供用户自建作业与数据清理
+- `Future<void> clearAll()` — 清空 Box 与内存
+
+**纯内存操作（不落盘）**：`setHomeworks` / `addHomework` / `clear`
+
+---
+
+### `exam_provider.dart` — ExamProvider（`ChangeNotifier`，**Phase 8 新增**）
+
+考试列表状态。结构上与 `HomeworkProvider` 同构（原始 + 内联覆盖层、实现 `EntityStore<Exam>`），
+差别只在排序与统计口径。**Phase 8 起接入 Hive**：存 `exams` Box。
+
+- `List<Exam> get exams` / `List<Exam> get hiddenExams`
+- `List<Exam> get displayExams` — 展示用：过滤隐藏 + 排序（**未开始在前 → 开考时间升序 → 科目名**），用 `displayStartTime`
+- `int get upcomingCount` — 尚未开考且未隐藏
+- `Exam? nextExam(DateTime now)` — 最近一场未开始（跳过隐藏）；没有则 `null`
+- `int get hiddenCount` / `int get length` / `bool get isLoaded` / `Exam? getById(String id)`（`@override`）
+- `Future<void> loadFromStorage()` / `Future<void> save(Exam exam)`（`@override`，覆盖层保留同作业）/ `Future<bool> setHidden(String id, bool hidden)` / `Future<void> deleteExam(String id)` / `Future<void> clearAll()`
+- 纯内存：`setExams` / `addExam` / `clear`
+
+> **为什么作业 / 考试的覆盖层不放进 `overrides` Box**：那个 Box 的键空间是"课程 ID"，
+> 而作业 / 考试 ID 与课程 ID 都可能形如 `chaoxing:<数字>`，共用会撞号
+> （表现为"改作业勾选把课程颜色改了"）。`Homework` / `Exam` 模型本来就带
+> `userOverride` 且 `toJson` 会序列化它，因此**内联零成本**。
+
+---
+
 ## lib/services/
 
 ### `cookie_service.dart` — CookieService（Phase 4.1）
@@ -844,6 +924,8 @@ UI 偏好设置（Phase 2.2b.1 新增）。目前只有"左右滑动切换周次
 - `Map<String, String> get loadErrors` — 加载失败原因（`id` → 原因），不可变视图
 - `String? loadErrorOf(String id)`
 - `PluginMeta? getById(String id)` / `PluginHandle? getHandle(String id)`
+- `PluginMeta? firstEnabledWithCapability(String capability)` — **Phase 8 新增**：第一个**已启用且声明了**该能力的插件（**不看**加载结果，用于给出准确提示）
+- `PluginMeta? firstUsableWithCapability(String capability)` — **Phase 8 新增**：第一个**已启用、运行时可用、且声明了**该能力的插件。多个插件声明同一能力时取**列表顺序最靠前**的（即安装顺序），保证行为可预期——不按"最新安装"取，是为了让用户重装插件不会静默换源
 - `bool get isLoaded` — 是否已尝试从存储载入过（区分"没有插件"与"尚未加载"）
 
 **运行时接线**
@@ -874,6 +956,8 @@ UI 偏好设置（Phase 2.2b.1 新增）。目前只有"左右滑动切换周次
 常量 `kExamplePluginId` / `kExamplePluginAssetPath` 与 `kExamplePluginId`、
 **`kNcstPluginId = 'ncst-jwxt'`**、**`kNcstPluginAssetPath = 'assets/plugins/ncst-jwxt.js'`**
 
+**`kChaoxingPluginId = 'chaoxing'`**、**`kChaoxingPluginAssetPath = 'assets/plugins/chaoxing.js'`**（**Phase 8 新增**）
+
 - `Future<bool> installBuiltinPlugin({required String pluginId, required String assetPath, required String fallbackName, List<String> fallbackCapabilities = const [], String author = 'MySchedule', String description = ''})`
   — **Phase 4.2 新增**：安装**内置**插件（从 assets）并自动启用。
   流程：`installFromAssets` 落盘 → `addPlugin`（先以 `enabled: false` 落盘）→
@@ -882,6 +966,10 @@ UI 偏好设置（Phase 2.2b.1 新增）。目前只有"左右滑动切换周次
 - `Future<bool> installExamplePluginForDemo()` — 示例插件（Phase 3.5 验证用，**Phase 4 后可删**）
 - **`Future<bool> installNcstPlugin()`** — 安装内置 **NCST 教务插件**（Phase 4.2）；
   装完即为"已启用"，用户接着去详情页「登录」→「立即同步」
+- **`Future<bool> installChaoxingPlugin()`** — **Phase 8 新增**：安装内置**学习通（超星）插件**。
+  声明 `homework` + `exam` 两个能力，因此装上后导航栏的作业、考试模块自动可用
+  （能力 → 模块可用性由 `ModuleProvider` 联动）。用户接着去详情页「登录」，
+  再到作业页 / 考试页点右上角「抓取」→ 勾选课程 → 抓取
 
 > **签名变更**：`addPlugin` / `removePlugin` / `togglePlugin` 由 `void` 改为 `Future<void>`，
 > 以便调用方 `await` 落盘/加载完成。原签名在 `lib/` 里**没有调用方**（插件管理页仍是占位页），
@@ -1123,6 +1211,55 @@ UI 偏好设置（Phase 2.2b.1 新增）。目前只有"左右滑动切换周次
 
 ---
 
+### `plugin_entity_sync_service.dart` — PluginEntitySyncService（**Phase 8 新增**）
+
+**列表型实体（作业 / 考试）的通用同步服务**（纯静态类）。
+契约与 `CourseSyncService` 一致：**任何情况都不抛异常**，失败一律返回带 `SyncOutcome` 的 `SyncReport`。
+
+> **为什么不复用 `CourseSyncService`**：两者共享 90% 流程（调入口 → 归类 → 只对网络失败重试
+> → 增量落盘），但课程有 `sectionTimes` / `allUnits` 两个专属回传字段，载荷也是另一个数组。
+> 泛型化 `CourseSyncService` 要动 Phase 4.3 已交付且带测试的代码，因此选
+> **"抽出通用服务、课程服务一行不改"**；将来再有列表型能力（如成绩）只需再加一个 `PluginEntitySpec`。
+
+#### `abstract class EntityStore<T>`
+
+服务层与 Provider 之间的**最小接口**（CONTEXT 4.5：连"服务认识 Provider"都避免掉）。
+- `T? getById(String id)`
+- `Future<void> save(T item)` — 落盘 + 更新内存；**实现方负责保留用户覆盖层**
+
+#### `class PluginEntitySpec<T>`
+
+把"模型差异"挡在服务之外的契约对象：
+`entry`（入口名）/ `payloadKey`（承载数组的键）/ `parse`（JSON → 模型，坏数据返回 `null`）/
+`idOf` / `fingerprintOf`（**必须排除覆盖层**）/ `hasOverride` / `itemLabel`（如 `作业`）。
+
+#### `class CourseRefFetchResult`
+
+`refs` / `error`（空串表示成功）/ `warnings` / `bool get isSuccess`。
+**成功且为空列表是合法结果**（确实一门课都没有）。
+
+#### 静态成员
+
+- 常量：`kStageFetching` / `kStageSaving` / `kMaxAttempts = 3` / `kRetryBackoff`（1200ms、3000ms）/ `kSyncTimeout = 60s` / `kArgCourses` / `kArgWithContent`
+- `static PluginEntitySpec<Homework> homeworkSpec()` — `fetchHomeworks` / `homeworks` / `作业`
+- `static PluginEntitySpec<Exam> examSpec()` — `fetchExams` / `exams` / `考试`
+- `static Map<String, dynamic> buildCoursesArgs(List<PluginCourseRef> refs, {bool withContent = true})`
+  — 构造 `{courses: [...原样对象...], withContent: bool}`
+- `static Future<CourseRefFetchResult> fetchCourseRefs({required String pluginId, required PluginHandle? handle, String entry = 'fetchCourseList', void Function(String stage, String message)? onProgress})`
+  — 拿"可勾选的课程列表"，**不落盘**
+- `static Future<SyncReport> sync<T>({required String pluginId, required PluginHandle? handle, required PluginEntitySpec<T> spec, required EntityStore<T> store, Map<String, dynamic>? args, void Function(String stage, String message)? onProgress, void Function(SyncReport report)? onReport})`
+  — 执行一次实体同步。**重试只针对网络类失败**（`timeout` / `connection` / `bad_response`，
+  或插件显式声明 `retryable: true`）；`onReport` 在**所有**返回路径上都会被调用一次
+
+**增量落盘策略**（与 `CourseSyncService` 一致）：库里没有 → `added`；
+原始字段一致 → **跳过落盘**（`unchanged`）；不同 → 覆盖写入（`updated`）。
+插件里消失的作业 / 考试**不删除**（历史记录不该因教务系统清理而消失）。
+
+> **`kSyncTimeout` 取 60s**（课程同步是 20s）：抓 N 门课的作业要发约 `4 × N` 个请求，
+> 且宿主严格串行（学习通反爬要求）。勾太多课本来就会撞风控，UI 侧有提示引导分批。
+
+---
+
 ## lib/pages/
 
 ### `login/webview_login_page.dart` — WebViewLoginPage（Phase 4.1）
@@ -1145,7 +1282,15 @@ const WebViewLoginPage({
 
 - `bool isLoginSuccessUrl(String currentUrl, String successUrlPrefix)` —
   当前 URL 是否以该前缀开头（两侧空白忽略）。**空前缀返回 `false`**，
-  语义是"没声明前缀、不靠 URL 判定"，由调用方走 Cookie 兜底
+  语义是"没声明前缀、不靠 URL 判定"，由调用方走 Cookie 兜底。
+  **Phase 8 真机实测追加：scheme 不敏感** —— 先按原样比，不中再剥掉
+  `http(s)://` 比一次。原因：学习通登录成功 302 到 `http://i.mooc.chaoxing.com/`，
+  而插件按惯例声明 `https://...`，字面匹配永远命中不了 → 登录成功却不返回。
+  只匹配**开头**，`https://evil.com/?next=https://i.mooc...` 不会误判
+- **`String? loadErrorHint(String description)`**（Phase 8 真机实测）—
+  把 WebView 的英文报错翻译成一句"能直接照着排查"的人话提示，
+  附在「页面加载失败」文案后面。明文被拦会直接指向
+  `network_security_config.xml`；没有对应提示时返回 `null`（只显示原始报错）
 - **`String? sslErrorHostToProceedOn({required String loginUrl, required String errorUrl})`**
   （Phase 4.2.1）— SSL 证书错误的放行判定：返回**放行后允许的 host**，
   `null` 表示拒绝（`cancel`）。
@@ -1253,21 +1398,31 @@ adb logcat -d | grep WebViewLoginPage
     <domain-config cleartextTrafficPermitted="true">           <!-- 定向放行 -->
         <domain includeSubdomains="true">xjw1.ncst.edu.cn</domain>
     </domain-config>
+    <domain-config cleartextTrafficPermitted="true">           <!-- Phase 8 真机实测追加 -->
+        <domain includeSubdomains="true">chaoxing.com</domain>
+    </domain-config>
 </network-security-config>
 ```
 
 - **为什么需要**：NCST 登录会从 `https://xjw1.ncst.edu.cn/` 重定向到
   `http://xjw1.ncst.edu.cn/gotoLogin`；targetSdk 34 默认禁 cleartext，
   不放行就报 `net::ERR_CLEARTEXT_NOT_PERMITTED`
+- **学习通（Phase 8 真机实测追加）**：登录成功后 302 到
+  `http://i.mooc.chaoxing.com/`（**注意是 http**）。整域放行而非逐主机，
+  是因为学习通在 `passport2` / `i.mooc` / `i` / `mooc1-2` 等多台主机间跳转，
+  逐个列会漏；这些主机同属一个服务方，信任级别一致
 - **影响范围（已确认 vs 待确认，说清楚）**：
   - ✅ **已确认**：WebView 受它约束（4.1 真机就是 WebView 报的
-    `net::ERR_CLEARTEXT_NOT_PERMITTED`），所以登录页这条链路一定受益
+    `net::ERR_CLEARTEXT_NOT_PERMITTED`），所以登录页这条链路一定受益；
+    **8 真机再次确认**——学习通登录正是被它拦的，放行后立刻通
   - ❓ **待真机确认**：`ctx.http`（dio → Dart 侧 socket）**是否也受这份"按域白名单"约束**。
     Android 原生的 `usesCleartextTraffic` 对 Flutter Dart 侧 HTTP 是生效的，
     但**"按域白名单"（`domain-config`）是否被 Dart 侧尊重，我们没有证据**；
     4.1 的真机记录反而显示 dio 能打到 `http://` 本机服务
     （那一次是临时在 **debug** manifest 开了 cleartext，属"全局开关"而非"按域白名单"，
-    所以**不能**用来推断本配置对 dio 生效）
+    所以**不能**用来推断本配置对 dio 生效）。
+    **对 Phase 8 的影响有限**：插件的 API 全是显式 `https://`（`mooc1-2.chaoxing.com`），
+    即使 dio 不认白名单也不受影响
   - ⚠️ 由此产生一个**明确的复验项**：登录成功后点「立即同步」，若 `fetchCourses`
     报 `{error:'connection'}`（而 `curl`/浏览器能通），基本就是"dart 侧不被按域白名单放行"，
     届时需另行决策（例如把 manifest 的 `usesCleartextTraffic` 也纳入，
@@ -1340,13 +1495,56 @@ const TimetableView({super.key, int totalWeeks = 20, int initialWeek = 1});
 
 `const CourseListView({super.key})` — AppBar"课程" + `EmptyState(Icons.book_outlined, '暂无课程')`。
 
-### `exam/exam_view.dart` — ExamView
+### `exam/exam_view.dart` — ExamView（**Phase 8 重写**）
 
-`const ExamView({super.key})` — AppBar"考试" + `EmptyState(Icons.assignment_outlined, '暂无考试安排', subtitle: '安装支持考试能力的插件后可导入')`。
+`const ExamView({super.key})` — 真实考试列表。
 
-### `homework/homework_view.dart` — HomeworkView
+- 数据源：`ExamProvider.displayExams`（已过滤隐藏、按开考时间排序）
+- **AppBar**：标题"考试"；右侧 `Icons.cloud_download_outlined`（tooltip"抓取考试"）
+- 空态：`EmptyState(assignment_outlined, '暂无考试安排', '登录学习通后，按课程勾选即可抓取考试时间', actionLabel: '抓取考试')`
+- 卡片：科目名（已开考的压暗）+ 倒计时徽章（`还有 N 天` / `今天` / `已开考`；
+  ≤3 天用 `theme.error`，否则 `theme.examHighlight`）+ 课程名 + 时间区间 + 考场 + 备注
+- 点卡片 → 底部弹层：课程 / 考试时间 / 倒计时 / 考场 / 座位 / 形式 / 时长 / 备注 + "隐藏这场考试"
+- `static Future<void> openSyncPage(BuildContext context)` — 打开"按课程勾选后抓取考试"页
 
-`const HomeworkView({super.key})` — AppBar"作业" + `EmptyState(Icons.edit_note, '暂无作业', subtitle: '安装学习通等插件后可查看')`。
+### `homework/homework_view.dart` — HomeworkView（**Phase 8 重写**）
+
+`const HomeworkView({super.key})` — 真实作业列表。
+
+- 数据源：`HomeworkProvider.displayHomeworks`
+- **AppBar**：标题"作业"；右侧 `Icons.cloud_download_outlined`（tooltip"抓取作业"）
+- 空态：`EmptyState(edit_note, '暂无作业', '登录学习通后，按课程勾选即可抓取作业与截止时间', actionLabel: '抓取作业')`
+- 卡片：左侧**完成勾选框**（写 `userOverride.customCompleted`）+ 标题（已完成加删除线）
+  + 课程名 + 截止时间行（`截止 2026-10-18 23:29 · 还剩 2 天` / `· 已逾期 3 天`，逾期用 `theme.error`）
+  + 正文预览（第一行非空文本，最多 2 行）
+- 点卡片 → 底部弹层：元信息 + 「标记完成/取消完成」+「隐藏」+ **完整作业正文**（可滚动）
+- `static Future<void> openSyncPage(BuildContext context)` — 打开"按课程勾选后抓取作业"页
+  （带 `withContent` 开关，并提示"打开正文会留下已开始作答记录"）
+
+### `sync/plugin_entity_sync_page.dart` — PluginEntitySyncPage（**Phase 8 新增**）
+
+**"按课程勾选后抓取"页**，作业与考试**共用**。
+
+> **为什么不默认全量抓**：学习通有反爬（实测 12 秒内 136 个请求触发 `【9010】操作异常`）。
+> 本账号有 68 门课，全抓必然被拦，且用户通常只关心少数几门。
+
+构造函数：`PluginEntitySyncPage({required String capability, required String title, required String itemLabel, required String itemUnit, required EntitySyncRunner run, bool showContentToggle = false, String contentToggleLabel = '同时抓取正文', String contentToggleHint = ''})`
+
+`typedef EntitySyncRunner = Future<SyncReport> Function({required String pluginId, required PluginHandle? handle, required List<PluginCourseRef> refs, required bool withContent, void Function(String stage, String message)? onProgress})`
+
+**本页不认识"作业"或"考试"**：能力 ID、标题、量词、以及"怎么执行同步"全由调用方传入，
+因此两个页面复用同一个实现（将来加"成绩"也只需再写一个调用方）。
+
+行为：
+- 进入即用 `PluginProvider.firstUsableWithCapability(capability)` 定位插件，
+  再调 `PluginEntitySyncService.fetchCourseRefs` 拿课程列表（**不落盘**）
+- 找不到插件时**区分两种原因**给提示："没装/没启用" vs "启用了但运行时不可用（附 `loadErrorOf`）"
+- 课程列表带**筛选框**（名称 / 教师 / 班级），"全选"**只选当前筛选出的**
+- **默认不勾选任何课程**（防误触全量）
+- 已选 > `kRecommendedMaxCoursesPerSync`（5）时显示风控警告（**不硬拦**）
+- 抓取中显示进度文案；完成后显示结果卡片（新增/更新/未变/跳过/保留用户修改/警告）
+  并**沉淀一条站内消息**
+- 常量：`kRecommendedMaxCoursesPerSync = 5`、`kMaxVisibleEntityWarnings = 3`
 
 ### `message/message_view.dart` — MessageView（**Phase 7 重写**）
 
@@ -1693,8 +1891,9 @@ Body 为 `ListView`，分 6 组，每组 = 小标题 + 一张 `Card`（`color: t
 `const PluginManagePage({super.key})`，`StatelessWidget` + `context.watch<PluginProvider>()`
 （插件从 0 个变 N 个或反向时自动重建，空态与列表自动切换）。
 
-- **AppBar**：标题"插件管理"，右侧 `PopupMenuButton`（`Icons.add`），三项：
+- **AppBar**：标题"插件管理"，右侧 `PopupMenuButton`（`Icons.add`），四项：
   - **"安装 NCST 教务插件"** → `PluginProvider.installNcstPlugin()`（Phase 4.2）
+  - **"安装学习通（超星）插件"** → `PluginProvider.installChaoxingPlugin()`（**Phase 8 新增**）
   - "从文件导入（Phase 6+）" → `SnackBar('从文件导入（Phase 6+ 实现）')`
   - "安装示例插件（Phase 3.5 验证用）" → `PluginProvider.installExamplePluginForDemo()`
 - **空列表** → `EmptyState(Icons.extension, '还没有安装插件', '从文件导入或从创意工坊下载', '去创意工坊')`
@@ -1920,6 +2119,53 @@ const EmptyState({
 
 **怎么装**：插件管理页右上角 `+` → 「安装 NCST 教务插件」
 （`PluginProvider.installNcstPlugin()`）。
+
+---
+
+### `assets/plugins/chaoxing.js` — 学习通（超星）插件（**Phase 8 新增**）
+
+`__plugin` 元信息：`id: 'chaoxing'` / `name: '学习通'` / `capabilities: ['homework', 'exam']` /
+`loginUrl: 'https://passport2.chaoxing.com/login'` / `checkUrl: 'https://i.mooc.chaoxing.com/'`。
+
+> ⚠️ 这是**唯一**允许出现学习通 URL / 字段名的地方（CONTEXT 3.1）。
+> 完整接口测绘（7 节，含参数必要性实验与踩坑）见 **`docs/chaoxing-api.md`**。
+
+**三个入口函数**
+
+| 入口 | 入参 | 返回 | 重放轮数（实测） |
+|------|------|------|:---:|
+| `fetchCourseList` | 无 | `{courses: [PluginCourseRef...], warnings}` | 2 |
+| `fetchHomeworks` | `{courses: [...], withContent: bool}` | `{homeworks: [Homework...], warnings}` | 5 |
+| `fetchExams` | `{courses: [...]}` | `{exams: [Exam...], warnings}` | 3 |
+
+失败一律返回 `{error: '人话原因'}`（**宁可报错也不静默返回空数组**——空数组会被上层
+当成"确实没有作业"）；网络类失败额外标 `retryable: true`（Phase 4.3 契约）。
+
+**内部要点**
+
+- **每层批量登记**：`ctx.http` 是"登记待办 + 宿主重放"，入口会被执行多次
+  （上限 `kMaxReplayRounds = 8`）。每个入口都遵循"① 先登记同一层的全部请求 →
+  ② 统一检查（有 pending 就立刻返回，宿主重放）→ ③ 全 ok 才解析并登记下一层"。
+  **不能**写成"循环里请求完立刻用结果"，那样每轮只推进一个请求，勾 5 门课就超轮数
+- **`enc` / `openc` 是每门课的**：必须从课程主页 HTML 抠完整 URL
+  （`__cx_extractWorkEntry` / `__cx_extractExamEntry`），手工拼参数会漏 `openc`
+  而被判 `[3003] 没有此页面访问权限`
+- **作业正文 4 级链路**：课程主页 → 作业列表（拿 `enc`）→ `isExpire`（拿 `standardEnc`）
+  → `doHomeWorkNew`（题目）。未完成章节任务点时服务端不给 `standardEnc`，
+  **不是错误**，只是没有正文
+- **风控识别**：`__cx_isBlocked` 检测 `9010` / `antispider` / `请输入图片中的验证码`，
+  命中即返回可读错误并**停止继续打**（HTTP 202 也视同被拦）
+- **`__cx_splitLi` 必须保留 `<li ...>` 起始标签**：`class="courseItem"` /
+  `class="inspectTask"` 恰好写在标签上，丢掉标签会一个都匹配不到。
+  标签正则用 `<li(?:\s[^>]*)?>`——`<li[^>]*>` 会**误匹配 `<link ...>`**
+- 常量：`__CX_HOST`（学习通课程站，本账号实测域名）/ `__CX_MAX_TEXT = 4000` /
+  `__CX_MAX_QUESTIONS = 60`
+
+**幂等**：三个入口都会被宿主执行多次，因此都是"纯计算 + 登记请求"，
+**不写任何 `ctx.storage`**（副作用只在最终轮提交的约定在此无适用点）。
+
+**怎么装**：插件管理页右上角 `+` → 「安装学习通（超星）插件」
+（`PluginProvider.installChaoxingPlugin()`）。
 
 ---
 

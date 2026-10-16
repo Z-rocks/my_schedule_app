@@ -35,6 +35,21 @@ class Exam {
   /// 关联的课程 ID，用于从考试跳回课程详情；无关联为空字符串。
   final String courseId;
 
+  /// 所属课程名（**Phase 8**）。
+  ///
+  /// 与 [courseId] 的分工：ID 用来跳转，名字用来**展示**。
+  /// 之所以要单独存名字而不是"用 ID 去 `CourseProvider` 查"：
+  /// 插件给的考试 `courseId` 与课程条目的 `id` 未必同构
+  /// （学习通的课程条目 id 还带班级后缀），查不到时列表就成了一片空白。
+  final String courseName;
+
+  /// 补充说明（**Phase 8**）：插件给出的非结构化备注，如
+  /// `"待做 · 完成任务点80%"`。
+  ///
+  /// 与 [UserOverride.note] 的区别：本字段是**插件原文**，
+  /// 用户的备注在覆盖层里，展示时后者优先（见 [displayNote]）。
+  final String note;
+
   /// 来源插件 ID，用户自建为 `'user'`。
   final String sourcePluginId;
 
@@ -55,6 +70,8 @@ class Exam {
     this.unit = 0,
     this.durationMinutes = 0,
     this.courseId = '',
+    this.courseName = '',
+    this.note = '',
     required this.sourcePluginId,
     this.remindMinutesBefore = 0,
     this.userOverride,
@@ -76,6 +93,8 @@ class Exam {
       unit: _asDouble(json['unit']),
       durationMinutes: _asInt(json['durationMinutes']),
       courseId: _asString(json['courseId']),
+      courseName: _asString(json['courseName']),
+      note: _asString(json['note']),
       sourcePluginId: _asString(json['sourcePluginId'], fallback: 'user'),
       remindMinutesBefore: _asInt(json['remindMinutesBefore']),
       userOverride:
@@ -100,6 +119,13 @@ class Exam {
 
   /// 展示用颜色，ARGB 整数；`null` 时由主题层分配。
   int? get displayColor => userOverride?.customColor;
+
+  /// 展示用备注：用户写过备注就以用户的为准，否则用插件原文 [note]。
+  String get displayNote {
+    final String? custom = userOverride?.note;
+    if (custom != null && custom.trim().isNotEmpty) return custom;
+    return note;
+  }
 
   /// 实际结束时间：优先用 [endTime]，否则由 [displayStartTime] + [durationMinutes] 推算。
   DateTime get effectiveEndTime =>
@@ -134,6 +160,8 @@ class Exam {
       'unit': unit,
       'durationMinutes': durationMinutes,
       'courseId': courseId,
+      'courseName': courseName,
+      'note': note,
       'sourcePluginId': sourcePluginId,
       'remindMinutesBefore': remindMinutesBefore,
       'userOverride': userOverride?.toJson(),
@@ -152,6 +180,8 @@ class Exam {
     double? unit,
     int? durationMinutes,
     String? courseId,
+    String? courseName,
+    String? note,
     String? sourcePluginId,
     int? remindMinutesBefore,
     UserOverride? userOverride,
@@ -169,6 +199,8 @@ class Exam {
       unit: unit ?? this.unit,
       durationMinutes: durationMinutes ?? this.durationMinutes,
       courseId: courseId ?? this.courseId,
+      courseName: courseName ?? this.courseName,
+      note: note ?? this.note,
       sourcePluginId: sourcePluginId ?? this.sourcePluginId,
       remindMinutesBefore: remindMinutesBefore ?? this.remindMinutesBefore,
       userOverride:
@@ -180,7 +212,8 @@ class Exam {
   String toString() => 'Exam(id: $id, name: $name, startTime: $startTime, '
       'endTime: $endTime, location: $location, seatNumber: $seatNumber, '
       'examType: $examType, unit: $unit, durationMinutes: $durationMinutes, '
-      'courseId: $courseId, sourcePluginId: $sourcePluginId, '
+      'courseId: $courseId, courseName: $courseName, note: $note, '
+      'sourcePluginId: $sourcePluginId, '
       'remindMinutesBefore: $remindMinutesBefore, '
       'userOverride: $userOverride)';
 

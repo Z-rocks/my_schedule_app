@@ -4,7 +4,7 @@
 > 遇到阻塞，在旁边加 `⚠️` 并说明。
 > 本文件是"当前状态"的唯一真相来源。
 
-- 最后更新：2026-09-30
+- 最后更新：2026-10-16
 
 ---
 
@@ -12,7 +12,17 @@
 
 > 给新会话 AI 用。每次阶段切换时更新。
 
-- **最新完成**：**Phase 5.1（课表"没有数据"的真相 + 周次解析加固）** ——
+- **最新完成**：**Phase 8（学习通插件 + 作业/考试内核接线）** ——
+  `assets/plugins/chaoxing.js` 三个入口（`fetchCourseList` / `fetchHomeworks` /
+  `fetchExams`）+ 内核侧 `HomeworkProvider` / `ExamProvider` /
+  `PluginEntitySyncService` / "按课程勾选后抓取"页。
+  **已在真实账号上跑通**：68 门课程、1 份作业（含 9 题正文、截止
+  `2026-10-18T23:29`）、1 场考试（`2026-09-18 09:00`~`2027-01-08 16:00`）。
+  **真机验收通过**（小米 13 / Android 16）：登录 → 保存 Cookie → 68 门课 →
+  作业同步落盘，真机顺带暴露并修掉 2 个桌面测不出的 bug（明文 HTTP 被拦、
+  登录成功判定对 scheme 敏感）。接口测绘见 `docs/chaoxing-api.md`，
+  验证见下方 Phase 8 备注与"真机实测"小节。
+- **Phase 5.1（课表"没有数据"的真相 + 周次解析加固）** ——
   用户反馈"课表没数据、课程页正常"。**根因不是数据没读到**：课程是 `4,6-14周`
   而当时是第 5 周，**课表第 5 周本来就该是空的**——问题在于页面对此**一个字都不说**。
   已加"本周没有课"说明条 + 跳到最近有课周；顺带修掉全角数字/中文数字
@@ -31,9 +41,10 @@
   Phase 7 `acce25f`；Phase 5.1 见下
 - **Phase 2 全部完成**：Hive 存储 + 课表渲染 + 学期配置 + 添加课程
 - **Phase 3 全部完成**：插件运行时（沙箱 → 加载 → 多插件管理 → 文件持久化 → 管理 UI → **ctx**）
-- **下一步**：Phase 8（学习通插件，**需要用户的学习通凭据**）/
-  Phase 9（发布打包，**需要用户定图标与签名**）；
-  另需用户决定是否引入 `flutter_local_notifications` 做系统通知
+- **下一步**：Phase 9（发布打包，**需要用户定图标与签名**）；
+  另需用户决定是否引入 `flutter_local_notifications` 做系统通知。
+  Phase 8 遗留项见下方 Phase 8 备注的"未做"清单（真机验收 / 定时同步 /
+  作业提醒 / 插件文件导入）
 - **⚠️ 环境提示（4.3 复验踩到）**：
   ① 设备可能把 App 当**横屏**应用（`uiautomator` 报 `rotation="3"`），
   会让截图旋转 90° 且 `adb input tap` 坐标全落空；
@@ -2200,15 +2211,186 @@
 
 ---
 
-## Phase 8：学习通插件（未开始）
+## Phase 8：学习通插件（✅ 完成，真机验收通过）
 
-- [ ] 学习通登录
-- [ ] 作业/考试拉取
-- [ ] 作业模块激活
+- [x] 学习通登录 —— 复用 Phase 4.1 的通用 `WebViewLoginPage`；
+      登录地址与成功判定由插件声明（`loginUrl` / `checkUrl`），内核不硬编码
+- [x] 课程列表抓取（`fetchCourseList`）—— 供"勾选要抓哪几门课"用，**不落盘**
+- [x] 作业拉取（`fetchHomeworks`，**含正文题目**）
+- [x] 考试拉取（`fetchExams`）
+- [x] 作业模块激活 —— `HomeworkProvider` + `homework_view.dart` 接真实数据
+- [x] 考试模块接真实数据 —— `ExamProvider` + `exam_view.dart`
+- [x] "按课程勾选后抓取"页（作业 / 考试共用一个页面）
+- [x] 插件安装入口（插件管理页 `+` 菜单）
+- [x] 真机验收 —— **2026-10-16 在小米 13（Android 16 / HyperOS V816）上通过**：
+      登录 → 自动返回并保存 Cookie（19 个 / 1231 字符）→ 课程列表 68 门 →
+      作业同步（含正文）→ 落盘 `homeworks.hive`。详见下方"真机实测"小节
+- [ ] 定时自动同步（WorkManager）
+- [ ] 作业 / 考试提醒（依赖系统通知）
+
+> 自验证：`flutter analyze` 全绿 + `flutter test` **29 组全部通过** +
+> `node --check` 插件语法 + **真实账号端到端跑通**。详见下方 **Phase 8 备注**。
 
 ---
 
-## Phase 9：打包发布（未开始）
+### Phase 8 备注（学习通插件 + 作业/考试内核接线）
+
+> **目标**：用户能"先爬取所有课程 → 勾选 → 抓取作业与考试 → 在 App 里看到
+> 作业正文与截止时间"。
+
+> **验证状态（已在真实账号上跑通，未用真机 App）**：
+> - ✅ `flutter analyze`（整包，含 `test/`）→ `No issues found!`
+> - ✅ `flutter test` → **29 组全部通过**（`test/chaoxing_kernel_wiring_test.dart`）
+> - ✅ `node --check assets/plugins/chaoxing.js` 语法通过
+> - ✅ **真实账号端到端**（`tools/chaoxing/test-plugin.js`，浏览器内驱动）：
+>   - `fetchCourseList` → **68 门课程**，2 轮重放
+>   - `fetchHomeworks`（含正文）→ 1 份作业、**9 题正文**、截止 `2026-10-18T23:29`，
+>     5 轮重放（上限 8，余量充足）
+>   - `fetchExams` → 1 场考试 `2026-09-18 09:00 ~ 2027-01-08 16:00`，3 轮重放
+> - ✅ **UI 渲染佐证**（用**真实插件返回值**做夹具渲染，非手绘）：
+>   `docs/verify/8-homework-list.png`（作业列表，含"还剩 2 天"倒计时）、
+>   `docs/verify/8-homework-detail.png`（详情弹层，**9 题正文完整渲染**）、
+>   `docs/verify/8-exam-list.png`（考试列表，含"已开考"状态）。
+>   渲染脚本是**临时文件**（跑完即删）——golden 截图依赖系统字体与渲染后端，
+>   换机器必然失败，不适合进 CI；真正的回归保障是那 29 组单元测试。
+
+> **改动清单**：
+>
+> | 文件 | 改动 |
+> |------|------|
+> | `assets/plugins/chaoxing.js` | **新增**。三个入口 + 一套解析工具；学习通 URL / 字段名只在这里 |
+> | `lib/models/plugin_course_ref.dart` | **新增**。插件课程引用（**不透明对象**，内核不认识学校字段） |
+> | `lib/services/plugin_entity_sync_service.dart` | **新增**。列表型实体的通用同步（重试 / 归类 / 增量落盘），作业与考试共用 |
+> | `lib/providers/homework_provider.dart` | **新增**。Hive 读写 + 覆盖层保留 + 展示排序 |
+> | `lib/providers/exam_provider.dart` | **新增**。同上（按开考时间排序） |
+> | `lib/pages/sync/plugin_entity_sync_page.dart` | **新增**。"勾选课程 → 抓取"页，作业/考试共用 |
+> | `lib/pages/homework/homework_view.dart` | 空态骨架 → 真实列表 + 详情弹层 + 抓取入口 |
+> | `lib/pages/exam/exam_view.dart` | 空态骨架 → 真实列表 + 详情弹层 + 抓取入口 |
+> | `lib/models/exam.dart` | 新增 `note` / `courseName` 字段与 `displayNote` |
+> | `lib/models/message.dart` | `Message.fromSyncReport` 新增 `itemLabel` / `itemUnit`（默认值不变，课程文案零变化） |
+> | `lib/providers/plugin_provider.dart` | `firstEnabledWithCapability` / `firstUsableWithCapability` / `installChaoxingPlugin` |
+> | `lib/pages/settings/plugin_manage_page.dart` | `+` 菜单加"安装学习通（超星）插件" |
+> | `lib/main.dart` | 注册两个新 Provider + 启动时载入 |
+> | `test/chaoxing_kernel_wiring_test.dart` | **新增**。项目首个测试文件，用**真实插件输出**做夹具 |
+> | `tools/chaoxing/` | **新增**（开发工具，非交付物）：Playwright 会话、重放机制模拟器 |
+> | `docs/chaoxing-api.md` | **新增**。接口测绘（7 节，含参数必要性实验与踩坑） |
+
+> **关键技术结论**：
+>
+> 1. **重放机制决定插件写法**：`ctx.http` 是"登记待办 + 宿主重放"，入口函数会
+>    被执行多次（上限 `kMaxReplayRounds = 8`）。因此每个入口都必须**先批量登记
+>    同一层的请求、再统一检查**——写成"循环里请求完立刻用结果"会让每轮只推进
+>    一个请求，勾 5 门课就超轮数。本插件最深 5 轮。
+> 2. **`enc` / `openc` 是"每门课"的，不是账号级的**：必须从课程主页 HTML 里
+>    抠出完整 URL，手工拼参数会漏 `openc` 而被判无权限
+>    （`[3003] 您长时间没有操作，或没有此页面访问权限`）。
+> 3. **作业正文是 4 级链路**：课程主页 → 作业列表（拿 `enc`）→ `isExpire`
+>    （拿 `standardEnc`）→ `doHomeWorkNew`（正文）。少任何一级都拿不到题目。
+> 4. **学习通有反爬**：实测 12 秒内 136 个请求触发
+>    `【9010】操作异常，请输入图片中的验证码`。因此内核侧**只抓用户勾选的课程**、
+>    严格串行、超过 5 门就在界面上警告。
+> 5. **内核不知道学校字段**（CONTEXT 3.1）：`PluginCourseRef` 把插件给的课程对象
+>    当作**不透明 Map** 原样存、原样回传，内核只读 `id` / `name` / `teacher` /
+>    `className` 四个约定展示字段（缺失即空串，不影响功能）。
+> 6. **覆盖层内联存储**：课程的覆盖层在独立的 `overrides` Box（由 `OverrideEngine`
+>    管），作业 / 考试**内联在各自的 JSON 里**。原因是 `overrides` Box 的键空间是
+>    "课程 ID"，而作业 / 考试 ID 与课程 ID 都可能形如 `chaoxing:<数字>`，
+>    共用会撞号（表现为"改作业勾选把课程颜色改了"）。
+> 7. **`PluginEntitySyncService` 而不是泛型化 `CourseSyncService`**：两者共享 90%
+>    流程，但课程有 `sectionTimes` / `allUnits` 两个回传字段。选"抽出通用服务、
+>    课程服务一行不改"，避免动 Phase 4.3 已交付且带测试的代码。
+> 8. **模拟器抓到一个真 bug**：`__cx_splitLi` 原先按 `/<li[^>]*>/` 切块会**丢掉
+>    起始标签**，而 `class="courseItem"` / `class="inspectTask"` 恰好写在标签上 →
+>    一个都匹配不到。改为捕获标签并保留（并加 `(?:\s[^>]*)?` 避免误匹配 `<link>`）。
+
+> **未做（有意）**：
+> - **考试链路的真机验收**：真机上作业链路已完整跑通，但 `fetchExams`
+>   还没在真机上点过（桌面已验证 3 轮重放返回 1 场考试）。预计风险很低——
+>   它和作业走同一套 `ctx.http` / 重放 / 落盘管线，且不再有登录障碍。
+> - **定时同步 / 作业提醒**：依赖 WorkManager 与系统通知，属 Phase 7 的遗留
+>   （系统通知有意未做），本阶段不引入。
+> - **插件文件导入**：仍然只有"内置插件 + 创意工坊"两条安装路径。
+> - **`tools/chaoxing/` 的脚本部分入库**（重放机制模拟器 `test-plugin.js` 等），
+>   但**抓取产物一律 ignore**——`courses.json` / `out/` / `raw-*.html` 是
+>   真实账号的个人数据（同学姓名、课表、作业正文），`.profile/` 是登录态。
+
+---
+
+### Phase 8 真机实测（2026-10-16，小米 13 / Android 16 / HyperOS V816）
+
+> **结论：主链路通过，且真机暴露了 2 个桌面永远测不出来的 bug。**
+>
+> 环境：设备 `2211133C`（小米 13），Android 16 / API 36，arm64-v8a，1080×2400 @440dpi。
+> 构建：`flutter build apk --debug --target-platform android-arm64` → `adb install -r -t`。
+
+> **实测日志原文（adb logcat）**：
+> ```
+> [WebViewLoginPage] 提取到 19 个 Cookie，拼接后 1231 字符
+> [WebViewLoginPage] 已保存 chaoxing 的 Cookie（1231 字符）
+> [Plugin:chaoxing] 第 1 轮登记了 1 个 HTTP 请求，取回后重放
+> [Plugin:chaoxing] 学习通：解析出 68 门课程
+> [PluginEntitySyncService] chaoxing 列出 68 门课程
+> [Plugin:chaoxing] 第 1 轮登记了 2 个 HTTP 请求，取回后重放
+> [Plugin:chaoxing] 第 2 轮登记了 2 个 HTTP 请求，取回后重放
+> [Plugin:chaoxing] 第 3 轮登记了 1 个 HTTP 请求，取回后重放
+> [Plugin:chaoxing] 第 4 轮登记了 1 个 HTTP 请求，取回后重放
+> [Plugin:chaoxing] 学习通：解析出 1 份作业（含正文）
+> [PluginEntitySyncService] chaoxing 作业同步完成：新增 1、更新 0、未变 0、跳过 0
+> ```
+> 落盘佐证：`homeworks.hive` 0 → 1391 字节；安全存储出现 `chaoxing:cookie`；
+> `messages.hive` 出现同步报告消息。**作业页在真机上显示真实作业（第一章作业，9 题正文）。**
+
+> **真机暴露的 2 个 bug（均已修复 + 回归测试）**：
+>
+> | # | 现象 | 根因 | 修复 |
+> |---|------|------|------|
+> | 1 | 登录后显示「页面加载失败」 | 学习通登录成功后 **302 到 `http://i.mooc.chaoxing.com/`（明文 HTTP）**，被 Android 网络策略拦成 `net::ERR_CLEARTEXT_NOT_PERMITTED`。**此前"学习通全是 https"的推测被证伪**——这类平台策略只有真机能暴露，桌面浏览器不受它约束 | `network_security_config.xml` 白名单追加 `chaoxing.com`（`includeSubdomains`）。仍是定向放行，`base-config` 保持 `false` |
+> | 2 | （修完 1 后会撞上）登录成功但页面不自动返回 | `isLoginSuccessUrl` 用 `startsWith` 字面匹配，插件声明 `checkUrl=https://...`，实际落地是 `http://...`，**scheme 不同导致永远匹配不上**；且因为没走到成功分支，Cookie 也不会落盘 | 改为 **scheme 不敏感**：先原样比，不中再剥掉 `http(s)://` 比一次。只匹配开头，`https://evil.com/?next=https://i.mooc...` 不会误判 |
+>
+> 附加改进：`loadErrorHint()` 把 WebView 的英文报错翻译成"该改哪里"的人话
+> （如明文被拦会直接提示去改 `network_security_config.xml`）。
+> 回归保障：新增 `test/webview_login_success_test.dart`，共 18 组；
+> `flutter analyze` 无问题、`flutter test` **47 组全部通过**。
+
+> **真机验收的元教训**：`docs/chaoxing-api.md` 是用桌面浏览器（Playwright）测绘的，
+> 那份记录里"登录后跳转 https://i.mooc.chaoxing.com/space/index"是对的，
+> 但**没有记录中间那跳 302 落在 http**——桌面浏览器不会套用 Android 的网络策略，
+> 所以根本看不到这一步会失败。**"浏览器跑通了"不能替代真机验收。**
+
+---
+
+### Phase 8.1：发版准备（2026-10-16，真机验收通过后）
+
+> **目标**：把 App 从"开发者的玩具"变成"能发出去的东西"。四件事都是发版前
+> 成本最低的时机——尤其包名，**发出去之后就再也改不了**。
+
+| 项 | 之前 | 现在 | 为什么必须现在改 |
+|----|------|------|------------------|
+| `applicationId` | `com.example.my_schedule_app` | **`com.zys.myschedule`** | Flutter 模板默认值；一旦发出去就**永远是这个身份**，应用商店也不收 `com.example.*` |
+| `namespace` / Kotlin 包 | `com.example.my_schedule_app` | `com.zys.myschedule`（`MainActivity.kt` 已随目录迁移） | 与包名保持一致，避免"运行时代码叫 A、安装身份叫 B"的困惑 |
+| `android:label` | `my_schedule_app` | **`我的课表`** | 桌面图标下显示的就是这个 |
+| 版本号 | `0.1.0+1` | **`0.2.0+2`** | 语义上"功能成型、未到 1.0"；且与已废弃的旧草稿插件 v0.1.0 区分开 |
+| 签名 | `signingConfigs.getByName("debug")`（gradle 里写着 TODO） | **正式 keystore** `android/key/myschedule-release.jks`（RSA 2048 / 10000 天 / alias `myschedule`），凭据在 `android/key.properties` | debug 密钥不可控，发出去就没法发更新。`build.gradle.kts` 读 `key.properties`，**没有该文件时回退 debug 签名**，保证别人 clone 下来也能 build |
+| 示例插件 | `assets/plugins/example.js` + `installExamplePluginForDemo()` | **已删除**，`+` 菜单从 4 项变 3 项 | Phase 4 就约定了；之前留着是因为它是唯一能验证"装上→启用→详情页→同步"的用例，现在学习通插件已经真机跑通，它没有存在价值了 |
+
+> ⚠️ **备份清单（用户必须自己做，我没法替你备份）**：
+> `android/key/myschedule-release.jks` + `android/key.properties`（含密码），
+> 离线存两份（网盘 + 移动硬盘）。**这两份文件丢了，已装用户就永远收不到更新**，
+> 而且没有找回的办法——Android 的签名校验只认这对密钥。
+> 两份文件都已加入 `.gitignore`，**不会也不会**被提交到 GitHub。
+
+> ⚠️ **换包名的代价**：`com.zys.myschedule` 对设备而言是一个**全新的 App**，
+> 旧包 `com.example.my_schedule_app` 里的课表 / 作业 / Cookie **不会**迁移过来
+> （Hive 数据在应用私有目录，按包名隔离）。重新装新包、重新登录、重新同步即可。
+
+> 顺带清理：`plugin_storage_service.dart` / `pubspec.yaml` 里指向
+> `example.js` 的注释同步更新。
+
+
+
+---
+
+## Phase 9：打包发布（准备就绪，待构建分发）
 
 - [ ] 应用图标
 - [ ] 启动页
@@ -2290,3 +2472,19 @@
 | 2026-09-24 | 插件目录布局 `<id>.js` / `<id>.manifest.json` 是契约，改动需写迁移 | 已决定 |
 | 2026-09-24 | 示例插件 Phase 4 完成后删除（assets/plugins/example.js + installExamplePluginForDemo） | 待处理 |
 | 2026-09-24 | isRemovable 当前无 false 使用者，留给将来系统级插件 | 已决定 |
+| 2026-10-16 | **学习通有反爬（Phase 8 实测）**：12 秒内 136 个请求触发 `【9010】操作异常，请输入图片中的验证码`，HTTP 202 + 跳 `antispiderShowVerify.ac`。**因此内核只抓用户勾选的课程、严格串行、一次建议 ≤5 门**（超了只在界面警告，不硬拦）。若用户撞上，需先在浏览器里过一次验证码 | ✅ 已规避（写进插件与 UI） |
+| 2026-10-16 | **`enc` / `openc` 是每门课的，不是账号级的**：用 A 课的 `enc` 去请求 B 课的作业会拿到 822 字节的空壳。**必须从课程主页 HTML 里抠出完整 URL**，手工拼参数必错 | ✅ 已决定（写进插件注释） |
+| 2026-10-16 | **作业正文的 4 级链路**：课程主页 → 作业列表（`enc`）→ `isExpire`（`standardEnc`）→ `doHomeWorkNew`（正文）。少任何一级都拿不到题目；未完成章节任务点时服务端不给 `standardEnc`，此时**不是错误**，只是没有正文 | ✅ 已实现 |
+| 2026-10-16 | **抓作业正文会在学习通留下"已开始作答"记录**（用户已知情并接受）。UI 上给了开关 `withContent`，只关心截止时间时可以关掉 | 已决定（用户确认） |
+| 2026-10-16 | **内核不认识学校字段（CONTEXT 3.1）的落地方式**：`PluginCourseRef` 把插件给的课程对象当**不透明 Map** 原样存、原样回传；内核只读 `id`/`name`/`teacher`/`className` 四个约定展示字段（缺失即空串）。因此 `courseId`/`classId`/`cpi` **不出现在内核任何判断里** | ✅ 已决定 |
+| 2026-10-16 | **作业 / 考试的覆盖层内联存储，不进 `overrides` Box**：`overrides` 的键空间是"课程 ID"，而作业/考试 ID 与课程 ID 都可能形如 `chaoxing:<数字>`，共用会撞号（表现为"改作业勾选把课程颜色改了"）。`Homework` / `Exam` 模型本来就带 `userOverride` 且 `toJson` 会序列化它，因此**内联零成本**；代价是同步落盘时必须把已有覆盖层重新挂回去（已实现并有用例） | ✅ 已决定 |
+| 2026-10-16 | **未泛型化 `CourseSyncService`**：作业/考试另起 `PluginEntitySyncService`（课程服务一行不改）。共享 90% 流程但课程有 `sectionTimes`/`allUnits` 两个专属回传字段，泛型化要动 Phase 4.3 已交付且带测试的代码 | ✅ 已决定 |
+| 2026-10-16 | `Message.fromSyncReport` 新增 `itemLabel`/`itemUnit`（默认 `课程`/`门`），**课程文案与 Phase 7 逐字一致**（已加回归用例锁定） | ✅ 已决定 |
+| 2026-10-16 | **Phase 8 未做真机验收**：本次是桌面 Node + Playwright 浏览器跑通的插件链路，**没有在 Android 上跑 App**。`network_security_config`（学习通是 https，理论不需要放行）与 WebView 登录需实体机确认 | ✅ 已验收（当晚补上，且真机推翻了"学习通是 https"的推测——见 Phase 8 真机实测小节） |
+| 2026-10-16 | **真机暴露 bug 1（明文 HTTP）**：学习通登录成功后 302 到 `http://i.mooc.chaoxing.com/`，被 Android 拦成 `net::ERR_CLEARTEXT_NOT_PERMITTED`，界面显示「页面加载失败」。请求根本没发出去，**不存在 HTTP 状态码** | ✅ 已修复（`network_security_config.xml` 放行 `chaoxing.com` 整域） |
+| 2026-10-16 | **真机暴露 bug 2（scheme 敏感）**：`isLoginSuccessUrl` 字面匹配 `checkUrl=https://...`，而实际落地是 `http://...`，永远命中不了 → 登录成功却不返回、Cookie 不落盘 | ✅ 已修复（剥掉 scheme 再比一次；新增 18 组回归测试） |
+| 2026-10-16 | **设备上残留旧草稿插件 `xuexitong`（v0.1.0）**：插件改名后，旧 id 会作为"另一个插件"留在用户设备上（Hive + `app_flutter/plugins/xuexitong.js`），与新插件并存造成困惑 | ⚠️ 已在真机上手动卸载；**插件 id 一旦发布就不要再改**（改了也没法通知已装用户） |
+| 2026-10-16 | **`tools/chaoxing/` 的抓取产物是个人数据**：`courses.json`（68 门课+教师+班级）、`out/`（14 个页面 HTML）、`raw-*.html`（含登录后的个人主页）、`.profile/`（32MB 浏览器登录态）。已全部加入 `.gitignore`，**只有脚本（21 个 .js）入库** | ✅ 已规避 |
+| 2026-10-16 | `tools/chaoxing/` 是**开发工具**（Playwright 会话、重放机制模拟器），内含 `.profile/`（浏览器登录态）与 `netlog-*.jsonl`（抓包记录）。已加 `.gitignore`，**不要提交** | 已决定 |
+| 2026-10-16 | 插件管理页的 `+` 菜单现在有 4 项（NCST / 学习通 / 文件导入 / 示例）。`assets/plugins/example.js` 与 `installExamplePluginForDemo()` 仍是**临时验证代码**，按 Phase 4 的约定应删除——本次**未删**，避免与学习通插件的验收混在一起 | ⚠️ 待处理 |
+| 2026-10-16 | **本机 `flutter test` 的两个坑**：① 环境有 `http_proxy=127.0.0.1:54682`，会让 `flutter_tester` 的本地 WebSocket 握手走代理而报 `Invalid WebSocket upgrade request` → 必须 `env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY flutter test`。② 用 `RepaintBoundary.toImage` 截图时，**图能正常写出，但测试进程在第一个用例结束后不会退出**（一直挂着直到被杀）→ 想连出多张图就得分文件或用 `--plain-name` 一个一个跑。这两点都只影响**临时验证脚本**，不影响 29 组常驻单元测试 | 已规避 |
