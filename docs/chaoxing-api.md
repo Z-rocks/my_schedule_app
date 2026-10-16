@@ -33,9 +33,9 @@ GET https://mooc1-2.chaoxing.com/visit/courses/study
   </div>
   <div class="Mconright httpsClass">
     <h3><a class="courseName" href='...' title="综合评价方法">综合评价方法</a></h3>
-    <p title="周丽晖">周丽晖</p>          <!-- 教师 -->
+    <p title="张老师">张老师</p>          <!-- 教师 -->
     <p title=""></p>
-    <p title="23计3">23计3</p>            <!-- 班级 -->
+    <p title="23计1">23计1</p>            <!-- 班级 -->
   </div>
 </li>
 ```
@@ -223,7 +223,7 @@ GET https://mooc1-2.chaoxing.com/mooc-ans/work/doHomeWorkNew
 | 题号 | `div.Zy_TItle > i.fl` |
 | 题干 | `div.Zy_TItle > div.fontLabel` 的 HTML（含 `<p>` 题干与 `（X分）`） |
 
-- 作业元信息在页面顶部：`题量：9` / `满分：100.0 分` / `创建者：周丽晖` / `截止时间：2026-10-18 23:29`。
+- 作业元信息在页面顶部：`题量：9` / `满分：100.0 分` / `创建者：张老师` / `截止时间：2026-10-18 23:29`。
 - ⚠️ 题目顺序可能被随机化（`randomOptions=true`），两次加载的题序/分值组合可能不同。
 
 ## 6. 踩坑记录

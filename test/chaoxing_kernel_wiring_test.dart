@@ -2,8 +2,10 @@
 //
 // 数据不是编造的：下面 [kRealCourseList] / [kRealHomework] / [kRealExam]
 // 是 `tools/chaoxing/test-plugin.js` 在**真实账号**上跑出来的插件返回值原文
-// （2026-10-16）。因此这些用例真正验证的是"插件产出的形状内核读得懂"，
-// 而不只是"内核读得懂我自己编的形状"。
+// （2026-10-16），**仅把教师姓名与班级名替换成了占位符**（推送公开仓库前
+// 做的脱敏——第三方姓名不该进公开仓库；课程/班级的数字 id 保留，
+// 因为没有登录态它们无法被利用）。因此这些用例真正验证的是
+// "插件产出的形状内核读得懂"，而不只是"内核读得懂我自己编的形状"。
 //
 // 覆盖：
 //   1. 课程引用：解析、去重、原样透传（内核不认识学校字段）
@@ -32,12 +34,12 @@ const String kRealCourseList = '''
 {
   "courses": [
     {"id":"267787514_156498244","courseId":"267787514","classId":"156498244",
-     "cpi":"344942005","name":"综合评价方法","teacher":"周丽晖","className":"23计3"},
+     "cpi":"344942005","name":"综合评价方法","teacher":"张老师","className":"23计1"},
     {"id":"267126809_155325476","courseId":"267126809","classId":"155325476",
-     "cpi":"340484539","name":"软件工程C-2026","teacher":"石琳","className":"23计1-3"},
+     "cpi":"340484539","name":"软件工程C-2026","teacher":"李老师","className":"23计2"},
     {"id":"241979849_155051855","courseId":"241979849","classId":"155051855",
      "cpi":"335822651","name":"《国家学生体质健康标准》指导攻略",
-     "teacher":"华北理工大学体育部","className":"2026秋测试2023级——人工智能学院"}
+     "teacher":"体育部","className":"2026秋2023级——人工智能学院"}
   ],
   "warnings": []
 }
@@ -95,9 +97,9 @@ void main() {
       expect(refs, hasLength(3));
       expect(refs.first.id, '267787514_156498244');
       expect(refs.first.name, '综合评价方法');
-      expect(refs.first.teacher, '周丽晖');
-      expect(refs.first.className, '23计3');
-      expect(refs.first.subtitle, '周丽晖 · 23计3');
+      expect(refs.first.teacher, '张老师');
+      expect(refs.first.className, '23计1');
+      expect(refs.first.subtitle, '张老师 · 23计1');
       // 第 3 条的班级名很长，确认没有被截断 / 转义搞坏。
       expect(refs.last.displayName, '《国家学生体质健康标准》指导攻略');
     });
