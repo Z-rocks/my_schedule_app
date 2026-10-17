@@ -14,6 +14,7 @@ import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
 import '../../widgets/empty_state.dart';
 import '../sync/plugin_entity_sync_page.dart';
+import 'hidden_exams_page.dart';
 
 /// 考试安排页。
 class ExamView extends StatelessWidget {
@@ -57,6 +58,7 @@ class ExamView extends StatelessWidget {
     final AppTheme theme = AppThemeExtension.of(context);
     final ExamProvider provider = context.watch<ExamProvider>();
     final List<Exam> exams = provider.displayExams;
+    final int hiddenCount = provider.hiddenCount;
 
     return Scaffold(
       backgroundColor: theme.background,
@@ -64,6 +66,13 @@ class ExamView extends StatelessWidget {
         title: const Text('考试'),
         centerTitle: true,
         actions: <Widget>[
+          // 隐藏考试的恢复入口：有隐藏项时才出现，是用户唯一的找回路径。
+          if (hiddenCount > 0)
+            IconButton(
+              icon: const Icon(Icons.visibility_off_outlined),
+              tooltip: '已隐藏 $hiddenCount 场考试',
+              onPressed: () => _openHidden(context),
+            ),
           IconButton(
             icon: const Icon(Icons.cloud_download_outlined),
             tooltip: '抓取考试',
@@ -71,13 +80,20 @@ class ExamView extends StatelessWidget {
           ),
         ],
       ),
+      // 空列表要区分"真没有"和"全被隐藏"——后者必须能一键找回。
       body: exams.isEmpty
           ? EmptyState(
-              icon: Icons.assignment_outlined,
-              title: '暂无考试安排',
-              subtitle: '登录学习通后，按课程勾选即可抓取考试时间',
-              actionLabel: '抓取考试',
-              onAction: () => openSyncPage(context),
+              icon: hiddenCount > 0
+                  ? Icons.visibility_off_outlined
+                  : Icons.assignment_outlined,
+              title: hiddenCount > 0 ? '考试都已隐藏' : '暂无考试安排',
+              subtitle: hiddenCount > 0
+                  ? '共 $hiddenCount 场考试被隐藏，可以随时恢复'
+                  : '登录学习通后，按课程勾选即可抓取考试时间',
+              actionLabel: hiddenCount > 0 ? '查看已隐藏' : '抓取考试',
+              onAction: hiddenCount > 0
+                  ? () => _openHidden(context)
+                  : () => openSyncPage(context),
             )
           : ListView.builder(
               padding: EdgeInsets.all(theme.cardPadding),
@@ -85,6 +101,15 @@ class ExamView extends StatelessWidget {
               itemBuilder: (BuildContext context, int index) =>
                   _ExamCard(exam: exams[index]),
             ),
+    );
+  }
+
+  /// 打开「已隐藏的考试」页。
+  static void _openHidden(BuildContext context) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext _) => const HiddenExamsPage(),
+      ),
     );
   }
 }
@@ -309,8 +334,17 @@ class _ExamDetailSheet extends StatelessWidget {
                     size: theme.captionSize * 1.2),
                 label: const Text('隐藏这场考试'),
                 onPressed: () {
+                  // 先取 messenger：pop 后本 context 已失效，messenger 仍可用。
+                  final ScaffoldMessengerState messenger =
+                      ScaffoldMessenger.of(context);
                   provider.setHidden(exam.id, true);
                   Navigator.of(context).pop();
+                  // 隐藏后界面上什么都不剩，必须告诉用户去哪找回。
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text('已隐藏，可在考试页右上角「已隐藏」里恢复'),
+                    ),
+                  );
                 },
               ),
             ),

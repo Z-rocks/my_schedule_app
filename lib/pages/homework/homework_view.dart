@@ -15,6 +15,7 @@ import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
 import '../../widgets/empty_state.dart';
 import '../sync/plugin_entity_sync_page.dart';
+import 'hidden_homeworks_page.dart';
 
 /// 作业页。
 class HomeworkView extends StatelessWidget {
@@ -66,6 +67,7 @@ class HomeworkView extends StatelessWidget {
     final AppTheme theme = AppThemeExtension.of(context);
     final HomeworkProvider provider = context.watch<HomeworkProvider>();
     final List<Homework> homeworks = provider.displayHomeworks;
+    final int hiddenCount = provider.hiddenCount;
 
     return Scaffold(
       backgroundColor: theme.background,
@@ -73,6 +75,15 @@ class HomeworkView extends StatelessWidget {
         title: const Text('作业'),
         centerTitle: true,
         actions: <Widget>[
+          // 隐藏作业的恢复入口。**只有存在隐藏项时才出现**：
+          // 没有隐藏项时摆一个空入口是噪音；而一旦有隐藏项，它就是
+          // 用户唯一的找回路径——缺了它，"隐藏"等于"删除"。
+          if (hiddenCount > 0)
+            IconButton(
+              icon: const Icon(Icons.visibility_off_outlined),
+              tooltip: '已隐藏 $hiddenCount 份作业',
+              onPressed: () => _openHidden(context),
+            ),
           IconButton(
             icon: const Icon(Icons.cloud_download_outlined),
             tooltip: '抓取作业',
@@ -80,13 +91,22 @@ class HomeworkView extends StatelessWidget {
           ),
         ],
       ),
+      // 空列表有两种截然不同的原因，不能都显示"暂无作业"：
+      // 一种是真没有作业，另一种是**全被隐藏了**——后者必须给出恢复入口，
+      // 否则用户会以为数据丢了。
       body: homeworks.isEmpty
           ? EmptyState(
-              icon: Icons.edit_note,
-              title: '暂无作业',
-              subtitle: '登录学习通后，按课程勾选即可抓取作业与截止时间',
-              actionLabel: '抓取作业',
-              onAction: () => openSyncPage(context),
+              icon: hiddenCount > 0
+                  ? Icons.visibility_off_outlined
+                  : Icons.edit_note,
+              title: hiddenCount > 0 ? '作业都已隐藏' : '暂无作业',
+              subtitle: hiddenCount > 0
+                  ? '共 $hiddenCount 份作业被隐藏，可以随时恢复'
+                  : '登录学习通后，按课程勾选即可抓取作业与截止时间',
+              actionLabel: hiddenCount > 0 ? '查看已隐藏' : '抓取作业',
+              onAction: hiddenCount > 0
+                  ? () => _openHidden(context)
+                  : () => openSyncPage(context),
             )
           : ListView.builder(
               padding: EdgeInsets.all(theme.cardPadding),
@@ -94,6 +114,15 @@ class HomeworkView extends StatelessWidget {
               itemBuilder: (BuildContext context, int index) =>
                   _HomeworkCard(homework: homeworks[index]),
             ),
+    );
+  }
+
+  /// 打开「已隐藏的作业」页。
+  static void _openHidden(BuildContext context) {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext _) => const HiddenHomeworksPage(),
+      ),
     );
   }
 }
@@ -311,8 +340,19 @@ class _HomeworkDetailSheet extends StatelessWidget {
                       size: theme.captionSize * 1.2),
                   label: const Text('隐藏'),
                   onPressed: () {
+                    // 先取 messenger：pop 之后本 context 对应的元素已失效，
+                    // 但 messenger 属于上层 Scaffold，仍能正常弹提示。
+                    final ScaffoldMessengerState messenger =
+                        ScaffoldMessenger.of(context);
                     provider.setHidden(homework.id, true);
                     Navigator.of(context).pop();
+                    // 隐藏是"看不见结果"的操作，必须告诉用户去哪找回，
+                    // 否则在用户看来就等同于删除。
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('已隐藏，可在作业页右上角「已隐藏」里恢复'),
+                      ),
+                    );
                   },
                 ),
               ),
