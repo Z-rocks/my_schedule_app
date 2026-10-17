@@ -29,6 +29,7 @@ class PluginManifest {
     this.capabilities = const <String>[],
     this.loginUrl = '',
     this.checkUrl = '',
+    this.postLoginUrl = '',
   });
 
   /// 插件唯一 ID，如 `"demo-course-plugin"`。**必须非空**（由加载器校验）。
@@ -66,6 +67,20 @@ class PluginManifest {
   /// 此时登录页退化为"拿到任意 Cookie 即视为成功"的兜底策略。
   final String checkUrl;
 
+  /// 登录成功后**自动导航**到的地址（可选）。
+  ///
+  /// 解决的问题：很多教务系统登录后停在首页，而 [checkUrl] 指向的是更深一层的
+  /// 业务页（如"选课结果"）。只靠 [checkUrl] 判定成功的话，用户必须自己点菜单
+  /// 走过去，登录页才会返回——明明已经登录了，却卡在那儿。
+  ///
+  /// 声明本字段后，登录页一旦发现**已经离开登录表单页**，就自动导航到这里，
+  /// 再由 [checkUrl] 判定成功。未声明（空串）时行为与以前完全一致（向后兼容）。
+  ///
+  /// 为什么不让内核自己猜"登录成功"：各校登录流程差异极大（有的走 CAS 单点、
+  /// 有的表单 POST 后原地刷新），猜错的代价是页面乱跳。把"登录后该去哪"交给
+  /// 插件声明，内核只做机械的导航，符合 CONTEXT 3.1（内核不知道任何学校 URL）。
+  final String postLoginUrl;
+
   /// id 是否有效（非空且非纯空白）。
   bool get hasValidId => id.trim().isNotEmpty;
 
@@ -84,6 +99,7 @@ class PluginManifest {
       capabilities: _asStringList(json['capabilities']),
       loginUrl: _asString(json['loginUrl']),
       checkUrl: _asString(json['checkUrl']),
+      postLoginUrl: _asString(json['postLoginUrl']),
     );
   }
 
@@ -99,6 +115,7 @@ class PluginManifest {
       'capabilities': capabilities,
       'loginUrl': loginUrl,
       'checkUrl': checkUrl,
+      'postLoginUrl': postLoginUrl,
     };
   }
 

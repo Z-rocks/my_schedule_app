@@ -42,6 +42,83 @@ bool isLoginSuccessUrl(String currentUrl, String successUrlPrefix) {
   return _stripUrlScheme(url).startsWith(_stripUrlScheme(prefix));
 }
 
+/// 把 path 归一化：空串视为 `/`，去掉末尾多余的 `/`。
+///
+/// 只用于"是不是同一个页面"的比较，不做 URL 解码 / 参数处理。
+String _normalizedPath(String path) {
+  String p = path.trim();
+  if (p.isEmpty) return '/';
+  while (p.length > 1 && p.endsWith('/')) {
+    p = p.substring(0, p.length - 1);
+  }
+  return p;
+}
+
+/// 两个 URL 是否属于同一主机（大小写不敏感）。
+bool isSameHost(String a, String b) {
+  final String hostA = _hostOf(a);
+  final String hostB = _hostOf(b);
+  return hostA.isNotEmpty && hostA == hostB;
+}
+
+/// 判定"当前页是否还停在**登录表单页**（即用户尚未登录）"。
+///
+/// 两条依据（任一成立即算表单页）：
+/// 1. 与 [loginUrl] 同主机、**path 相同**——用户还停在插件声明的登录入口上；
+/// 2. path 里含常见的登录路径关键词（`login` / `signin` / `cas` / `passport`…）。
+///
+/// **为什么比 path 而不是整串前缀**：插件常把 [loginUrl] 声明成站点根
+/// （如 `https://xjw1.ncst.edu.cn/`）。用前缀比较的话，该站点的**任何**页面
+/// 都以它开头，永远判不出"已经离开登录页"，自动跳转就永远不会触发。
+///
+/// 纯函数，便于单测。
+bool isLoginFormUrl({required String currentUrl, required String loginUrl}) {
+  final Uri? current = Uri.tryParse(currentUrl.trim());
+  final Uri? login = Uri.tryParse(loginUrl.trim());
+  if (current == null || login == null) return false;
+  if (!isSameHost(currentUrl, loginUrl)) return false;
+
+  if (_normalizedPath(current.path) == _normalizedPath(login.path)) return true;
+
+  final String path = current.path.toLowerCase();
+  for (final String keyword in const <String>[
+    'login',
+    'signin',
+    'sign_in',
+    'sign-in',
+    'passport',
+    'cas',
+  ]) {
+    if (path.contains(keyword)) return true;
+  }
+  return false;
+}
+
+/// 是否应该"登录后自动导航"到 `postLoginUrl`。
+///
+/// 触发条件（全部满足）：
+/// - 插件声明了 `postLoginUrl`（空串 = 不启用，老插件行为不变）；
+/// - 本轮还没自动导航过（避免在同一页反复跳）；
+/// - 当前 URL 尚未命中 [successUrlPrefix]（已经到了目标就不必再跳）；
+/// - 当前仍在**登录站点自己**的页面上（跨域跳转不介入——CAS 单点登录的
+///   认证链路常在多个域之间来回，插手会把用户从流程中间踢走）；
+/// - 当前**不是**登录表单页（见 [isLoginFormUrl]）。
+///
+/// 纯函数，便于单测（真实的导航行为无法在 `flutter test` 里跑）。
+bool shouldAutoNavigateAfterLogin({
+  required String currentUrl,
+  required String loginUrl,
+  required String successUrlPrefix,
+  required String postLoginUrl,
+  required bool alreadyNavigated,
+}) {
+  if (postLoginUrl.trim().isEmpty) return false;
+  if (alreadyNavigated) return false;
+  if (isLoginSuccessUrl(currentUrl, successUrlPrefix)) return false;
+  if (!isSameHost(currentUrl, loginUrl)) return false;
+  return !isLoginFormUrl(currentUrl: currentUrl, loginUrl: loginUrl);
+}
+
 /// 判定"这个 SSL 证书错误该不该放行"，返回**放行后允许的 host**；
 /// 返回 `null` 表示**拒绝**（`cancel`）。
 ///
@@ -146,6 +223,7 @@ class WebViewLoginPage extends StatefulWidget {
     super.key,
     required this.loginUrl,
     required this.successUrlPrefix,
+    this.postLoginUrl = '',
     this.title,
     this.pluginId,
   });
@@ -155,6 +233,12 @@ class WebViewLoginPage extends StatefulWidget {
 
   /// 登录成功判定的 URL 前缀；空串表示未声明（走 Cookie 兜底）。
   final String successUrlPrefix;
+
+  /// 登录成功后自动导航到的地址（插件声明，空串表示不自动导航）。
+  ///
+  /// 很多教务系统登录后停在首页，而成功判定前缀指向更深的业务页
+  /// （如"选课结果"），不自动导航的话用户得自己点过去，登录页才会返回。
+  final String postLoginUrl;
 
   /// AppBar 标题，默认"登录"。
   final String? title;
@@ -175,6 +259,12 @@ class _WebViewLoginPageState extends State<WebViewLoginPage> {
 
   /// 是否已经判定成功过——防止"多次 onPageFinished"导致重复 pop。
   bool _finished = false;
+
+  /// 本轮是否已经自动导航到 [WebViewLoginPage.postLoginUrl]。
+  ///
+  /// 回到登录表单页时会重置：用户第一次没登上、被服务端重定向回登录页时，
+  /// 再次登录后仍应能自动跳转（否则只有第一次有效，体验很怪）。
+  bool _postLoginNavigated = false;
 
   /// **本轮加载**放行过 SSL 错误的 host（`null` 表示没放行过）。
   ///
@@ -311,30 +401,75 @@ class _WebViewLoginPageState extends State<WebViewLoginPage> {
   }
 
   /// 判断是否登录成功；成功则提取 Cookie 并返回。
+  ///
+  /// 成功判定有两条路：URL 命中 [WebViewLoginPage.successUrlPrefix]，
+  /// 或（未声明前缀时）拿到任意 Cookie。都没命中时，交给
+  /// [_maybeAutoNavigate] 尝试"登录后自动导航"。
   Future<void> _maybeFinish(String url) async {
     if (_finished) return;
 
     final bool byUrl = isLoginSuccessUrl(url, widget.successUrlPrefix);
     // 未声明成功前缀 → 兜底策略：拿到任意 Cookie 即视为成功。
     final bool cookieFallback = widget.successUrlPrefix.trim().isEmpty;
-    if (!byUrl && !cookieFallback) return;
 
-    final String cookie = await _collectCookieString(url);
+    if (byUrl || cookieFallback) {
+      final String cookie = await _collectCookieString(url);
 
-    if (byUrl) {
-      if (cookie.isEmpty) {
+      if (byUrl) {
+        if (cookie.isNotEmpty) {
+          await _finish(cookie);
+          return;
+        }
         // URL 命中了却没拿到凭证 —— 这种"成功"没有意义，继续等下一页。
         debugPrint('[WebViewLoginPage] URL 已匹配前缀但未拿到 Cookie，继续等待：$url');
+      } else if (cookie.isNotEmpty) {
+        debugPrint('[WebViewLoginPage] 未声明成功前缀，按"拿到 Cookie"判定成功');
+        await _finish(cookie);
         return;
       }
-      await _finish(cookie);
+    }
+
+    await _maybeAutoNavigate(url);
+  }
+
+  /// 已离开登录表单页 → 自动导航到插件声明的 [WebViewLoginPage.postLoginUrl]。
+  ///
+  /// 这是"登录完不用自己点菜单"的关键（P1 修正）：教务系统登录后通常停在首页，
+  /// 而成功判定前缀指向"选课结果"这类更深一层的页面。自动跳过去之后，
+  /// 下一次 `onPageFinished` 就会命中前缀、正常返回。
+  ///
+  /// 安全阀：只跳一次；回到表单页时重置；跨域一律不介入（见
+  /// [shouldAutoNavigateAfterLogin]）。
+  Future<void> _maybeAutoNavigate(String url) async {
+    final String target = widget.postLoginUrl.trim();
+    if (target.isEmpty) return;
+
+    // 回到登录表单页：重置标志，让用户下次登录后还能自动跳转。
+    if (_postLoginNavigated &&
+        isLoginFormUrl(currentUrl: url, loginUrl: widget.loginUrl)) {
+      debugPrint('[WebViewLoginPage] 已回到登录表单页，重置自动跳转标志');
+      if (mounted) setState(() => _postLoginNavigated = false);
       return;
     }
 
-    if (cookie.isNotEmpty) {
-      debugPrint('[WebViewLoginPage] 未声明成功前缀，按"拿到 Cookie"判定成功');
-      await _finish(cookie);
+    final bool should = shouldAutoNavigateAfterLogin(
+      currentUrl: url,
+      loginUrl: widget.loginUrl,
+      successUrlPrefix: widget.successUrlPrefix,
+      postLoginUrl: target,
+      alreadyNavigated: _postLoginNavigated,
+    );
+    if (!should) return;
+
+    final Uri? uri = Uri.tryParse(target);
+    if (uri == null || uri.host.isEmpty) {
+      debugPrint('[WebViewLoginPage] postLoginUrl 非法，跳过自动导航：$target');
+      return;
     }
+
+    debugPrint('[WebViewLoginPage] 已离开登录表单页，自动导航到：$target');
+    if (mounted) setState(() => _postLoginNavigated = true);
+    await _controller.loadRequest(uri);
   }
 
   /// 提取并落盘（可选）Cookie，然后带着它 pop。
@@ -383,6 +518,15 @@ class _WebViewLoginPageState extends State<WebViewLoginPage> {
       appBar: AppBar(
         title: Text(widget.title ?? '登录'),
         actions: <Widget>[
+          // 兜底：个别教务系统的登录流程比较特殊，自动跳转可能不触发。
+          // 给一个显式入口，用户看到"已经登录了"就能自己走下一步，
+          // 不至于卡在首页出不去（没有声明 postLoginUrl 时不显示）。
+          if (widget.postLoginUrl.trim().isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.arrow_forward),
+              tooltip: '已登录？直接进入下一步',
+              onPressed: _goPostLogin,
+            ),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: '刷新',
@@ -398,6 +542,18 @@ class _WebViewLoginPageState extends State<WebViewLoginPage> {
       ),
       body: _buildBody(theme),
     );
+  }
+
+  /// 手动跳到 [WebViewLoginPage.postLoginUrl]（AppBar 兜底按钮）。
+  void _goPostLogin() {
+    final Uri? uri = Uri.tryParse(widget.postLoginUrl.trim());
+    if (uri == null || uri.host.isEmpty) return;
+    setState(() {
+      _postLoginNavigated = true;
+      _loading = true;
+      _loadError = null;
+    });
+    _controller.loadRequest(uri);
   }
 
   Widget _buildBody(AppTheme theme) {

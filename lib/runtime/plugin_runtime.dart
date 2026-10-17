@@ -332,7 +332,10 @@ class PluginRuntime {
       " capabilities: $kPluginGlobalName.capabilities,"
       // Phase 4.1：登录页 URL 与成功判定前缀由插件自己声明（各校地址不同）
       " loginUrl: $kPluginGlobalName.loginUrl,"
-      " checkUrl: $kPluginGlobalName.checkUrl"
+      " checkUrl: $kPluginGlobalName.checkUrl,"
+      // 登录成功后自动导航的目标（可选）：教务系统登录后常停在首页，
+      // 而 checkUrl 在更深的业务页，声明它才能"登录完自动到那一步"。
+      " postLoginUrl: $kPluginGlobalName.postLoginUrl"
       "})",
       timeout: loadTimeout,
     );

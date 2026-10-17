@@ -35,6 +35,9 @@ var __plugin = {
   school: '华北理工大学',
   loginUrl: 'https://xjw1.ncst.edu.cn/',
   checkUrl: 'https://xjw1.ncst.edu.cn/student/courseSelect/courseSelectResult/index',
+  // 登录成功后自动进入"选课结果"：教务系统登录完停在首页，而 checkUrl 在
+  // 深层菜单里。声明它之后，用户只需输入账号密码验证码，不用再自己点菜单。
+  postLoginUrl: 'https://xjw1.ncst.edu.cn/student/courseSelect/courseSelectResult/index',
 
   // ───────────────────────── 主入口 ─────────────────────────
   fetchCourses: function (args) {

@@ -243,6 +243,9 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
           loginUrl: loginUrl,
           // 未声明 checkUrl 时传空串 → 登录页退化为"拿到 Cookie 即成功"
           successUrlPrefix: manifest?.checkUrl.trim() ?? '',
+          // 登录后自动去的地方（教务系统登录完常停在首页，
+          // 而 checkUrl 在"选课结果"这类深层页面）。
+          postLoginUrl: manifest?.postLoginUrl.trim() ?? '',
           title: '登录 ${meta.name}',
           // 传入 pluginId → 由登录页负责落盘，避免调用方忘记保存
           pluginId: meta.id,
