@@ -302,5 +302,57 @@ void main() {
       expect(r.status, UpdateStatus.available);
       expect(r.source, 'GitHub');
     });
+
+    test('同时挂了通用包和分架构包时，优先通用包（任意机型都能装）', () async {
+      // 顺序故意把 arm64 放前面：assets 顺序不保证，不能靠位置判断。
+      final _FakeAdapter adapter = _FakeAdapter(<String, Object>{
+        giteeUrl: _giteeRelease(
+          assets: <Map<String, String>>[
+            <String, String>{
+              'name': 'app-arm64-v8a-release.apk',
+              'browser_download_url':
+                  'https://gitee.com/x/y/releases/download/v0.3.1/app-arm64-v8a-release.apk',
+            },
+            <String, String>{
+              'name': 'app-release.apk',
+              'browser_download_url':
+                  'https://gitee.com/x/y/releases/download/v0.3.1/app-release.apk',
+            },
+          ],
+        ),
+      });
+
+      final UpdateCheckResult r = await UpdateService.check(
+        currentVersion: '0.3.0',
+        dio: _fakeDio(adapter),
+      );
+
+      expect(r.apkUrl, endsWith('/app-release.apk'));
+    });
+
+    test('没有通用包时退回第一个 APK（分架构包也能装）', () async {
+      final _FakeAdapter adapter = _FakeAdapter(<String, Object>{
+        giteeUrl: _giteeRelease(
+          assets: <Map<String, String>>[
+            <String, String>{
+              'name': 'v0.3.1.zip',
+              'browser_download_url': 'https://gitee.com/x/y/archive/v0.3.1.zip',
+            },
+            <String, String>{
+              'name': 'app-arm64-v8a-release.apk',
+              'browser_download_url':
+                  'https://gitee.com/x/y/releases/download/v0.3.1/app-arm64-v8a-release.apk',
+            },
+          ],
+        ),
+      });
+
+      final UpdateCheckResult r = await UpdateService.check(
+        currentVersion: '0.3.0',
+        dio: _fakeDio(adapter),
+      );
+
+      expect(r.apkUrl, endsWith('/app-arm64-v8a-release.apk'));
+    });
   });
 }

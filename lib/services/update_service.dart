@@ -356,21 +356,32 @@ class UpdateService {
   }
 }
 
-/// 从 `assets` 数组里取第一个 `.apk` 的下载地址。
+/// Release 里通用包的文件名（`flutter build apk --release` 的默认产物名）。
+const String kUniversalApkName = 'app-release.apk';
+
+/// 从 `assets` 数组里挑一个 APK 的下载地址。
 ///
-/// Gitee 在没有上传附件时会自动塞源码 `v1.2.3.zip` / `.tar.gz`，
-/// 所以必须按后缀过滤，不能直接取第 0 个。
+/// 两条规则，按优先级：
+/// 1. **优先精确匹配通用包** `app-release.apk`。Release 里同时挂分架构包时
+///    （`app-arm64-v8a-release.apk` 等），通用包才能在任意机型上装。
+/// 2. 没有通用包时取第一个 `.apk`。
+///
+/// 不能直接取第 0 个：Gitee 在没有上传附件时会自动塞源码
+/// `v1.2.3.zip` / `.tar.gz`，GitHub 的 `assets` 顺序也不保证按上传时间。
 String _firstApkUrl(Object? assets) {
   if (assets is! List) return '';
+  String firstApk = '';
   for (final Object? asset in assets) {
     if (asset is! Map) continue;
     final String name = (asset['name']?.toString() ?? '').toLowerCase();
     if (!name.endsWith('.apk')) continue;
     final String url =
         (asset['browser_download_url']?.toString() ?? '').trim();
-    if (url.isNotEmpty) return url;
+    if (url.isEmpty) continue;
+    if (name == kUniversalApkName) return url;
+    if (firstApk.isEmpty) firstApk = url;
   }
-  return '';
+  return firstApk;
 }
 
 /// 去掉版本号前面的 `v` / `V`。
