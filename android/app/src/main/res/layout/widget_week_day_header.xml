@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 周几分列表头：7 个等宽（weight=1），与网格列同宽 -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/day_label"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:layout_weight="1"
+    android:gravity="center"
+    android:textColor="@color/widget_text_secondary"
+    android:textSize="@dimen/widget_week_day_label_text" />

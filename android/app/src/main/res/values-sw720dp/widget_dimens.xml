@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小组件布局尺寸（大平板档 sw720dp，10"+）。
+     在手机档整体放大约 1.5 倍；周视图格子再高一点，撑满大卡。 -->
+<resources>
+    <dimen name="widget_card_padding">18dp</dimen>
+    <dimen name="widget_card_padding_week">16dp</dimen>
+
+    <dimen name="widget_title_text">19sp</dimen>
+    <dimen name="widget_title_text_week">18sp</dimen>
+    <dimen name="widget_week_subtitle_text">14sp</dimen>
+    <dimen name="widget_updated_text">12sp</dimen>
+
+    <dimen name="widget_empty_text">17sp</dimen>
+
+    <dimen name="widget_course_name_text">18sp</dimen>
+    <dimen name="widget_row_meta_text">13sp</dimen>
+    <dimen name="widget_row_padding_vertical">7dp</dimen>
+    <dimen name="widget_color_bar_width">5dp</dimen>
+    <dimen name="widget_color_bar_height">48dp</dimen>
+
+    <dimen name="widget_hw_title_text">16sp</dimen>
+    <dimen name="widget_hw_meta_text">12sp</dimen>
+    <dimen name="widget_hw_days_text">13sp</dimen>
+    <dimen name="widget_hw_row_padding_vertical">6dp</dimen>
+    <dimen name="widget_hw_badge_text">13sp</dimen>
+    <dimen name="widget_hw_dot_size">9dp</dimen>
+
+    <dimen name="widget_exam_next_name_text">20sp</dimen>
+    <dimen name="widget_exam_next_days_text">16sp</dimen>
+    <dimen name="widget_exam_meta_text">13sp</dimen>
+    <dimen name="widget_exam_row_name_text">15sp</dimen>
+    <dimen name="widget_exam_row_meta_text">12sp</dimen>
+    <dimen name="widget_exam_row_days_text">13sp</dimen>
+
+    <dimen name="widget_week_day_label_text">13sp</dimen>
+    <dimen name="widget_week_cell_height">30dp</dimen>
+    <dimen name="widget_week_cell_margin">2dp</dimen>
+    <dimen name="widget_week_cell_text">12sp</dimen>
+</resources>

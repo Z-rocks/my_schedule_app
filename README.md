@@ -1,4 +1,4 @@
-# my_schedule_app
+# 校园助手
 
 A new Flutter project.
 

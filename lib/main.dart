@@ -16,6 +16,7 @@ import 'providers/semester_provider.dart';
 import 'providers/settings_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/storage_service.dart';
+import 'services/widget_bridge.dart';
 
 Future<void> main() async {
   // 必须先初始化绑定，Hive.initFlutter() 依赖平台通道（path_provider）。
@@ -78,6 +79,19 @@ Future<void> main() async {
   );
   await pluginProvider.loadFromStorage();
   await pluginProvider.loadAllEnabledPlugins();
+
+  // 小组件（Phase W1）：装配快照刷新编排——之后任何课表 / 作业 / 考试 /
+  // 学期 / 主题变化都会推一份新快照给 Kotlin 侧小组件。
+  // 不持有引用：controller 被各 Provider 的监听闭包与 WidgetsBinding
+  // 观察者列表持有，生命周期与 App 进程一致，不会中途被 GC。
+  WidgetRefreshController(
+    courseProvider: courseProvider,
+    homeworkProvider: homeworkProvider,
+    examProvider: examProvider,
+    semesterProvider: semesterProvider,
+    pluginProvider: pluginProvider,
+    themeProvider: themeProvider,
+  ).start();
 
   runApp(buildApp(
     courseProvider: courseProvider,

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../models/module.dart';
 import '../providers/module_provider.dart';
+import '../services/widget_bridge.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_extension.dart';
 import '../widgets/empty_state.dart';
@@ -29,6 +30,37 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   /// 当前选中的导航栏下标（对应 `visibleModules` 的下标，不是 `allModules` 的）。
   int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // 小组件点击跳转（Phase W1）：Kotlin 把目标经 WidgetNav 递过来，
+    // 这里消费并切到对应 tab；目标模块被用户关了就停在原来的页面。
+    WidgetNav.pendingTarget.addListener(_onWidgetTarget);
+  }
+
+  @override
+  void dispose() {
+    WidgetNav.pendingTarget.removeListener(_onWidgetTarget);
+    super.dispose();
+  }
+
+  void _onWidgetTarget() {
+    final WidgetTarget? target = WidgetNav.pendingTarget.value;
+    if (target == null) return;
+    WidgetNav.pendingTarget.value = null; // 消费掉，避免重复触发
+    if (!mounted) return;
+
+    final ModuleType want = switch (target) {
+      WidgetTarget.home => ModuleType.timetable,
+      WidgetTarget.homework => ModuleType.homework,
+      WidgetTarget.exam => ModuleType.exam,
+    };
+    final List<ModuleInfo> modules = context.read<ModuleProvider>().visibleModules;
+    final int index = modules.indexWhere((ModuleInfo m) => m.type == want);
+    if (index >= 0) setState(() => _currentIndex = index);
+    // index < 0：模块被隐藏/关闭，什么都不做，停在当前页。
+  }
 
   @override
   Widget build(BuildContext context) {

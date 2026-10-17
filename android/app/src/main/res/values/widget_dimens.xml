@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小组件布局尺寸（手机档）。
+     RemoteViews 布局同样走资源限定符：平板桌面上桌面按 sw600dp/sw720dp
+     取 layout-*/values-* 变体，所以字号/内边距不写死在布局里，走这几组
+     dimens，平板只改 values-sw***/widget_dimens.xml 一份。 -->
+<resources>
+    <!-- 卡片内边距 -->
+    <dimen name="widget_card_padding">12dp</dimen>
+    <dimen name="widget_card_padding_week">10dp</dimen>
+
+    <!-- 标题区 -->
+    <dimen name="widget_title_text">14sp</dimen>
+    <dimen name="widget_title_text_week">13sp</dimen>
+    <dimen name="widget_week_subtitle_text">11sp</dimen>
+    <dimen name="widget_updated_text">9sp</dimen>
+
+    <!-- 空态 -->
+    <dimen name="widget_empty_text">13sp</dimen>
+
+    <!-- 今天课表行 -->
+    <dimen name="widget_course_name_text">13sp</dimen>
+    <dimen name="widget_row_meta_text">10sp</dimen>
+    <dimen name="widget_row_padding_vertical">4dp</dimen>
+    <dimen name="widget_color_bar_width">3dp</dimen>
+    <dimen name="widget_color_bar_height">32dp</dimen>
+
+    <!-- 待交作业 -->
+    <dimen name="widget_hw_title_text">12sp</dimen>
+    <dimen name="widget_hw_meta_text">9sp</dimen>
+    <dimen name="widget_hw_days_text">10sp</dimen>
+    <dimen name="widget_hw_row_padding_vertical">3dp</dimen>
+    <dimen name="widget_hw_badge_text">10sp</dimen>
+    <dimen name="widget_hw_dot_size">6dp</dimen>
+
+    <!-- 近期考试 -->
+    <dimen name="widget_exam_next_name_text">15sp</dimen>
+    <dimen name="widget_exam_next_days_text">12sp</dimen>
+    <dimen name="widget_exam_meta_text">10sp</dimen>
+    <dimen name="widget_exam_row_name_text">11sp</dimen>
+    <dimen name="widget_exam_row_meta_text">9sp</dimen>
+    <dimen name="widget_exam_row_days_text">10sp</dimen>
+
+    <!-- 本周课表网格 -->
+    <dimen name="widget_week_day_label_text">10sp</dimen>
+    <dimen name="widget_week_cell_height">16dp</dimen>
+    <dimen name="widget_week_cell_margin">1dp</dimen>
+    <dimen name="widget_week_cell_text">9sp</dimen>
+</resources>

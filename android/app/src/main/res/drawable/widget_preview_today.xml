@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 今天课表卡预览图（HyperOS/MIUI 小部件中心要求预览资源，缺了会被列表过滤）。
+     用 layer-list 拼一张"静态示意卡片"；系统会自行裁剪圆角。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 卡片底 -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#F2F4F7" />
+            <corners android:radius="18dp" />
+            <size android:width="320dp" android:height="320dp" />
+        </shape>
+    </item>
+
+    <!-- 标题条 -->
+    <item android:gravity="left|top" android:left="18dp" android:top="18dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#20242B" />
+            <corners android:radius="6dp" />
+            <size android:width="128dp" android:height="16dp" />
+        </shape>
+    </item>
+
+    <!-- 右上"更新于"小条 -->
+    <item android:gravity="right|top" android:right="18dp" android:top="21dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#B9BEC7" />
+            <corners android:radius="4dp" />
+            <size android:width="56dp" android:height="10dp" />
+        </shape>
+    </item>
+
+    <!-- 第 1 行 -->
+    <item android:gravity="left|top" android:left="18dp" android:top="62dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#3F51B5" />
+            <corners android:radius="3dp" />
+            <size android:width="6dp" android:height="46dp" />
+        </shape>
+    </item>
+    <item android:gravity="left|top" android:left="32dp" android:top="62dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#3A3F47" />
+            <corners android:radius="4dp" />
+            <size android:width="160dp" android:height="13dp" />
+        </shape>
+    </item>
+    <item android:gravity="left|top" android:left="32dp" android:top="84dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#B9BEC7" />
+            <corners android:radius="4dp" />
+            <size android:width="104dp" android:height="9dp" />
+        </shape>
+    </item>
+
+    <!-- 第 2 行 -->
+    <item android:gravity="left|top" android:left="18dp" android:top="126dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#4CAF50" />
+            <corners android:radius="3dp" />
+            <size android:width="6dp" android:height="46dp" />
+        </shape>
+    </item>
+    <item android:gravity="left|top" android:left="32dp" android:top="126dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#3A3F47" />
+            <corners android:radius="4dp" />
+            <size android:width="140dp" android:height="13dp" />
+        </shape>
+    </item>
+    <item android:gravity="left|top" android:left="32dp" android:top="148dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#B9BEC7" />
+            <corners android:radius="4dp" />
+            <size android:width="88dp" android:height="9dp" />
+        </shape>
+    </item>
+
+    <!-- 第 3 行 -->
+    <item android:gravity="left|top" android:left="18dp" android:top="190dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#9C27B0" />
+            <corners android:radius="3dp" />
+            <size android:width="6dp" android:height="46dp" />
+        </shape>
+    </item>
+    <item android:gravity="left|top" android:left="32dp" android:top="190dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#3A3F47" />
+            <corners android:radius="4dp" />
+            <size android:width="172dp" android:height="13dp" />
+        </shape>
+    </item>
+    <item android:gravity="left|top" android:left="32dp" android:top="212dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#B9BEC7" />
+            <corners android:radius="4dp" />
+            <size android:width="120dp" android:height="9dp" />
+        </shape>
+    </item>
+
+    <!-- 右侧节次小条 -->
+    <item android:gravity="right|top" android:right="18dp" android:top="70dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#B9BEC7" />
+            <corners android:radius="4dp" />
+            <size android:width="48dp" android:height="10dp" />
+        </shape>
+    </item>
+    <item android:gravity="right|top" android:right="18dp" android:top="134dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#B9BEC7" />
+            <corners android:radius="4dp" />
+            <size android:width="48dp" android:height="10dp" />
+        </shape>
+    </item>
+    <item android:gravity="right|top" android:right="18dp" android:top="198dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#B9BEC7" />
+            <corners android:radius="4dp" />
+            <size android:width="48dp" android:height="10dp" />
+        </shape>
+    </item>
+</layer-list>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小部件卡片底。
+     HyperOS/MIUI 小部件技术规范（7.1/7.2）硬性要求：widget 根布局必须声明
+     android:id="@android:id/background"，系统靠这个固定 ID 找到根视图统一
+     裁圆角；且根布局背景必须非全透明（切换页动画要用背景色）。
+     早期"不画背景、圆角归桌面"的做法满足 AOSP，但在小米小部件中心会被
+     过滤/详情页空白，故两边折中：画一个静态纯色底，圆角同时兼容。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="16dp" />
+    <solid android:color="@color/widget_card_bg" />
+</shape>

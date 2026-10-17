@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 今天课表：2×2，四向可缩放（宽卡拉成 2×4 平板用）。
+     previewImage 必须给：HyperOS/MIUI 小部件中心靠预览图渲染卡片入口，
+     没有 previewImage 的 provider 会被列表直接过滤掉（真机实测）。 -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:label="@string/widget_label_today"
+    android:minWidth="140dp"
+    android:minHeight="140dp"
+    android:targetCellWidth="2"
+    android:targetCellHeight="2"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="1800000"
+    android:initialLayout="@layout/widget_today"
+    android:previewImage="@drawable/widget_preview_today"
+    android:description="@string/widget_label_today"
+    android:widgetCategory="home_screen" />

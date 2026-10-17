@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 今天课表卡：2×2，横向/纵向可缩放 -->
+    <string name="widget_today_title">%1$s · 第%2$d周</string>
+    <string name="widget_week_title">第%d周</string>
+    <string name="widget_homework_count">待交 %d 项</string>
+    <string name="widget_homework_overdue">逾期 %d</string>
+    <string name="widget_homework_all_done">作业都写完啦</string>
+    <string name="widget_exam_count">%d 场待考</string>
+    <string name="widget_exam_none">近期无考试</string>
+
+    <!-- 空态文案 -->
+    <string name="widget_empty_no_snapshot">打开 App 刷新一下</string>
+    <string name="widget_empty_no_semester">去设置里配置学期</string>
+    <string name="widget_empty_no_courses">课表还是空的</string>
+    <string name="widget_empty_no_class_this_week">本周没课</string>
+    <string name="widget_empty_no_class_today">今天没课</string>
+
+    <!-- 卡片名称（组件选择器里显示） -->
+    <string name="widget_label_today">今天课表</string>
+    <string name="widget_label_week">本周课表</string>
+    <string name="widget_label_homework">待交作业</string>
+    <string name="widget_label_exam">近期考试</string>
+</resources>

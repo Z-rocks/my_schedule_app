@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 待交作业一行：状态点 + 标题 /（课程 · 截止）/ 剩余天数 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="vertical"
+    android:paddingTop="@dimen/widget_hw_row_padding_vertical"
+    android:paddingBottom="@dimen/widget_hw_row_padding_vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <View
+            android:id="@+id/hw_dot"
+            android:layout_width="@dimen/widget_hw_dot_size"
+            android:layout_height="@dimen/widget_hw_dot_size"
+            android:background="@android:color/transparent" />
+
+        <TextView
+            android:id="@+id/hw_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/widget_text_primary"
+            android:textSize="@dimen/widget_hw_title_text" />
+
+        <TextView
+            android:id="@+id/hw_days"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/widget_text_secondary"
+            android:textSize="@dimen/widget_hw_days_text" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/hw_meta"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/widget_text_secondary"
+        android:textSize="@dimen/widget_hw_meta_text" />
+</LinearLayout>

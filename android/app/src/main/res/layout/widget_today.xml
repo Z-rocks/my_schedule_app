@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 今天课表卡片根布局。
+     厂商适配（2026-10-17 修正）：早期"背景透明、圆角一律不画"的做法在
+     HyperOS 小部件中心行不通——MIUI 小部件技术规范要求根布局必须声明
+     android:id="@android:id/background"（系统靠它统一裁圆角）且背景非全
+     透明，否则小部件在小部件中心被过滤、长按图标的详情页空白。
+     故改为静态纯色卡片底（深色桌面走 values-night 自动切换）。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="@dimen/widget_card_padding"
+    android:background="@drawable/widget_card_background">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/today_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/widget_text_primary"
+            android:textSize="@dimen/widget_title_text"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/updated_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:textColor="@color/widget_text_secondary"
+            android:textSize="@dimen/widget_updated_text" />
+    </LinearLayout>
+
+    <!-- 空态：今天没课 / 没配学期 / 快照不可用 -->
+    <TextView
+        android:id="@+id/empty_text"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:textColor="@color/widget_text_secondary"
+        android:textSize="@dimen/widget_empty_text"
+        android:visibility="gone" />
+
+    <!-- 当天的课程序列（动态 addView 行） -->
+    <LinearLayout
+        android:id="@+id/sessions_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical" />
+</LinearLayout>

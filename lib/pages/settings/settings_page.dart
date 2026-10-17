@@ -9,6 +9,7 @@ import '../../theme/theme_extension.dart';
 import 'module_config_page.dart';
 import 'plugin_manage_page.dart';
 import 'timetable_settings_page.dart';
+import 'widget_guide_page.dart';
 import 'workshop_page.dart';
 
 /// 应用版本号。
@@ -210,6 +211,27 @@ class SettingsPage extends StatelessWidget {
             ],
           ),
           _SettingsGroup(
+            title: '桌面小组件',
+            children: <Widget>[
+              _SettingsTile(
+                title: '添加与使用',
+                showChevron: true,
+                onTap: () => _push(context, const WidgetGuidePage()),
+              ),
+              _SettingsTile(
+                title: '后台刷新设置',
+                subtitleText: '让卡片随数据变化即时更新',
+                showChevron: true,
+                onTap: () => _push(
+                  context,
+                  const WidgetGuidePage(
+                    initialSection: WidgetGuideSection.battery,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          _SettingsGroup(
             title: '数据',
             children: <Widget>[
               _SettingsTile(
@@ -302,23 +324,35 @@ class _SettingsTile extends StatelessWidget {
     this.onTap,
     this.showChevron = false,
     this.trailingText,
+    this.subtitleText,
   });
 
   final String title;
   final VoidCallback? onTap;
   final bool showChevron;
   final String? trailingText;
+  final String? subtitleText;
 
   @override
   Widget build(BuildContext context) {
     final AppTheme theme = AppThemeExtension.of(context);
     final String? trailingText = this.trailingText;
+    final String? subtitleText = this.subtitleText;
 
     return ListTile(
       title: Text(
         title,
         style: TextStyle(fontSize: theme.bodySize, color: theme.onBackground),
       ),
+      subtitle: subtitleText == null
+          ? null
+          : Text(
+              subtitleText,
+              style: TextStyle(
+                fontSize: theme.captionSize,
+                color: theme.onBackground.withValues(alpha: 0.6),
+              ),
+            ),
       onTap: onTap,
       trailing: (trailingText == null && !showChevron)
           ? null

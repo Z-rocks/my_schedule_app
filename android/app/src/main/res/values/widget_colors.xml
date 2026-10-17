@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 浅色桌面：深字。深色桌面走 values-night 的浅字版本，
+         否则白字压白底。 -->
+    <color name="widget_text_primary">#DE000000</color>
+    <color name="widget_text_secondary">#8A000000</color>
+    <color name="widget_accent">#1565C0</color>
+    <color name="widget_overdue">#C62828</color>
+    <!-- 卡片底色：MIUI 规范要求根布局背景非透明；深色桌面走 values-night 的深色版本。 -->
+    <color name="widget_card_bg">#FFFFFFFF</color>
+</resources>

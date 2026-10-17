@@ -1,9 +1,12 @@
 // App 根组件：MaterialApp 配置 + 把 AppTheme 注入 ThemeData.extensions
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'pages/home_page.dart';
 import 'providers/theme_provider.dart';
+import 'services/widget_bridge.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_extension.dart';
 
@@ -27,6 +30,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // 小组件点击跳转通道（Phase W1）：放在首帧之后注册，等 Flutter 引擎
+    // 的 platform view 就绪再 invokeMethod，避免 MissingPluginException。
+    WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+      unawaited(WidgetNav.init());
+    });
     // 初次同步系统亮度：`system` 模式下要靠它决定用哪套配色。
     // `initState` 里 `context.read` 是合法的（Provider 在上层，
     // 且 `read` 不会注册依赖，不存在"build 前订阅"的问题）。
@@ -62,7 +70,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final ThemeMode mode = themeProvider.themeMode;
 
     return MaterialApp(
-      title: '我的课表',
+      title: '校园助手',
       debugShowCheckedModeBanner: false,
       // 明暗两套都用**同一个** AppTheme（它已按 `system` 选好色表），
       // 只是喂给 `ColorScheme.fromSeed` 的 brightness 不同。

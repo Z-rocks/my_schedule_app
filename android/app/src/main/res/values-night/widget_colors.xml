@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_text_primary">#FFFFFFFF</color>
+    <color name="widget_text_secondary">#B3FFFFFF</color>
+    <color name="widget_accent">#90CAF9</color>
+    <color name="widget_overdue">#EF9A9A</color>
+    <!-- 深色桌面卡片底色（与浅色版的白色对应）。 -->
+    <color name="widget_card_bg">#FF1C1C1E</color>
+</resources>

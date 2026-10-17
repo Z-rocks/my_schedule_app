@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 近期考试卡预览图 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 卡片底 -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#F2F4F7" />
+            <corners android:radius="18dp" />
+            <size android:width="320dp" android:height="320dp" />
+        </shape>
+    </item>
+
+    <!-- 标题"N 场待考" -->
+    <item android:gravity="left|top" android:left="18dp" android:top="18dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#20242B" />
+            <corners android:radius="6dp" />
+            <size android:width="92dp" android:height="16dp" />
+        </shape>
+    </item>
+
+    <!-- 右上"更新于" -->
+    <item android:gravity="right|top" android:right="18dp" android:top="21dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#B9BEC7" />
+            <corners android:radius="4dp" />
+            <size android:width="48dp" android:height="10dp" />
+        </shape>
+    </item>
+
+    <!-- 最近一场考试：大字块 -->
+    <item android:gravity="left|top" android:left="18dp" android:top="56dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#E7EAF0" />
+            <corners android:radius="10dp" />
+            <size android:width="284dp" android:height="92dp" />
+        </shape>
+    </item>
+    <item android:gravity="left|top" android:left="32dp" android:top="72dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#20242B" />
+            <corners android:radius="5dp" />
+            <size android:width="150dp" android:height="15dp" />
+        </shape>
+    </item>
+    <item android:gravity="right|top" android:right="32dp" android:top="70dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#3F51B5" />
+            <corners android:radius="5dp" />
+            <size android:width="52dp" android:height="18dp" />
+        </shape>
+    </item>
+    <item android:gravity="left|top" android:left="32dp" android:top="104dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#9AA0AA" />
+            <corners android:radius="4dp" />
+            <size android:width="176dp" android:height="10dp" />
+        </shape>
+    </item>
+    <item android:gravity="left|top" android:left="32dp" android:top="124dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#9AA0AA" />
+            <corners android:radius="4dp" />
+            <size android:width="120dp" android:height="10dp" />
+        </shape>
+    </item>
+
+    <!-- 列表行 1 -->
+    <item android:gravity="left|top" android:left="18dp" android:top="164dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#3A3F47" />
+            <corners android:radius="4dp" />
+            <size android:width="130dp" android:height="12dp" />
+        </shape>
+    </item>
+    <item android:gravity="left|top" android:left="156dp" android:top="165dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#B9BEC7" />
+            <corners android:radius="4dp" />
+            <size android:width="88dp" android:height="9dp" />
+        </shape>
+    </item>
+    <item android:gravity="right|top" android:right="18dp" android:top="164dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#B9BEC7" />
+            <corners android:radius="4dp" />
+            <size android:width="52dp" android:height="10dp" />
+        </shape>
+    </item>
+
+    <!-- 列表行 2 -->
+    <item android:gravity="left|top" android:left="18dp" android:top="200dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#3A3F47" />
+            <corners android:radius="4dp" />
+            <size android:width="110dp" android:height="12dp" />
+        </shape>
+    </item>
+    <item android:gravity="left|top" android:left="136dp" android:top="201dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#B9BEC7" />
+            <corners android:radius="4dp" />
+            <size android:width="96dp" android:height="9dp" />
+        </shape>
+    </item>
+    <item android:gravity="right|top" android:right="18dp" android:top="200dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#B9BEC7" />
+            <corners android:radius="4dp" />
+            <size android:width="52dp" android:height="10dp" />
+        </shape>
+    </item>
+
+    <!-- 列表行 3 -->
+    <item android:gravity="left|top" android:left="18dp" android:top="236dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#3A3F47" />
+            <corners android:radius="4dp" />
+            <size android:width="140dp" android:height="12dp" />
+        </shape>
+    </item>
+    <item android:gravity="left|top" android:left="166dp" android:top="237dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#B9BEC7" />
+            <corners android:radius="4dp" />
+            <size android:width="72dp" android:height="9dp" />
+        </shape>
+    </item>
+    <item android:gravity="right|top" android:right="18dp" android:top="236dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#B9BEC7" />
+            <corners android:radius="4dp" />
+            <size android:width="52dp" android:height="10dp" />
+        </shape>
+    </item>
+</layer-list>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App 显示名（桌面图标 / 最近任务 / 系统设置里显示）。
+         用字符串资源而不是 manifest 硬编码：小组件、通知等后续
+         引用同一份文案时只改这一处。 -->
+    <string name="app_name">校园助手</string>
+</resources>

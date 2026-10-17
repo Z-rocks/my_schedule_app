@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 本周课表的一个格子：默认透明，有课时由 Kotlin 刷成课程色 -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/cell"
+    android:layout_width="match_parent"
+    android:layout_height="@dimen/widget_week_cell_height"
+    android:layout_margin="@dimen/widget_week_cell_margin"
+    android:background="@android:color/transparent"
+    android:gravity="center"
+    android:padding="0dp"
+    android:text=""
+    android:textColor="@color/widget_text_primary"
+    android:textSize="@dimen/widget_week_cell_text" />
