@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 渲染兜底布局：provider 渲染抛异常时用它顶上。
+     目的是"绝不让系统显示黑色『载入窗口小部件时出现问题』"——
+     那个占位既没有信息量，也不给用户任何可操作的东西。
+     这里至少告诉用户"点一下打开 App"，而点开 App 就会重新推送快照、
+     触发一次完整重绘。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="@dimen/widget_card_padding"
+    android:background="@drawable/widget_card_background">
+
+    <TextView
+        android:id="@+id/error_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:maxLines="3"
+        android:textColor="@color/widget_text_secondary"
+        android:textSize="@dimen/widget_empty_text" />
+</LinearLayout>

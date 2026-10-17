@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 本周课表：4×3 起步，四向可缩放（平板可拉更大） -->
+<!-- 今日课程：4×3 起步，四向可缩放（平板可拉更大）。
+     内容 = 今天每节课的「第几节 + 上课时间 + 课程 + 地点」，行数随卡高自适应。 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:label="@string/widget_label_week"
     android:minWidth="250dp"

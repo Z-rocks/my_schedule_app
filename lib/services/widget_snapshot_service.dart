@@ -19,7 +19,11 @@ import '../services/timetable_logic.dart';
 
 /// 快照 schema 版本。字段含义变化时递增，Kotlin 端 [WidgetSnapshotParser]
 /// 以它为准选择解析路径。
-const int kWidgetSnapshotVersion = 1;
+///
+/// v2（2026-10-17）：新增 `schedule.nextSession`（当前/下一节课）。
+/// 卡片从"今天全部课程"改成"下一节课 + 今日课程列表"，两处都依赖它。
+/// **两端必须同改**：`WidgetSnapshotContract.VERSION`（Kotlin）。
+const int kWidgetSnapshotVersion = 2;
 
 /// 作业卡片最多带几条（RemoteViews 静态渲染的舒适上限，拆解文档 D5）。
 const int kWidgetHomeworkItems = 5;
@@ -123,6 +127,7 @@ class WidgetSnapshotService {
         today: today,
         sectionTimes: sectionTimes,
         colors: colors,
+        now: nowTime,
       ),
       'sectionTimes': sectionTimes == null
           ? const <String, dynamic>{}
@@ -144,6 +149,7 @@ class WidgetSnapshotService {
     required int today,
     required SectionTimes? sectionTimes,
     required List<int> colors,
+    required DateTime now,
   }) {
     final List<List<Course?>> grid = TimetableLogic.buildGrid(courses, week);
 
@@ -181,6 +187,9 @@ class WidgetSnapshotService {
 
     // 今天的课程序列：把当天列里连续的同一门课合并成一个块（跨节显示成一段）。
     final List<Map<String, dynamic>> todaySessions = <Map<String, dynamic>>[];
+    // 与 todaySessions 一一对应的起止分钟数（作息缺失时为 null）。
+    // 只用于算"当前/下一节"，不写进 JSON——小组件是哑渲染，不解析时间。
+    final List<(int?, int?)> spans = <(int?, int?)>[];
     for (int session = 1; session <= kMaxSessions; session++) {
       final Course? course = grid[today][session];
       if (course == null) continue;
@@ -192,6 +201,7 @@ class WidgetSnapshotService {
         'length': length,
         'sectionText': _sectionText(session, length, sectionTimes),
       });
+      spans.add(_spanOf(session, length, sectionTimes));
       session += length - 1; // 跳过已合并的格子
     }
 
@@ -203,7 +213,105 @@ class WidgetSnapshotService {
       'courseTable': courseTable,
       'cells': cells,
       'todaySessions': todaySessions,
+      'nextSession': _nextSessionJson(todaySessions, spans, now),
     };
+  }
+
+  /// 当前正在上 / 接下来要上的那节课（v2 新增）。
+  ///
+  /// 判定完全基于**节次时间**（`SectionTimes`）：先看现在落在哪一段里
+  /// （ongoing），否则看第一段还没开始的（upcoming），都过了就是 finished。
+  ///
+  /// 插件没给作息时无法判断"现在上到哪"，退化为今天第一节并标 `unknown`
+  /// ——总比空着好，至少告诉用户"今天还有课"。
+  static Map<String, dynamic>? _nextSessionJson(
+    List<Map<String, dynamic>> todaySessions,
+    List<(int?, int?)> spans,
+    DateTime now,
+  ) {
+    if (todaySessions.isEmpty) return null;
+
+    final bool hasAnySpan =
+        spans.any((s) => s.$1 != null && s.$2 != null);
+    if (!hasAnySpan) {
+      return _sessionJson(todaySessions.first, state: 'unknown', label: '');
+    }
+
+    final int nowMinutes = now.hour * 60 + now.minute;
+    for (int i = 0; i < todaySessions.length; i++) {
+      final (int?, int?) span = spans[i];
+      final int? start = span.$1;
+      final int? end = span.$2;
+      if (start == null || end == null) continue;
+      if (nowMinutes < start) {
+        return _sessionJson(
+          todaySessions[i],
+          state: 'upcoming',
+          label: '${_hhmmFromMinutes(start)} 上课',
+        );
+      }
+      if (nowMinutes < end) {
+        return _sessionJson(
+          todaySessions[i],
+          state: 'ongoing',
+          label: '进行中',
+        );
+      }
+    }
+
+    // 今天的课都上完了：仍返回最后一节，让卡片能显示"已结束 + 最后一门课"。
+    return _sessionJson(todaySessions.last, state: 'finished', label: '已结束');
+  }
+
+  static Map<String, dynamic> _sessionJson(
+    Map<String, dynamic> session, {
+    required String state,
+    required String label,
+  }) {
+    return <String, dynamic>{
+      'courseIdx': session['courseIdx'],
+      'sectionText': session['sectionText'],
+      'state': state,
+      'label': label,
+    };
+  }
+
+  /// 某一段课（可能跨多节）的起止分钟数；作息缺失或格式异常返回 `(null, null)`。
+  static (int?, int?) _spanOf(
+    int session,
+    int length,
+    SectionTimes? sectionTimes,
+  ) {
+    if (sectionTimes == null || sectionTimes.times.isEmpty) {
+      return (null, null);
+    }
+    // 插件作息形如 "10:25-11:10"：第一段的 start 取首节开头，
+    // 最后一段的 end 取末节结尾。
+    final int? start = _minutesOf(sectionTimes.times[session], first: true);
+    final int? end =
+        _minutesOf(sectionTimes.times[session + length - 1], first: false);
+    return (start, end);
+  }
+
+  /// `"10:25-11:10"` → 起（或止）的分钟数；解析不出返回 `null`。
+  static int? _minutesOf(String? raw, {required bool first}) {
+    if (raw == null) return null;
+    final List<String> range = raw.split('-');
+    if (range.length < 2) return null;
+    final String text = (first ? range.first : range.last).trim();
+    final List<String> hm = text.split(':');
+    if (hm.length < 2) return null;
+    final int? hour = int.tryParse(hm[0]);
+    final int? minute = int.tryParse(hm[1]);
+    if (hour == null || minute == null) return null;
+    return hour * 60 + minute;
+  }
+
+  /// 分钟数 → `"10:25"`。
+  static String _hhmmFromMinutes(int minutes) {
+    final String h = (minutes ~/ 60).toString().padLeft(2, '0');
+    final String m = (minutes % 60).toString().padLeft(2, '0');
+    return '$h:$m';
   }
 
   /// 当天列里从 [session] 开始、同一门课连续占用的节数（至少 1）。

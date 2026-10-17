@@ -49,10 +49,10 @@ enum WidgetTarget {
 /// 四张卡片的种类（与 Kotlin `WidgetPinRequest.PROVIDERS` 的 key 对应，
 /// 改一边必须同步另一边）。
 enum WidgetKind {
-  /// 今天课表。
+  /// 下一节课（2×2，原「今天课表」）。
   today,
 
-  /// 本周课表。
+  /// 今日课程列表（4×3，原「本周课表」）。
   week,
 
   /// 待交作业。

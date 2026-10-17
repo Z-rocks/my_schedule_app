@@ -17,12 +17,13 @@
     <!-- 空态 -->
     <dimen name="widget_empty_text">13sp</dimen>
 
-    <!-- 今天课表行 -->
-    <dimen name="widget_course_name_text">13sp</dimen>
-    <dimen name="widget_row_meta_text">10sp</dimen>
-    <dimen name="widget_row_padding_vertical">4dp</dimen>
+    <!-- 今日课程列表行（行高参与"能放几行"的算式，见 WeekWidgetProvider） -->
+    <dimen name="widget_week_header_height">30dp</dimen>
+    <dimen name="widget_row_height">32dp</dimen>
+    <dimen name="widget_row_name_text">12sp</dimen>
+    <dimen name="widget_row_section_text">9sp</dimen>
     <dimen name="widget_color_bar_width">3dp</dimen>
-    <dimen name="widget_color_bar_height">32dp</dimen>
+    <dimen name="widget_row_color_bar_height">24dp</dimen>
 
     <!-- 待交作业 -->
     <dimen name="widget_hw_title_text">12sp</dimen>
@@ -40,9 +41,9 @@
     <dimen name="widget_exam_row_meta_text">9sp</dimen>
     <dimen name="widget_exam_row_days_text">10sp</dimen>
 
-    <!-- 本周课表网格 -->
-    <dimen name="widget_week_day_label_text">10sp</dimen>
-    <dimen name="widget_week_cell_height">16dp</dimen>
-    <dimen name="widget_week_cell_margin">1dp</dimen>
-    <dimen name="widget_week_cell_text">9sp</dimen>
+    <!-- 下一节课（v2） -->
+    <dimen name="widget_next_name_text">16sp</dimen>
+    <dimen name="widget_next_meta_text">11sp</dimen>
+    <dimen name="widget_next_color_bar_width">4dp</dimen>
+    <dimen name="widget_next_color_bar_height">40dp</dimen>
 </resources>

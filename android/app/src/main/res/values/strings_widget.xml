@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 今天课表卡：2×2，横向/纵向可缩放 -->
+    <!-- 下一节课卡（原「今天课表」）：2×2，四向可缩放 -->
     <string name="widget_today_title">%1$s · 第%2$d周</string>
-    <string name="widget_week_title">第%d周</string>
+    <!-- 今日课程卡（原「本周课表」）：标题右侧的当日总节数 -->
+    <string name="widget_day_count">共 %d 节</string>
+
     <string name="widget_homework_count">待交 %d 项</string>
     <string name="widget_homework_overdue">逾期 %d</string>
     <string name="widget_homework_all_done">作业都写完啦</string>
@@ -15,10 +17,15 @@
     <string name="widget_empty_no_courses">课表还是空的</string>
     <string name="widget_empty_no_class_this_week">本周没课</string>
     <string name="widget_empty_no_class_today">今天没课</string>
+    <!-- 今天的课都上完了：不显示最后一门课，避免被误读成"下一节就是它" -->
+    <string name="widget_empty_all_done">今天的课都上完了</string>
 
     <!-- 卡片名称（组件选择器里显示） -->
-    <string name="widget_label_today">今天课表</string>
-    <string name="widget_label_week">本周课表</string>
+    <string name="widget_label_today">下一节课</string>
+    <string name="widget_label_week">今日课程</string>
     <string name="widget_label_homework">待交作业</string>
     <string name="widget_label_exam">近期考试</string>
+
+    <!-- 渲染兜底（provider 抛异常时） -->
+    <string name="widget_render_error">小组件加载失败\n点一下打开 App 试试</string>
 </resources>

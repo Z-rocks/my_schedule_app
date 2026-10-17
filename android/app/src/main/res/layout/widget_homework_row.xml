@@ -14,7 +14,11 @@
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <View
+        <!-- 状态点必须是 TextView 而不是 View：RemoteViews 只允许带
+             @RemoteViews$RemoteView 注解的控件，android.view.View 不在白名单里。
+             这个 <View> 就是「有作业时整张卡变黑、提示"载入窗口小部件时出现问题"」
+             的真凶——空态不 inflate 这一行，所以空态一切正常（2026-10-17 真机）。 -->
+        <TextView
             android:id="@+id/hw_dot"
             android:layout_width="@dimen/widget_hw_dot_size"
             android:layout_height="@dimen/widget_hw_dot_size"

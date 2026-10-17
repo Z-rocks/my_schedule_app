@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 「今日课程」列表的一行：色条 + 课程名 + 节次时间 + 地点。
+
+     为什么是这一行：用户反馈原来的「本周课表」是 7×12 色块网格，只有颜色没有
+     课程名，"看不到具体课程"。改成当日课程列表后，一行必须同时给出用户要的
+     四要素——第几节、上课时间、课程、地点。
+
+     高度**写死** @dimen/widget_row_height：WeekWidgetProvider 用"卡片高度 ÷
+     行高"反算能放几行，布局高度和这个算式必须一致，否则会溢出或被裁。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="@dimen/widget_row_height"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <!-- TextView 当色条用：RemoteViews 不允许 android.view.View（见 widget_today.xml 注释）。 -->
+    <TextView
+        android:id="@+id/row_color_bar"
+        android:layout_width="@dimen/widget_color_bar_width"
+        android:layout_height="@dimen/widget_row_color_bar_height"
+        android:background="@android:color/transparent" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/row_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/widget_text_primary"
+            android:textSize="@dimen/widget_row_name_text"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:orientation="horizontal">
+
+            <!-- "3-4节 10:25-11:10"（插件没给作息时只有 "3-4节"） -->
+            <TextView
+                android:id="@+id/row_section"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/widget_text_secondary"
+                android:textSize="@dimen/widget_row_section_text" />
+
+            <!-- 地点右对齐：和上一行的课程名形成两栏对齐，扫读更快 -->
+            <TextView
+                android:id="@+id/row_room"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:gravity="end"
+                android:maxLines="1"
+                android:textColor="@color/widget_text_secondary"
+                android:textSize="@dimen/widget_row_section_text" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

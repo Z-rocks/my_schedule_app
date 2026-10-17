@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 本周课表卡片根布局：表头行 + 7 列网格（列与格子动态 addView） -->
+<!-- 「今日课程」卡片根布局（v2 改造，原「本周课表」7×12 色块网格）。
+
+     为什么改：原网格只有颜色块、没有课程名，用户看不出"第几节上什么"；
+     而 4×3 的卡面画一整周本来也不够用。现在只画**今天**的课程列表：
+     一行一门课（节次时间 + 课程 + 地点），行数按卡片实际高度自适应。
+
+     厂商适配：根布局必须声明 android:id="@android:id/background" 且背景
+     非全透明，否则在 HyperOS 小部件中心会被过滤 / 详情页空白。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@android:id/background"
     android:layout_width="match_parent"
@@ -8,18 +15,21 @@
     android:padding="@dimen/widget_card_padding_week"
     android:background="@drawable/widget_card_background">
 
+    <!-- 表头固定高度（@dimen/widget_week_header_height）：
+         行数 = (卡高 - 表头 - 内边距) ÷ 行高，这个高度参与算式，不要改成 wrap_content。 -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="@dimen/widget_week_header_height"
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
         <TextView
+            android:id="@+id/week_title"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:ellipsize="end"
             android:maxLines="1"
-            android:text="@string/widget_label_week"
             android:textColor="@color/widget_text_primary"
             android:textSize="@dimen/widget_title_text_week"
             android:textStyle="bold" />
@@ -29,6 +39,7 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+            <!-- "共 5 节"：列表被截断时，这里仍告诉用户今天总共有几节 -->
             <TextView
                 android:id="@+id/week_title_right"
                 android:layout_width="wrap_content"
@@ -47,6 +58,7 @@
         </LinearLayout>
     </LinearLayout>
 
+    <!-- 空态：今天没课 / 本周没课 / 没配学期 / 快照不可用 -->
     <TextView
         android:id="@+id/week_empty_text"
         android:layout_width="match_parent"
@@ -58,16 +70,9 @@
         android:visibility="gone" />
 
     <LinearLayout
-        android:id="@+id/days_header"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:orientation="horizontal" />
-
-    <LinearLayout
-        android:id="@+id/grid_body"
+        android:id="@+id/day_list"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
-        android:orientation="horizontal" />
+        android:orientation="vertical" />
 </LinearLayout>

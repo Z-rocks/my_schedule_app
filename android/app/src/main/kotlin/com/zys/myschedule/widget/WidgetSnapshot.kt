@@ -39,6 +39,8 @@ data class ScheduleSnapshot(
     val cells: List<List<Int>>,
     /** 当天的课程序列（跨节已合并）。 */
     val todaySessions: List<TodaySession>,
+    /** 当前正在上 / 接下来要上的那节课（v2；今天没课时为 null）。 */
+    val nextSession: NextSession? = null,
 )
 
 data class WidgetCourse(
@@ -54,6 +56,21 @@ data class TodaySession(
     val length: Int,
     /** 例："3-4节 10:25-11:10"（插件没给作息时只有 "3-4节"）。 */
     val sectionText: String,
+)
+
+/**
+ * 当前 / 下一节课（快照 v2）。
+ *
+ * [state] 取值：`ongoing`（正在上）、`upcoming`（接下来）、`finished`（今天已上完）、
+ * `unknown`（插件没给作息，无法判断，此时取今天第一节）。
+ * [label] 是给卡片右上角的状态文案（"进行中" / "10:25 上课" / "已结束"），
+ * 由 Dart 侧算好——小组件不解析时间。
+ */
+data class NextSession(
+    val courseIdx: Int,
+    val sectionText: String,
+    val state: String,
+    val label: String,
 )
 
 data class HomeworkSnapshot(
@@ -192,6 +209,20 @@ object WidgetSnapshotParser {
             courseTable = table,
             cells = cells,
             todaySessions = sessions,
+            nextSession = parseNextSession(obj.optJSONObject("nextSession")),
+        )
+    }
+
+    private fun parseNextSession(obj: JSONObject?): NextSession? {
+        if (obj == null) return null
+        // courseIdx 越界/缺失的"下一节课"没有意义，直接当没有（卡片走空态）。
+        val courseIdx = obj.optInt("courseIdx", -1)
+        if (courseIdx < 0) return null
+        return NextSession(
+            courseIdx = courseIdx,
+            sectionText = obj.optString("sectionText", ""),
+            state = obj.optString("state", "unknown"),
+            label = obj.optString("label", ""),
         )
     }
 

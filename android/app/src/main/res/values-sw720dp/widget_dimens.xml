@@ -12,11 +12,12 @@
 
     <dimen name="widget_empty_text">17sp</dimen>
 
-    <dimen name="widget_course_name_text">18sp</dimen>
-    <dimen name="widget_row_meta_text">13sp</dimen>
-    <dimen name="widget_row_padding_vertical">7dp</dimen>
+    <dimen name="widget_week_header_height">45dp</dimen>
+    <dimen name="widget_row_height">48dp</dimen>
+    <dimen name="widget_row_name_text">18sp</dimen>
+    <dimen name="widget_row_section_text">14sp</dimen>
     <dimen name="widget_color_bar_width">5dp</dimen>
-    <dimen name="widget_color_bar_height">48dp</dimen>
+    <dimen name="widget_row_color_bar_height">36dp</dimen>
 
     <dimen name="widget_hw_title_text">16sp</dimen>
     <dimen name="widget_hw_meta_text">12sp</dimen>
@@ -32,8 +33,8 @@
     <dimen name="widget_exam_row_meta_text">12sp</dimen>
     <dimen name="widget_exam_row_days_text">13sp</dimen>
 
-    <dimen name="widget_week_day_label_text">13sp</dimen>
-    <dimen name="widget_week_cell_height">30dp</dimen>
-    <dimen name="widget_week_cell_margin">2dp</dimen>
-    <dimen name="widget_week_cell_text">12sp</dimen>
+    <dimen name="widget_next_name_text">23sp</dimen>
+    <dimen name="widget_next_meta_text">14sp</dimen>
+    <dimen name="widget_next_color_bar_width">6dp</dimen>
+    <dimen name="widget_next_color_bar_height">58dp</dimen>
 </resources>

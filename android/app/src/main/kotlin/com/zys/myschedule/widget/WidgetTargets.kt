@@ -8,7 +8,7 @@ package com.zys.myschedule.widget
  * 不认识的版本按空态处理（"请打开 App 更新"），不会崩。
  */
 object WidgetSnapshotContract {
-    const val VERSION = 1
+    const val VERSION = 2
 
     /** MethodChannel 名（Dart 侧 `widgetChannel` 必须一致）。 */
     const val CHANNEL_WIDGET = "com.zys.myschedule/widget"

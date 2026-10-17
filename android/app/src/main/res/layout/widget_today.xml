@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 今天课表卡片根布局。
-     厂商适配（2026-10-17 修正）：早期"背景透明、圆角一律不画"的做法在
-     HyperOS 小部件中心行不通——MIUI 小部件技术规范要求根布局必须声明
-     android:id="@android:id/background"（系统靠它统一裁圆角）且背景非全
-     透明，否则小部件在小部件中心被过滤、长按图标的详情页空白。
-     故改为静态纯色卡片底（深色桌面走 values-night 自动切换）。 -->
+<!-- 「下一节课」卡片根布局（v2 改造，原「今天课表」）。
+     为什么改：原卡片是"今天全部课程"的缩略列表，2×2 里最多塞 4 行，
+     课程一多就显示不全；而用户真正想一眼看到的是"现在/接下来上什么"。
+     完整的今日课程由另一张卡（widget_week，原「本周课表」）承担。
+
+     厂商适配（2026-10-17 修正）：根布局必须声明 android:id="@android:id/background"
+     且背景非全透明，否则在 HyperOS 小部件中心会被过滤/详情页空白。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@android:id/background"
     android:layout_width="match_parent"
@@ -16,8 +17,8 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical">
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
 
         <TextView
             android:id="@+id/today_title"
@@ -30,16 +31,22 @@
             android:textSize="@dimen/widget_title_text"
             android:textStyle="bold" />
 
+        <!-- 状态位：只在"正在上课"时显示「进行中」（其余状态隐藏，
+             否则会和标题抢宽度；开课时间 next_section 里已经有） -->
         <TextView
-            android:id="@+id/updated_text"
+            android:id="@+id/next_state"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="6dp"
-            android:textColor="@color/widget_text_secondary"
-            android:textSize="@dimen/widget_updated_text" />
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/widget_accent"
+            android:textSize="@dimen/widget_next_meta_text"
+            android:textStyle="bold"
+            android:visibility="gone" />
     </LinearLayout>
 
-    <!-- 空态：今天没课 / 没配学期 / 快照不可用 -->
+    <!-- 空态：今天没课 / 本周没课 / 没配学期 / 快照不可用 -->
     <TextView
         android:id="@+id/empty_text"
         android:layout_width="match_parent"
@@ -50,10 +57,62 @@
         android:textSize="@dimen/widget_empty_text"
         android:visibility="gone" />
 
-    <!-- 当天的课程序列（动态 addView 行） -->
+    <!-- 下一节课：色条 + 课程名 / 节次时间 / 地点 -->
     <LinearLayout
-        android:id="@+id/sessions_container"
+        android:id="@+id/next_block"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical" />
+        android:layout_marginTop="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <!-- 色条必须是 TextView 而不是 View：RemoteViews 只允许带
+             @RemoteViews$RemoteView 注解的控件，android.view.View 不在白名单里。
+             用 <View> 会让整张卡在桌面进程里 inflate 失败 → 桌面显示
+             "载入窗口小部件时出现问题"（2026-10-17 真机踩到，整卡变黑）。
+             这里不需要任何文字，只借它的背景色。 -->
+        <TextView
+            android:id="@+id/next_color_bar"
+            android:layout_width="@dimen/widget_next_color_bar_width"
+            android:layout_height="@dimen/widget_next_color_bar_height"
+            android:background="@android:color/transparent" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/next_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="2"
+                android:textColor="@color/widget_text_primary"
+                android:textSize="@dimen/widget_next_name_text"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/next_section"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/widget_text_secondary"
+                android:textSize="@dimen/widget_next_meta_text" />
+
+            <TextView
+                android:id="@+id/next_room"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/widget_text_secondary"
+                android:textSize="@dimen/widget_next_meta_text" />
+        </LinearLayout>
+    </LinearLayout>
 </LinearLayout>

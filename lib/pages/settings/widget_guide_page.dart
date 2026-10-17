@@ -89,9 +89,9 @@ class _WidgetGuidePageState extends State<WidgetGuidePage>
   static String _cardName(WidgetKind kind) {
     switch (kind) {
       case WidgetKind.today:
-        return '今天课表';
+        return '下一节课';
       case WidgetKind.week:
-        return '本周课表';
+        return '今日课程';
       case WidgetKind.homework:
         return '待交作业';
       case WidgetKind.exam:
@@ -244,8 +244,8 @@ class _WidgetGuidePageState extends State<WidgetGuidePage>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          _bullet(theme, '今天课表：当天从第几节到第几节、课程、教室，今天没课会提示。'),
-          _bullet(theme, '本周课表：周几 × 节次的色块网格，今天的列高亮。'),
+          _bullet(theme, '下一节课：现在正在上 / 接下来要上的那门课，带第几节、几点到几点、在哪；今天上完了会提示。'),
+          _bullet(theme, '今日课程：今天每节课一行，节次时间、课程、地点都在，行数随卡片高度自适应。'),
           _bullet(theme, '待交作业：待交数量、逾期数量，以及最近的几条作业。'),
           _bullet(theme, '近期考试：最近一场考试倒计时和其余考试安排。'),
           SizedBox(height: theme.gridGap),
@@ -263,8 +263,8 @@ class _WidgetGuidePageState extends State<WidgetGuidePage>
             spacing: theme.gridGap,
             runSpacing: theme.gridGap,
             children: <Widget>[
-              _addButton(theme, WidgetKind.today, '今天课表'),
-              _addButton(theme, WidgetKind.week, '本周课表'),
+              _addButton(theme, WidgetKind.today, '下一节课'),
+              _addButton(theme, WidgetKind.week, '今日课程'),
               _addButton(theme, WidgetKind.homework, '待交作业'),
               _addButton(theme, WidgetKind.exam, '近期考试'),
             ],

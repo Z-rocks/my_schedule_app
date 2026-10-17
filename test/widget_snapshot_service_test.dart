@@ -74,7 +74,7 @@ void main() {
       );
       final Map<String, dynamic> json = snapshot.toJson();
 
-      expect(json['version'], 1);
+      expect(json['version'], kWidgetSnapshotVersion);
       expect(json['hasSemester'], false);
       expect(json['week'], 1);
       expect(json['scheduleEmpty'], true);
@@ -257,6 +257,96 @@ void main() {
       ));
       expect(colorA, colorB);
       expect(kWidgetFallbackPalette.contains(colorA), true);
+    });
+  });
+
+  group('下一节课（快照 v2）', () {
+    // 周三两门课：1-2 节（08:00-09:40）、3-4 节（10:25-12:00）。
+    final List<Course> twoCourses = <Course>[
+      makeCourse(
+        id: 'ncst:early',
+        name: '大学英语',
+        room: '教二201',
+        startSession: 1,
+        length: 2,
+      ),
+      makeCourse(id: 'ncst:late', name: '高等数学', startSession: 3, length: 2),
+    ];
+    const SectionTimes times = SectionTimes(
+      times: <int, String>{
+        1: '08:00-08:45',
+        2: '08:55-09:40',
+        3: '10:25-11:10',
+        4: '11:15-12:00',
+      },
+      pluginId: 'ncst',
+      pluginName: 'NCST',
+    );
+
+    Map<String, dynamic>? nextAt(
+      DateTime now, {
+      List<Course>? courses,
+      SectionTimes? sectionTimes = times,
+    }) {
+      final Map<String, dynamic> schedule =
+          WidgetSnapshotService.build(
+            courses: courses ?? twoCourses,
+            semester: semester,
+            homeworks: const <Homework>[],
+            exams: const <Exam>[],
+            sectionTimes: sectionTimes,
+            now: now,
+          ).toJson()['schedule'] as Map<String, dynamic>;
+      return schedule['nextSession'] as Map<String, dynamic>?;
+    }
+
+    test('第一节课之前：upcoming，指向第一节并给出开课时间', () {
+      final Map<String, dynamic>? next = nextAt(DateTime(2026, 10, 14, 7, 30));
+      expect(next, isNotNull);
+      expect(next!['courseIdx'], 0);
+      expect(next['state'], 'upcoming');
+      expect(next['label'], '08:00 上课');
+      expect(next['sectionText'], '1-2节 08:00-09:40');
+    });
+
+    test('两节课之间：upcoming 指向第二节', () {
+      final Map<String, dynamic>? next = nextAt(DateTime(2026, 10, 14, 10, 0));
+      expect(next!['courseIdx'], 1);
+      expect(next['state'], 'upcoming');
+      expect(next['label'], '10:25 上课');
+    });
+
+    test('正在上课：ongoing，跨节合并的课整段都算进行中', () {
+      // 11:00 落在 3-4 节合并后的 10:25-12:00 里（第 3 节本身 11:10 就下课了，
+      // 若没按"跨节合并"取末节结束时间，这里会误判成 upcoming）。
+      final Map<String, dynamic>? next = nextAt(DateTime(2026, 10, 14, 11, 0));
+      expect(next!['courseIdx'], 1);
+      expect(next['state'], 'ongoing');
+      expect(next['label'], '进行中');
+    });
+
+    test('今天的课都上完：finished，仍带最后一节（卡片据此显示"已上完"）', () {
+      final Map<String, dynamic>? next = nextAt(DateTime(2026, 10, 14, 12, 30));
+      expect(next!['courseIdx'], 1);
+      expect(next['state'], 'finished');
+      expect(next['label'], '已结束');
+    });
+
+    test('插件没给作息：unknown，退化为今天第一节且不带状态文案', () {
+      final Map<String, dynamic>? next = nextAt(
+        DateTime(2026, 10, 14, 12, 30),
+        sectionTimes: null,
+      );
+      expect(next!['courseIdx'], 0);
+      expect(next['state'], 'unknown');
+      expect(next['label'], '');
+      expect(next['sectionText'], '1-2节');
+    });
+
+    test('今天没课：nextSession 为 null（卡片走空态，不渲染残留课程）', () {
+      // 2026-10-15 周四，两门课都在周三。
+      final Map<String, dynamic>? next = nextAt(DateTime(2026, 10, 15, 10, 0));
+      expect(next, isNull);
     });
   });
 
