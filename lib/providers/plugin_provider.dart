@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import '../models/plugin_catalog.dart';
 import '../models/plugin_meta.dart';
 import '../runtime/js_sandbox.dart';
 import '../runtime/plugin_context.dart' show PluginNotifyHandler;
@@ -14,20 +15,15 @@ import '../runtime/plugin_runtime.dart';
 import '../services/plugin_storage_service.dart';
 import '../services/storage_service.dart';
 
-/// 内置 NCST 教务插件的 id（Phase 4.2）。
-const String kNcstPluginId = 'ncst-jwxt';
-
-/// 内置 NCST 教务插件的 asset 路径。
-///
-/// 注意：`pubspec.yaml` 里声明的是**目录** `assets/plugins/`，
-/// 所以新增插件文件**不需要**改 pubspec。
-const String kNcstPluginAssetPath = 'assets/plugins/ncst-jwxt.js';
-
-/// 内置学习通（超星）插件的 id（Phase 8）。
-const String kChaoxingPluginId = 'chaoxing';
-
-/// 内置学习通插件的 asset 路径（同 [kNcstPluginAssetPath]，不必改 pubspec）。
-const String kChaoxingPluginAssetPath = 'assets/plugins/chaoxing.js';
+// 插件 id / asset 路径常量已迁到 `models/plugin_catalog.dart`（市场目录与
+// 安装逻辑共用同一份）。这里 re-export，保持既有 `import plugin_provider.dart`
+// 的调用方仍能拿到这些常量。
+export '../models/plugin_catalog.dart'
+    show
+        kChaoxingPluginAssetPath,
+        kChaoxingPluginId,
+        kNcstPluginAssetPath,
+        kNcstPluginId;
 
 /// 已安装插件状态。
 ///
@@ -339,21 +335,40 @@ class PluginProvider extends ChangeNotifier {
     return true;
   }
 
-  /// 安装内置的 **NCST 教务插件**（Phase 4.2）。
+  /// 从**市场目录**安装一个插件（创意工坊 → 插件市场的统一入口）。
   ///
-  /// 装完即为"已启用"，用户接着在插件详情页点「登录」→「立即同步」。
-  /// 真实 URL 只在 `assets/plugins/ncst-jwxt.js` 里，内核不硬编码（CONTEXT 3.1）。
-  Future<bool> installNcstPlugin() {
+  /// 目录条目里的 name / description / capabilities 直接作为 fallback 传给
+  /// [installBuiltinPlugin]；安装成功后运行时用插件自述补齐能力，
+  /// 所以市场展示的标签与安装后的实际能力不会打架。
+  ///
+  /// 已安装时是**幂等**的：会重新覆盖插件文件并重新启用，不会产生第二份记录。
+  Future<bool> installCatalogPlugin(PluginCatalogEntry entry) {
     return installBuiltinPlugin(
-      pluginId: kNcstPluginId,
-      assetPath: kNcstPluginAssetPath,
-      fallbackName: '华北理工大学教务系统',
-      fallbackCapabilities: const <String>['timetable'],
-      description: '从 NCST 教务系统拉取本学期课表（需先登录）',
+      pluginId: entry.id,
+      assetPath: entry.assetPath,
+      fallbackName: entry.name,
+      fallbackCapabilities: entry.capabilities,
+      description: entry.description,
+      author: entry.author,
     );
   }
 
-  /// 安装内置的**学习通（超星）插件**（Phase 8）。
+  /// 安装内置的 **NCST 教务插件**。
+  ///
+  /// 等价于 `installCatalogPlugin(pluginCatalogEntry(kNcstPluginId)!)`，
+  /// 保留这个具名方法是为了让调用方（以及将来的快捷入口）不必自己查目录。
+  /// 装完即为"已启用"，用户接着在插件详情页点「登录」→「立即同步」。
+  /// 真实 URL 只在 `assets/plugins/ncst-jwxt.js` 里，内核不硬编码（CONTEXT 3.1）。
+  Future<bool> installNcstPlugin() {
+    final PluginCatalogEntry? entry = pluginCatalogEntry(kNcstPluginId);
+    if (entry == null) {
+      debugPrint('[PluginProvider] 目录里找不到 $kNcstPluginId');
+      return Future<bool>.value(false);
+    }
+    return installCatalogPlugin(entry);
+  }
+
+  /// 安装内置的**学习通（超星）插件**。
   ///
   /// 装完即为"已启用"。用户在插件详情页点「登录」完成学习通登录后，
   /// 到作业页 / 考试页点右上角「抓取」→ 勾选课程 → 抓取。
@@ -362,13 +377,12 @@ class PluginProvider extends ChangeNotifier {
   /// 考试两个模块会自动可用（能力 → 模块可用性由 `ModuleProvider` 联动）。
   /// 所有学习通 URL 只在 `assets/plugins/chaoxing.js` 里（CONTEXT 3.1）。
   Future<bool> installChaoxingPlugin() {
-    return installBuiltinPlugin(
-      pluginId: kChaoxingPluginId,
-      assetPath: kChaoxingPluginAssetPath,
-      fallbackName: '学习通（超星）',
-      fallbackCapabilities: const <String>['homework', 'exam'],
-      description: '从学习通拉取课程、作业（含正文）与考试安排（需先登录）',
-    );
+    final PluginCatalogEntry? entry = pluginCatalogEntry(kChaoxingPluginId);
+    if (entry == null) {
+      debugPrint('[PluginProvider] 目录里找不到 $kChaoxingPluginId');
+      return Future<bool>.value(false);
+    }
+    return installCatalogPlugin(entry);
   }
 
   // ─────────────────────────── 增删 ───────────────────────────

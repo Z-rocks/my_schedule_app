@@ -1,8 +1,12 @@
-// 设置主页：分组列出账号 / 扩展 / 外观 / 布局 / 数据 / 关于入口
+// 设置主页：分组列出扩展 / 外观 / 布局 / 数据 / 关于入口
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/theme_provider.dart';
+import '../../services/app_version.dart';
+import '../../services/system_bridge.dart';
+import '../../services/update_service.dart';
 import '../../theme/default_skins.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
@@ -11,15 +15,6 @@ import 'plugin_manage_page.dart';
 import 'timetable_settings_page.dart';
 import 'widget_guide_page.dart';
 import 'workshop_page.dart';
-
-/// 应用版本号。
-///
-/// 修改版本号时需同步 `pubspec.yaml` 的 `version` 字段（两处目前各自维护）。
-/// Phase 9 打包后改用 `package_info_plus` 运行时读取。
-///
-/// 这里用常量而不是 `package_info_plus`：项目技术栈（CONTEXT.md 第 2 节）
-/// 未声明该依赖，Phase 9 打包时再改为运行时读取。
-const String kAppVersion = 'v0.1.0';
 
 /// 设置主页。
 ///
@@ -153,16 +148,6 @@ class SettingsPage extends StatelessWidget {
         padding: EdgeInsets.symmetric(vertical: theme.sectionGap),
         children: <Widget>[
           _SettingsGroup(
-            title: '账号',
-            children: <Widget>[
-              _SettingsTile(
-                title: '登录管理',
-                showChevron: true,
-                onTap: () => _showSnack(context, '登录管理（待实现）'),
-              ),
-            ],
-          ),
-          _SettingsGroup(
             title: '扩展',
             children: <Widget>[
               _SettingsTile(
@@ -191,7 +176,12 @@ class SettingsPage extends StatelessWidget {
                 title: '当前主题',
                 trailingText: _currentThemeLabel(context),
                 showChevron: true,
-                onTap: () => _push(context, const WorkshopPage()),
+                // 从"当前主题"进来显然是想换皮肤：直接落在皮肤 Tab，
+                // 而不是创意工坊的默认页（插件市场）。
+                onTap: () => _push(
+                  context,
+                  const WorkshopPage(initialTab: WorkshopTab.skins),
+                ),
               ),
             ],
           ),
@@ -251,8 +241,21 @@ class SettingsPage extends StatelessWidget {
           _SettingsGroup(
             title: '关于',
             children: <Widget>[
-              // 版本号不可点击。
-              _SettingsTile(title: '版本号', trailingText: kAppVersion),
+              // 版本号不可点击：值来自系统包信息（`AppVersion` 经平台通道读取），
+              // 不再写死常量——写死的那个曾经是 v0.1.0，与实际包 0.2.0+2 不符。
+              FutureBuilder<String>(
+                future: AppVersion.load(),
+                builder: (
+                  BuildContext context,
+                  AsyncSnapshot<String> snapshot,
+                ) =>
+                    _SettingsTile(
+                  title: '版本号',
+                  trailingText:
+                      snapshot.hasData ? 'v${snapshot.data}' : '读取中…',
+                ),
+              ),
+              const _CheckUpdateTile(),
               _SettingsTile(
                 title: '反馈',
                 onTap: () => _showSnack(context, '反馈（待实现）'),
@@ -310,6 +313,107 @@ class _SettingsGroup extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 「检查更新」条目：点一次查一次 GitHub Release。
+///
+/// 抽成独立的 StatefulWidget，是因为"检查中"这个瞬时状态只需要重建这一行，
+/// 不该让整个设置页跟着重建。
+class _CheckUpdateTile extends StatefulWidget {
+  const _CheckUpdateTile();
+
+  @override
+  State<_CheckUpdateTile> createState() => _CheckUpdateTileState();
+}
+
+class _CheckUpdateTileState extends State<_CheckUpdateTile> {
+  /// 是否正在请求 GitHub（防重入 + 行尾提示）。
+  bool _checking = false;
+
+  Future<void> _check() async {
+    if (_checking) return;
+    setState(() => _checking = true);
+
+    final String current = await AppVersion.load();
+    final UpdateCheckResult result =
+        await UpdateService.check(currentVersion: current);
+
+    if (!mounted) return;
+    setState(() => _checking = false);
+
+    if (result.status == UpdateStatus.upToDate) {
+      _snack('已是最新版本 v$current');
+    } else if (result.status == UpdateStatus.failed) {
+      _snack(result.reason);
+    } else {
+      await _showUpdateDialog(result);
+    }
+  }
+
+  void _snack(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _showUpdateDialog(UpdateCheckResult result) async {
+    final bool? go = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: Text('发现新版本 v${result.latestVersion}'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Text('当前版本 v${result.currentVersion}'),
+              if (result.changelog.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 12),
+                // Release 正文是纯文本（可能带 Markdown 标记），这里原样展示：
+                // 为了它引入一个 Markdown 渲染器不值得，用户关心的是"改了什么"。
+                Text(result.changelog),
+              ],
+            ],
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('稍后'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('前往下载'),
+          ),
+        ],
+      ),
+    );
+
+    if (go != true || !mounted) return;
+
+    final String url = result.downloadUrl;
+    if (url.isEmpty) {
+      _snack('这个 Release 没有可下载的文件');
+      return;
+    }
+
+    final bool opened = await SystemBridge.openUrl(url);
+    if (opened) return;
+
+    // 兜底：非 Android 平台 / 没有浏览器可打开 → 复制链接，用户自己粘。
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    _snack('已复制下载链接到剪贴板');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _SettingsTile(
+      title: '检查更新',
+      trailingText: _checking ? '检查中…' : null,
+      showChevron: !_checking,
+      onTap: _checking ? null : _check,
     );
   }
 }

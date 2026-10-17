@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/plugin_catalog.dart';
 import '../../models/plugin_meta.dart';
 import '../../providers/plugin_provider.dart';
 import '../../theme/app_theme.dart';
@@ -102,36 +103,22 @@ class PluginManagePage extends StatelessWidget {
       appBar: AppBar(
         title: const Text('插件管理'),
         centerTitle: true,
-        actions: <Widget>[
-          PopupMenuButton<_AddAction>(
-            icon: const Icon(Icons.add),
-            tooltip: '安装插件',
-            onSelected: (_AddAction action) =>
-                _onAddAction(context, provider, action),
-            itemBuilder: (BuildContext context) =>
-                <PopupMenuEntry<_AddAction>>[
-              const PopupMenuItem<_AddAction>(
-                value: _AddAction.installNcst,
-                child: Text('安装 NCST 教务插件'),
-              ),
-              const PopupMenuItem<_AddAction>(
-                value: _AddAction.installChaoxing,
-                child: Text('安装学习通（超星）插件'),
-              ),
-              const PopupMenuItem<_AddAction>(
-                value: _AddAction.importFile,
-                child: Text('从文件导入（Phase 6+）'),
-              ),
-            ],
-          ),
-        ],
+        // 刻意**不放** `+` 安装菜单（P1 修正）：安装入口统一在创意工坊的
+        // 插件市场。此前这里有一个 `+`，与市场是同一件事的两个入口，必然漂移
+        // （市场上了新插件，菜单不会自动同步）；而且第三项"从文件导入"是纯占位，
+        // 属于"看起来能用其实不能用"。本页只负责**管理已安装的插件**。
       ),
       body: plugins.isEmpty
           ? EmptyState(
               icon: Icons.extension,
               title: '还没有安装插件',
-              subtitle: '从文件导入或从创意工坊下载',
-              actionLabel: '去创意工坊',
+              // 引导目标必须是**能真正装上的地方**：创意工坊的插件市场
+              // （其默认 Tab 就是插件市场，直接 push 即可）。
+              //
+              // P0 修正：此前这里写"从文件导入或从创意工坊下载"并跳创意工坊，
+              // 而创意工坊的插件 Tab 又引导回本页，两页互跳、谁都没有安装动作。
+              subtitle: '去创意工坊的插件市场挑一个装上',
+              actionLabel: '去创意工坊安装',
               onAction: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (BuildContext _) => const WorkshopPage(),
@@ -148,46 +135,7 @@ class PluginManagePage extends StatelessWidget {
             ),
     );
   }
-
-  Future<void> _onAddAction(
-    BuildContext context,
-    PluginProvider provider,
-    _AddAction action,
-  ) async {
-    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
-    switch (action) {
-      case _AddAction.installNcst:
-        final bool ok = await provider.installNcstPlugin();
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(ok
-                ? 'NCST 教务插件已安装并启用，去详情页点「登录」'
-                : 'NCST 插件安装失败，详见日志'),
-          ),
-        );
-      case _AddAction.installChaoxing:
-        final bool ok = await provider.installChaoxingPlugin();
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(ok
-                ? '学习通插件已安装并启用，去详情页点「登录」，再到作业页抓取'
-                : '学习通插件安装失败，详见日志'),
-          ),
-        );
-      case _AddAction.importFile:
-        messenger.showSnackBar(
-          const SnackBar(content: Text('从文件导入（Phase 6+ 实现）')),
-        );
-    }
-  }
 }
-
-/// `+` 菜单的动作。
-///
-/// **Phase 8.1 移除 `installExample`**：示例插件只是 Phase 3.5 验证插件管理
-/// UI 用的，Phase 4 约定在真实插件就位后删除（当时不能删，是因为它是
-/// 唯一能证明"装上 → 启用 → 详情页 → 同步"整条链路的用例）。
-enum _AddAction { installNcst, installChaoxing, importFile }
 
 /// 单个插件卡片。
 class _PluginCard extends StatelessWidget {
@@ -219,7 +167,7 @@ class _PluginCard extends StatelessWidget {
       child: ListTile(
         // 图标由第一个能力映射而来；映射不到则兜底 Icons.extension。
         leading: Icon(
-          iconFromName(_iconNameForCapability(
+          iconFromName(pluginIconNameForCapability(
             capabilities.isEmpty ? '' : capabilities.first,
           )),
           color: theme.primary,
@@ -260,7 +208,7 @@ class _PluginCard extends StatelessWidget {
               if (capabilities.isNotEmpty) ...<Widget>[
                 SizedBox(height: theme.gridGap),
                 Text(
-                  capabilities.map(_capabilityLabel).join(' · '),
+                  capabilities.map(pluginCapabilityLabel).join(' · '),
                   style: TextStyle(
                     fontSize: theme.captionSize,
                     color: theme.primary,
@@ -322,7 +270,10 @@ class _StatusBadge extends StatelessWidget {
 /// 内置能力直接复用导航栏模块的图标名（`ModuleProvider._initialModules`
 /// 用的是同一批名字），插件自定义能力（如 `ncst.grade`）查不到时返回空串，
 /// 由 `iconFromName` 兜底成 `Icons.extension`。
-String _iconNameForCapability(String capability) {
+///
+/// 公开而非私有：创意工坊的插件市场卡片也要用同一套图标，
+/// 两处各写一份必然漂移（与 `PluginUiStatus` 的导出理由相同）。
+String pluginIconNameForCapability(String capability) {
   switch (capability) {
     case 'timetable':
       return 'calendar_month';
@@ -341,22 +292,5 @@ String _iconNameForCapability(String capability) {
   }
 }
 
-/// 能力 id → 中文短标签。查不到时原样返回（插件自定义能力就显示原始 id）。
-String _capabilityLabel(String capability) {
-  switch (capability) {
-    case 'timetable':
-      return '课表';
-    case 'courseList':
-      return '课程';
-    case 'exam':
-      return '考试';
-    case 'homework':
-      return '作业';
-    case 'message':
-      return '消息';
-    case 'settings':
-      return '设置';
-    default:
-      return capability;
-  }
-}
+/// 能力 id → 中文短标签的映射已移到 `models/plugin_catalog.dart`
+/// （[pluginCapabilityLabel]），市场卡片与本页共用同一份说法。

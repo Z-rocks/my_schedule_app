@@ -132,6 +132,19 @@ class MainActivity : FlutterActivity() {
                         result.success(
                             SystemSettingsBridge.openPermissionEditor(applicationContext),
                         )
+                    // 版本号的唯一真相：从系统读 versionName+versionCode，
+                    // 避免 Dart 侧再维护一份常量（曾写死 v0.1.0 与实际包不符）。
+                    "appVersion" ->
+                        result.success(
+                            SystemSettingsBridge.appVersion(applicationContext),
+                        )
+                    // 检查更新 → 前往下载：用系统浏览器打开 Release 页面。
+                    "openUrl" -> {
+                        val url = call.argument<String>("url") ?: ""
+                        result.success(
+                            SystemSettingsBridge.openUrl(applicationContext, url),
+                        )
+                    }
                     else -> result.notImplemented()
                 }
             }

@@ -49,6 +49,44 @@ class SystemBridge {
   /// `add widget failed, <pkg> has no permission`）。用户允许一次即可。
   static Future<bool> openPermissionEditor() => _open('openPermissionEditor');
 
+  /// 用系统浏览器打开 http / https 链接（"检查更新 → 前往下载"用）。
+  ///
+  /// 非 Android 平台 / 链接非法 / 通道不可用一律返回 `false`，
+  /// 由调用方决定降级（例如复制链接到剪贴板）。
+  static Future<bool> openUrl(String url) async {
+    if (!supported || url.trim().isEmpty) return false;
+    try {
+      final bool? ok = await _channel.invokeMethod<bool>(
+        'openUrl',
+        <String, dynamic>{'url': url},
+      );
+      return ok ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// 本应用版本号，形如 `0.2.0+2`（versionName + versionCode）。
+  ///
+  /// **Android 上是版本号的唯一真相**：值来自系统包信息，而系统的
+  /// versionName 由 Flutter 构建时按 `pubspec.yaml` 的 `version` 写入，
+  /// 所以 Dart 侧不需要（也不应该）再维护一份常量。
+  ///
+  /// 非 Android 平台 / 通道不可用时返回空串，由调用方兜底。
+  static Future<String> appVersion() async {
+    if (!supported) return '';
+    try {
+      final String? value = await _channel.invokeMethod<String>('appVersion');
+      return value ?? '';
+    } on MissingPluginException {
+      return '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
   static Future<bool> _open(String method) async {
     if (!supported) return false;
     try {

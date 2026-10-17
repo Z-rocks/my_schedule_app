@@ -60,6 +60,50 @@ object SystemSettingsBridge {
         return openAppDetails(context)
     }
 
+    /**
+     * 读取本应用的版本号，形如 `0.2.0+2`（versionName + versionCode）。
+     *
+     * **这是版本号的唯一真相来源**：`pubspec.yaml` 的 `version` 由 Flutter
+     * 构建时写入 AndroidManifest（versionName / versionCode），这里从系统
+     * 读回来，就不需要在 Dart 里再维护一份常量——两份版本号必然漂移
+     * （此前设置页写死 `v0.1.0`，而实际包是 `0.2.0+2`）。
+     *
+     * 读不到时返回空串，由 Dart 侧决定兜底显示。
+     */
+    /**
+     * 用系统浏览器打开一个 **http / https** 链接（"检查更新 → 前往下载"用）。
+     *
+     * 只放行这两种 scheme：这个入口的 URL 来自远端 Release 数据，
+     * 放行 `intent://` / `file://` 之类会让远端数据能启动任意组件。
+     */
+    fun openUrl(context: Context, url: String): Boolean {
+        val trimmed = url.trim()
+        if (trimmed.isEmpty()) return false
+        val uri = try {
+            Uri.parse(trimmed)
+        } catch (e: Exception) {
+            return false
+        }
+        val scheme = uri.scheme?.lowercase() ?: return false
+        if (scheme != "http" && scheme != "https") return false
+        return start(context, Intent(Intent.ACTION_VIEW, uri))
+    }
+
+    @Suppress("DEPRECATION")
+    fun appVersion(context: Context): String = try {
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        val name = info.versionName ?: ""
+        val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            info.versionCode.toLong()
+        }
+        if (name.isEmpty()) "" else "$name+$code"
+    } catch (e: Exception) {
+        // 个别定制 ROM / 极端情况下 getPackageInfo 可能抛，返回空串交给 Dart 兜底。
+        ""
+    }
+
     private fun start(context: Context, intent: Intent): Boolean = try {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)

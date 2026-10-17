@@ -1,7 +1,8 @@
-// 创意工坊页：皮肤商店 + 插件 Tab（Phase 6 起皮肤列表是真实内容）
+// 创意工坊页：插件市场（默认）+ 皮肤商店
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/plugin_catalog.dart';
 import '../../models/plugin_meta.dart';
 import '../../models/skin_pack.dart';
 import '../../providers/plugin_provider.dart';
@@ -10,19 +11,39 @@ import '../../theme/app_theme.dart';
 import '../../theme/default_skins.dart';
 import '../../theme/theme_extension.dart';
 import '../../widgets/empty_state.dart';
+import '../../widgets/module_icon.dart';
 import 'plugin_detail_page.dart';
-import 'plugin_manage_page.dart';
+import 'plugin_manage_page.dart' show pluginIconNameForCapability;
 import 'skin_preview_page.dart';
 
-/// 创意工坊页：皮肤 / 插件两个 Tab。
+/// 创意工坊的两个 Tab。
 ///
-/// **Phase 1.6 是双 Tab 空态；Phase 6 起皮肤 Tab 有真实内容**：
-/// 内置皮肤（`builtinSkins()`）+ 「应用 / 预览 / 恢复默认」。
+/// 顺序即 Tab 顺序，`index` 直接用作 `DefaultTabController.initialIndex`。
+enum WorkshopTab {
+  /// 插件市场（默认）。
+  plugins,
+
+  /// 皮肤商店。
+  skins,
+}
+
+/// 创意工坊页：**插件市场 / 皮肤** 两个 Tab。
 ///
-/// 插件 Tab 不重复实现商店逻辑，只做"已装插件概览 + 跳插件管理"——
-/// 插件的安装/启停/详情已经有专门的页面，在这里再写一套必然会漂移。
+/// **默认停在插件**（P0 修正）：用户进"创意工坊"的主要目的是获取能力
+/// （装插件），皮肤是次要的装饰性需求。此前默认停在皮肤 Tab，导致
+/// "想装插件的人先看到一堆配色"。
+///
+/// 但入口语境要保留：从「设置 → 当前主题」进来的用户显然想看皮肤，
+/// 所以调用方可用 [initialTab] 指定落地页。
+///
+/// 插件 Tab 就是**插件市场**：可安装列表 + 已安装列表，卡片内直接安装。
+/// 此前这里只有"已安装概览 + 去插件管理安装"——而插件管理那边又引导回
+/// 创意工坊，两个空页面互相弹，用户永远装不上插件。
 class WorkshopPage extends StatelessWidget {
-  const WorkshopPage({super.key});
+  const WorkshopPage({super.key, this.initialTab = WorkshopTab.plugins});
+
+  /// 打开时落在哪个 Tab。
+  final WorkshopTab initialTab;
 
   @override
   Widget build(BuildContext context) {
@@ -30,6 +51,7 @@ class WorkshopPage extends StatelessWidget {
 
     return DefaultTabController(
       length: 2,
+      initialIndex: initialTab.index,
       child: Scaffold(
         backgroundColor: theme.background,
         appBar: AppBar(
@@ -45,15 +67,15 @@ class WorkshopPage extends StatelessWidget {
             ),
             unselectedLabelStyle: TextStyle(fontSize: theme.bodySize),
             tabs: const <Widget>[
-              Tab(text: '皮肤'),
               Tab(text: '插件'),
+              Tab(text: '皮肤'),
             ],
           ),
         ),
         body: const TabBarView(
           children: <Widget>[
-            _SkinsTab(),
             _PluginsTab(),
+            _SkinsTab(),
           ],
         ),
       ),
@@ -436,90 +458,266 @@ class _SwatchRow extends StatelessWidget {
   }
 }
 
-/// 插件 Tab：已装插件概览 + 跳插件管理。
+/// 插件 Tab = **插件市场**。
 ///
-/// **刻意不复刻**插件商店/安装流程：那套逻辑已经在
-/// `PluginManagePage` / `PluginDetailPage` 里，这里再写一份必然漂移。
-class _PluginsTab extends StatelessWidget {
+/// 分两段：**可安装**（目录里还没装的）+ **已安装**。
+/// 安装动作直接在卡片里完成，不再跳转到插件管理页——
+/// 此前这里只有"已装概览 + 去插件管理安装"，而插件管理空态又引导回创意工坊，
+/// 两个页面互相弹、谁都不提供安装动作，用户永远装不上插件（P0-1）。
+class _PluginsTab extends StatefulWidget {
   const _PluginsTab();
+
+  @override
+  State<_PluginsTab> createState() => _PluginsTabState();
+}
+
+class _PluginsTabState extends State<_PluginsTab> {
+  /// 正在安装的插件 id：用于按钮转圈 + 防重复点击。
+  final Set<String> _installing = <String>{};
+
+  Future<void> _install(PluginCatalogEntry entry) async {
+    if (_installing.contains(entry.id)) return;
+    setState(() => _installing.add(entry.id));
+
+    final PluginProvider provider = context.read<PluginProvider>();
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+
+    bool ok = false;
+    try {
+      ok = await provider.installCatalogPlugin(entry);
+    } catch (e) {
+      // 服务层契约是"失败返回 false"，真抛了也要让用户知道，不能静默。
+      debugPrint('[WorkshopPage] 安装 ${entry.id} 抛出异常：$e');
+    } finally {
+      if (mounted) setState(() => _installing.remove(entry.id));
+    }
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? '已安装「${entry.name}」，进详情页完成登录即可使用'
+              : '安装「${entry.name}」失败，详见日志',
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final AppTheme theme = AppThemeExtension.of(context);
     final PluginProvider provider = context.watch<PluginProvider>();
-    final List<PluginMeta> plugins = provider.plugins;
+    final List<PluginMeta> installed = provider.plugins;
+    final Set<String> installedIds =
+        installed.map((PluginMeta p) => p.id).toSet();
+    final List<PluginCatalogEntry> available = kPluginCatalog
+        .where((PluginCatalogEntry e) => !installedIds.contains(e.id))
+        .toList(growable: false);
 
-    if (plugins.isEmpty) {
-      return Column(
-        children: <Widget>[
-          const Expanded(
-            child: EmptyState(
-              icon: Icons.extension_outlined,
-              title: '还没有安装插件',
-              subtitle: '插件为 App 提供教务数据能力',
-            ),
-          ),
-          Padding(
-            padding: EdgeInsets.all(theme.cardPadding),
-            child: FilledButton.icon(
-              icon: const Icon(Icons.add),
-              label: const Text('去插件管理安装'),
-              style: FilledButton.styleFrom(
-                backgroundColor: theme.primary,
-                foregroundColor: theme.onPrimary,
-                minimumSize: const Size.fromHeight(48),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(theme.buttonRadius),
-                ),
-              ),
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<bool>(
-                  builder: (BuildContext _) => const PluginManagePage(),
-                ),
-              ),
-            ),
-          ),
-        ],
+    if (available.isEmpty && installed.isEmpty) {
+      // 目录被清空时的兜底（正常不会走到：kPluginCatalog 恒非空）。
+      return const EmptyState(
+        icon: Icons.extension_outlined,
+        title: '暂无可安装的插件',
+        subtitle: '插件市场正在准备中',
       );
     }
 
     return ListView(
       padding: EdgeInsets.all(theme.cardPadding),
       children: <Widget>[
-        Padding(
-          padding: EdgeInsets.only(
-            left: theme.cardPadding / 2,
-            bottom: theme.gridGap * 2,
-          ),
-          child: Text(
-            '已安装 ${plugins.length} 个插件',
-            style: TextStyle(
-              fontSize: theme.captionSize,
-              fontWeight: theme.titleFontWeight,
-              color: theme.primary,
+        if (available.isNotEmpty) ...<Widget>[
+          _SectionLabel(text: '可安装（${available.length}）'),
+          for (final PluginCatalogEntry entry in available)
+            _MarketCard(
+              entry: entry,
+              installing: _installing.contains(entry.id),
+              onInstall: () => _install(entry),
             ),
-          ),
-        ),
-        for (final PluginMeta plugin in plugins)
-          _PluginSummaryCard(plugin: plugin),
-        SizedBox(height: theme.sectionGap),
-        OutlinedButton.icon(
-          icon: const Icon(Icons.settings_outlined),
-          label: const Text('去插件管理'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: theme.primary,
-            minimumSize: const Size.fromHeight(48),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(theme.buttonRadius),
-            ),
-          ),
-          onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute<bool>(
-              builder: (BuildContext _) => const PluginManagePage(),
-            ),
-          ),
-        ),
+        ],
+        if (installed.isNotEmpty) ...<Widget>[
+          _SectionLabel(text: '已安装（${installed.length}）'),
+          for (final PluginMeta plugin in installed)
+            _PluginSummaryCard(plugin: plugin),
+        ],
       ],
+    );
+  }
+}
+
+/// 分组小标题（"可安装（2）" / "已安装（1）"）。
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppTheme theme = AppThemeExtension.of(context);
+    return Padding(
+      padding: EdgeInsets.only(
+        left: theme.cardPadding / 2,
+        bottom: theme.gridGap * 2,
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: theme.captionSize,
+          fontWeight: theme.titleFontWeight,
+          color: theme.primary,
+        ),
+      ),
+    );
+  }
+}
+
+/// 市场里的一张**可安装**插件卡片。
+///
+/// 与 [_PluginSummaryCard]（已安装、只读、点击进详情）分开：
+/// 这张卡的主要动作是"安装"，整卡点击不应跳转，避免误触。
+class _MarketCard extends StatelessWidget {
+  const _MarketCard({
+    required this.entry,
+    required this.installing,
+    required this.onInstall,
+  });
+
+  final PluginCatalogEntry entry;
+
+  /// 安装进行中：按钮转圈并禁用。
+  final bool installing;
+
+  final VoidCallback onInstall;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppTheme theme = AppThemeExtension.of(context);
+    final String iconName = pluginIconNameForCapability(
+      entry.capabilities.isEmpty ? '' : entry.capabilities.first,
+    );
+
+    return Card(
+      margin: EdgeInsets.only(bottom: theme.sectionGap),
+      color: theme.surface,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(theme.cardRadius),
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(theme.cardPadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(iconFromName(iconName), color: theme.primary),
+                SizedBox(width: theme.cardPadding),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        entry.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: theme.bodySize,
+                          fontWeight: theme.titleFontWeight,
+                          color: theme.onBackground,
+                        ),
+                      ),
+                      Text(
+                        entry.school,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: theme.captionSize,
+                          color: theme.onBackground.withValues(alpha: 0.6),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: theme.gridGap * 2),
+            Text(
+              entry.description,
+              style: TextStyle(
+                fontSize: theme.captionSize,
+                color: theme.onBackground.withValues(alpha: 0.8),
+              ),
+            ),
+            SizedBox(height: theme.cardPadding),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: <Widget>[
+                Expanded(
+                  child: Wrap(
+                    spacing: theme.gridGap,
+                    runSpacing: theme.gridGap,
+                    children: <Widget>[
+                      for (final String label in entry.capabilityLabels)
+                        _CapabilityChip(label: label),
+                    ],
+                  ),
+                ),
+                SizedBox(width: theme.gridGap * 2),
+                FilledButton(
+                  key: ValueKey<String>('plugin-install-${entry.id}'),
+                  onPressed: installing ? null : onInstall,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: theme.primary,
+                    foregroundColor: theme.onPrimary,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: theme.cardPadding,
+                      vertical: theme.gridGap * 2,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(theme.buttonRadius),
+                    ),
+                  ),
+                  child: installing
+                      ? SizedBox(
+                          width: theme.captionSize,
+                          height: theme.captionSize,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(theme.onPrimary),
+                          ),
+                        )
+                      : const Text('安装'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 能力标签（"课表" / "作业" / "考试"）。
+class _CapabilityChip extends StatelessWidget {
+  const _CapabilityChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppTheme theme = AppThemeExtension.of(context);
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: theme.gridGap * 2,
+        vertical: theme.gridGap / 2,
+      ),
+      decoration: BoxDecoration(
+        color: theme.primary.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(theme.chipRadius),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(fontSize: theme.captionSize, color: theme.primary),
+      ),
     );
   }
 }
