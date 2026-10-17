@@ -317,7 +317,7 @@ class _SettingsGroup extends StatelessWidget {
   }
 }
 
-/// 「检查更新」条目：点一次查一次 GitHub Release。
+/// 「检查更新」条目：点一次查一次远端 Release（Gitee 镜像优先，GitHub 兜底）。
 ///
 /// 抽成独立的 StatefulWidget，是因为"检查中"这个瞬时状态只需要重建这一行，
 /// 不该让整个设置页跟着重建。
@@ -329,7 +329,7 @@ class _CheckUpdateTile extends StatefulWidget {
 }
 
 class _CheckUpdateTileState extends State<_CheckUpdateTile> {
-  /// 是否正在请求 GitHub（防重入 + 行尾提示）。
+  /// 是否正在请求远端（防重入 + 行尾提示）。
   bool _checking = false;
 
   Future<void> _check() async {
@@ -344,7 +344,9 @@ class _CheckUpdateTileState extends State<_CheckUpdateTile> {
     setState(() => _checking = false);
 
     if (result.status == UpdateStatus.upToDate) {
-      _snack('已是最新版本 v$current');
+      // 带上来源：用户能看出是走 Gitee 镜像还是 GitHub 查到的。
+      final String via = result.source.isEmpty ? '' : '（${result.source}）';
+      _snack('已是最新版本 v$current$via');
     } else if (result.status == UpdateStatus.failed) {
       _snack(result.reason);
     } else {
@@ -368,6 +370,11 @@ class _CheckUpdateTileState extends State<_CheckUpdateTile> {
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
               Text('当前版本 v${result.currentVersion}'),
+              if (result.source.isNotEmpty)
+                Text(
+                  '下载源：${result.source}',
+                  style: const TextStyle(fontSize: 12),
+                ),
               if (result.changelog.isNotEmpty) ...<Widget>[
                 const SizedBox(height: 12),
                 // Release 正文是纯文本（可能带 Markdown 标记），这里原样展示：
