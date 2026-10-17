@@ -594,3 +594,140 @@ Dart：
    （本周网格是 84 个嵌套 RemoteViews，是本轮唯一没在真机看过内容的卡片。）
 2. 平板 sw600dp / sw720dp 布局实测（无平板设备时跳过）。
 3. `test/` 里补一条 Dart↔Kotlin schema round-trip 测试（P7.1 仍未做）。
+
+## 6.4 卡片职责重分 + 快照 v2（2026-10-17，用户真机反馈）
+
+**触发**：三张卡在真机上出问题——
+
+1. 当天有考试时，考试卡变黑 +「载入窗口小部件时出现问题」；作业卡同样。
+2. 「本周课表」只有色块没有课程名，"看不到具体课程"。
+3. 「今天课表」2×2 太小，一天的课显示不全。
+
+### 6.4.1 黑卡根因：`<View>` 不在 RemoteViews 白名单里
+
+`RemoteViews` 自己实现 `LayoutInflater.Filter.onLoadClass()` 做白名单校验
+（`clazz.isAnnotationPresent(RemoteViews.RemoteView.class)`），不在白名单里的控件
+会在**桌面进程**里 inflate 时抛 `InflateException`，桌面随即把整张卡换成系统的
+黑色占位（「载入窗口小部件时出现问题」是系统文案，App 没有机会写任何东西）。
+
+**`android.view.View` 不在白名单里**——字节码级验证：
+
+```
+$ unzip -p android.jar android/view/View.class      | strings | grep RemoteView
+（无输出）
+$ unzip -p android.jar android/widget/TextView.class | strings | grep RemoteView
+'Landroid/widget/RemoteViews$RemoteView;'
+```
+
+于是这些行布局里的 `<View>`（色条 / 状态点）成了真凶：
+
+| 布局 | 非白名单控件 | 触发条件 |
+|---|---|---|
+| `widget_homework_row.xml` | `<View id=hw_dot>` | 有作业时 addView 才 inflate 这一行 |
+| `widget_today_row.xml`（已删） | `<View id=color_bar>` | 有课时才 inflate 这一行 |
+
+**空态不 inflate 行布局**，所以表现是「空态一切正常、一有数据就黑卡」——
+与用户描述的触发条件完全吻合。修法：`<View>` 全部换成 `<TextView>`
+（不需要文字，只借它的背景色）。
+
+另补一层 try/catch 做纵深防御（`BaseWidgetProvider.onUpdate` 逐卡包裹）：
+
+```kotlin
+for (id in appWidgetIds) {
+    try { render(context, manager, id, snapshot) }
+    catch (t: Throwable) {
+        Log.e("WidgetRender", "渲染失败 provider=... appWidgetId=$id snapshotNull=...", t)
+        renderErrorFallback(context, manager, id)   // widget_error.xml
+    }
+}
+```
+
+- 兜底卡文案：「小组件加载失败 / 点一下打开 App 试试」，点击仍能拉起 App。
+- 定位堆栈：`adb logcat -s WidgetRender`，日志带 provider 类名与 `snapshotNull`。
+
+> **硬约束（写进 checklist）**：小组件布局只能用
+> `LinearLayout` / `FrameLayout` / `RelativeLayout` / `GridLayout` / `TextView` /
+> `ImageView` / `Button` / `ProgressBar` / `Chronometer` / `ListView` / `GridView` /
+> `StackView` / `ViewFlipper` 等带 `@RemoteViews$RemoteView` 注解的控件。
+> `View`、`Space`、`ScrollView`、`ViewStub`、`CardView` 都是坑——编译期不报错，
+> 只在桌面渲染时炸。查法：
+> `grep -oh "<[A-Za-z]*" res/layout/widget_*.xml | sort -u`。
+
+### 6.4.2 职责重分
+
+| 卡片 | 原来 | 现在 |
+|---|---|---|
+| `widget_today`（2×2） | 今天全部课程，最多 4 行 | **下一节课**：课程名 + 节次时间 + 地点（正在上课时右上角标「进行中」） |
+| `widget_week`（4×3） | 本周 7×12 色块网格 | **今日课程**列表：节次时间 + 课程 + 地点，行数按卡高自适应 |
+
+设计要点：
+
+- 状态四态 `ongoing` / `upcoming` / `finished` / `unknown` 在 Dart 侧判定
+  （`_nextSessionJson` 拿 `SectionTimes` 的起止分钟数比当前时间），Kotlin 只按
+  `state` 选颜色、按 `label` 填字——保持"哑渲染"原则。
+- `finished`（今天上完）不拿最后一门课冒充"下一节"，显示「今天的课都上完了」。
+- 跨节合并的课按**末节结束时间**判断"进行中"：3-4 节 10:25-12:00，11:00 仍算 ongoing
+  （若只看第 3 节的 11:10 下课会误判成 upcoming）。
+- 行数算式 `(卡高 - 表头 - 上下内边距) ÷ 行高`；表头高度与行高都是 dimens，
+  手机 / 平板两套字号各自成立。取 `OPTION_APPWIDGET_MIN_HEIGHT`（下界）——
+  **少估比多估安全**：少估只是少一行，多估会把最后一行顶出卡面被裁掉。
+- 被截断时表头右侧「共 N 节」仍给出当日总数，所以不再需要"等 N 节课"行。
+
+### 6.4.3 快照 v2
+
+`schedule.nextSession = { courseIdx, sectionText, state, label }`，今天没课时为 `null`。
+
+版本号两端同改：`kWidgetSnapshotVersion`（Dart）= `WidgetSnapshotContract.VERSION`（Kotlin）= 2。
+
+> ⚠️ 升级后旧 v1 快照会被判版本不匹配 → 四张卡在 App 首次 `onResume` 推送前显示
+> 「打开 App 刷新一下」。预期行为。
+
+### 6.4.4 删除的死代码
+
+`widget_today_row.xml`、`widget_week_cell.xml`、`widget_week_column.xml`、
+`widget_week_day_header.xml`，以及 `widget_week_cell_*` / `widget_course_name_text` /
+`widget_row_meta_text` / `widget_row_padding_vertical` / `widget_color_bar_height` /
+`widget_week_day_label_text` 等旧 dimens；`BaseWidgetProvider.isTablet()` 也不再需要
+（平板差异全部由 dimens 承担）。
+
+同时修掉三处 `<View>`：`widget_homework_row.xml`（`hw_dot`）、
+`widget_today.xml`（`next_color_bar`）、`widget_week_row.xml`（`row_color_bar`），
+全部换成 `<TextView>`。
+
+### 6.4.5 本轮验证方式
+
+**Kotlin 编译**：一开始 `compileDebugKotlin` 在 `settings.gradle.kts` 就报一堆
+`Unresolved reference 'run' / 'file' / 'uri' / 'plugins'`，一度以为是环境坏。
+真相是 **shell 的 `JAVA_HOME` 指向 JDK 17，而 Flutter 用的是 Android Studio 的
+JBR（Java 25）**——JDK 17 下 Gradle 9.3.1 的 Kotlin DSL 脚本编译拿不到 stdlib。
+换成 JBR 后一次通过：
+
+```bash
+cd android && JAVA_HOME="E:/ProgramFiles/Android/jbr" ./gradlew :app:assembleDebug
+```
+
+> 这一关很关键：`BaseWidgetProvider.kt` 曾被漏掉
+> `import android.appwidget.AppWidgetProvider`，而 aapt2 资源校验完全查不出来
+> （它只管资源引用）。**改完 Kotlin 必须真编译一次。**
+
+**资源层**（在编译跑通之前用的兜底手段，仍值得保留）：aapt2 编译 + 链接全部资源，
+再把 Kotlin 里所有 `R.<type>.<name>` 引用与生成的 `R.txt` 全量比对——
+
+```
+aapt2 compile --dir app/src/main/res -o res.zip
+aapt2 link --manifest <最小 manifest> -I android.jar --output-text-symbols R.txt res.zip
+```
+
+**真机（小米 2211133C）**：`adb install -r` → 启动 → 快照 v2 正常落盘
+（week=7 / today=6 周六 / homework 1 条 / exam 0 场），
+`logcat -s WidgetRender` 无渲染异常。
+
+### 6.4.6 待办
+
+1. **四张卡在桌面上加回来做视觉验收**（本轮真机上桌面已无卡片实例，
+   `dumpsys appwidget` 的 Widgets 列表为空）。注意：验收当天是周六，
+   两张课表卡只会显示「今天没课」；要看「下一节课」/「今日课程」的真实排版，
+   得在上课日，或临时把某门课设到周六。待交作业卡当时有 1 条数据，可立即验收。
+2. 四张卡的 `previewImage`（`widget_preview_*.xml`）仍是旧设计示意图，与小卡/大卡
+   新内容不一致，需要重画——HyperOS 小部件中心就是靠这张图做入口。
+3. 平板 sw600dp / sw720dp 实测（行数算式依赖 dimens 放大后的值）。
