@@ -10,6 +10,8 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import 'plugin_qr_login.dart';
+
 /// manifest 文件的扩展名约定（与 `.js` 同目录同主名）。
 const String kPluginManifestSuffix = '.manifest.json';
 
@@ -30,6 +32,10 @@ class PluginManifest {
     this.loginUrl = '',
     this.checkUrl = '',
     this.postLoginUrl = '',
+    this.campusProbeUrl = '',
+    this.offCampusHost = '',
+    this.offCampusUserAgent = '',
+    this.qrLogin,
   });
 
   /// 插件唯一 ID，如 `"demo-course-plugin"`。**必须非空**（由加载器校验）。
@@ -81,6 +87,30 @@ class PluginManifest {
   /// 插件声明，内核只做机械的导航，符合 CONTEXT 3.1（内核不知道任何学校 URL）。
   final String postLoginUrl;
 
+  /// 校园网探测 URL（可选）。
+  ///
+  /// 登录页打开前会先请求这个地址（不跟随重定向）：
+  /// - 3xx 跳到 [offCampusHost] → 判定为**校外**；
+  /// - 200 / 3xx 仍在同站 → 判定为**校园网**；
+  /// - 超时 / 未知 → 按校外处理，并允许用户手动切换。
+  ///
+  /// 空串表示不探测，登录页保持旧行为（直接用默认 UA 打开 [loginUrl]）。
+  final String campusProbeUrl;
+
+  /// 校外 WebVPN / 网关的主机名（用于识别 [campusProbeUrl] 的跳转）。
+  ///
+  /// 只做后缀匹配（同 host 或 `.<host>` 子域），避免被相似域名欺骗。
+  final String offCampusHost;
+
+  /// 校外登录时 WebView 使用的桌面 UA。
+  ///
+  /// 不少学校的 CAS 会对手机 UA 关闭登录页（NCST 会返回"移动端浏览器登录已关闭"），
+  /// 只有桌面 UA 才展示二维码。由插件声明，内核不硬编码。
+  final String offCampusUserAgent;
+
+  /// 校外 CAS 登录二维码的定位配置；`null` 表示该插件不支持扫码辅助。
+  final PluginQrLogin? qrLogin;
+
   /// id 是否有效（非空且非纯空白）。
   bool get hasValidId => id.trim().isNotEmpty;
 
@@ -100,6 +130,10 @@ class PluginManifest {
       loginUrl: _asString(json['loginUrl']),
       checkUrl: _asString(json['checkUrl']),
       postLoginUrl: _asString(json['postLoginUrl']),
+      campusProbeUrl: _asString(json['campusProbeUrl']),
+      offCampusHost: _asString(json['offCampusHost']),
+      offCampusUserAgent: _asString(json['offCampusUserAgent']),
+      qrLogin: PluginQrLogin.tryParse(json['qrLogin']),
     );
   }
 
@@ -116,6 +150,10 @@ class PluginManifest {
       'loginUrl': loginUrl,
       'checkUrl': checkUrl,
       'postLoginUrl': postLoginUrl,
+      'campusProbeUrl': campusProbeUrl,
+      'offCampusHost': offCampusHost,
+      'offCampusUserAgent': offCampusUserAgent,
+      if (qrLogin != null) 'qrLogin': qrLogin!.toJson(),
     };
   }
 

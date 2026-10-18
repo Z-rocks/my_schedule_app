@@ -240,6 +240,19 @@ function fetchCourses(args) {
 | `loginUrl` | 否 | 点「登录」时 WebView 打开的地址 |
 | `checkUrl` | 否 | 判断"登录是否还有效"的地址 |
 | `postLoginUrl` | 否 | 登录成功后自动跳转的地址（省得用户自己点菜单） |
+| `campusProbeUrl` | 否 | 校园网探测地址；声明后登录页会先判断"校内 / 校外" |
+| `offCampusHost` | 否 | 校外网关主机名；探测跳转到它（含子域）即判为校外 |
+| `offCampusUserAgent` | 否 | 校外登录用的桌面 UA；很多学校 CAS 只对桌面 UA 展示二维码 |
+| `qrLogin` | 否 | CAS 二维码定位配置 `{ host, containerSelector, imageSelector, uuidSelector }`；声明后校外可"保存二维码 → 微信扫一扫" |
+
+> **校外扫码登录（Phase 4.4）**：内置的 NCST 插件已经声明了这四个字段。
+> 校园网下仍然直接显示账号密码表单；校外会换桌面 UA 打开 CAS 二维码页，
+> 并把二维码保存到相册、拉起微信扫一扫（同机扫码）。
+> 二维码是临时登录凭证，登录成功后 App 会自动从相册删除。
+>
+> ⚠️ 内置插件是**安装到应用私有目录**的，App 升级不会自动覆盖已安装的 `.js`。
+> 更新 App 后如果校外扫码入口没出现，请到「插件管理」重新安装一次对应插件
+>（会覆盖旧文件，已登录的 Cookie 不受影响）。
 
 ### 宿主能力（`ctx`）
 

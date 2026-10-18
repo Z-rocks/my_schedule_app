@@ -28,7 +28,7 @@
 var __plugin = {
   id: 'ncst-jwxt',
   name: '华北理工大学教务系统',
-  version: '1.0.0',
+  version: '1.1.0',
   author: 'MySchedule',
   description: '从 NCST 教务系统拉取本学期课表（需先在详情页登录）',
   capabilities: ['timetable'],
@@ -38,6 +38,24 @@ var __plugin = {
   // 登录成功后自动进入"选课结果"：教务系统登录完停在首页，而 checkUrl 在
   // 深层菜单里。声明它之后，用户只需输入账号密码验证码，不用再自己点菜单。
   postLoginUrl: 'https://xjw1.ncst.edu.cn/student/courseSelect/courseSelectResult/index',
+
+  // ───────── 校外登录（Phase 4.4）─────────
+  // 1) 先探测是不是校园网：校外访问 xjw1 会被 302 到 WebVPN（webexp）。
+  // 2) 校外 CAS 对手机 UA 关闭登录页（只显示"移动端浏览器登录已关闭"），
+  //    必须换桌面 UA 才会出现二维码。
+  // 3) 二维码在 authserver 的 CAS 页；登录页会用下面三个选择器把它取出来，
+  //    保存到相册后拉起微信扫一扫（同机扫码），CAS 自己轮询到确认后继续。
+  // 这些字段全部由插件声明，内核不认识华北理工（CONTEXT 3.1）。
+  campusProbeUrl: 'https://xjw1.ncst.edu.cn/',
+  offCampusHost: 'webexp.ncst.edu.cn',
+  offCampusUserAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
+      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  qrLogin: {
+    host: 'authserver.ncst.edu.cn',
+    containerSelector: '.ncst-qrcode',
+    imageSelector: '#qr_img',
+    uuidSelector: '#uuid'
+  },
 
   // ───────────────────────── 主入口 ─────────────────────────
   fetchCourses: function (args) {

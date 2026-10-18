@@ -2443,8 +2443,13 @@ JS 侧 `JSON.stringify` 出来、Dart 侧 `jsonDecode` 解析；**不使用 `con
 | `capabilities` | `List<String>` | 能力 ID 列表，默认空 |
 | `loginUrl` | `String` | **登录页 URL（Phase 4.1 新增）**。空串表示未声明，插件详情页的「登录」会提示用户。各校教务地址不同，由**插件自己声明**（内核不得硬编码，CONTEXT 3.1） |
 | `checkUrl` | `String` | **登录成功判定用的 URL 前缀（Phase 4.1 新增）**。登录页里当前 URL 以它为前缀即判定成功；空串表示未声明，登录页退化为"拿到任意 Cookie 即视为成功" |
+| `postLoginUrl` | `String` | **登录成功后自动导航到的地址（Phase 4.1 新增）**。空串 = 不自动导航（老插件行为不变） |
+| `campusProbeUrl` | `String` | **校园网探测 URL（Phase 4.4 新增）**。空串 = 不探测，登录页保持旧行为（默认 UA 直接打开 `loginUrl`） |
+| `offCampusHost` | `String` | **校外网关 host（Phase 4.4 新增）**。探测响应 3xx 跳到它（含子域）→ 判为校外；页面误入它时也会自动切桌面 UA |
+| `offCampusUserAgent` | `String` | **校外登录桌面 UA（Phase 4.4 新增）**。不少学校 CAS 对手机 UA 关闭登录页，只有桌面 UA 才展示二维码 |
+| `qrLogin` | `PluginQrLogin?` | **CAS 二维码定位配置（Phase 4.4 新增）**。`null` = 不启用扫码辅助；字段见下 |
 
-构造：`const PluginManifest({required id, required name, String version = '0.0.0', String author = '', String description = '', String school = '', List<String> capabilities = const []})`
+构造：`const PluginManifest({required id, required name, String version = '0.0.0', String author = '', String description = '', String school = '', List<String> capabilities = const [], String loginUrl = '', String checkUrl = '', String postLoginUrl = '', String campusProbeUrl = '', String offCampusHost = '', String offCampusUserAgent = '', PluginQrLogin? qrLogin})`
 
 方法：
 - `bool get hasValidId` — `id` 非空且非纯空白
@@ -2452,6 +2457,34 @@ JS 侧 `JSON.stringify` 出来、Dart 侧 `jsonDecode` 解析；**不使用 `con
 - `factory PluginManifest.fromJson(Map<String, dynamic> json)` — 缺失用兜底值、类型不符忽略该项，**不抛异常**（数字/布尔会被转成字符串）
 - `Map<String, dynamic> toJson()` — 键名与 `fromJson` 一一对应
 - `static PluginManifest? tryDecode(String? raw)` — 空值 / 坏 JSON / 非对象 / **缺 `id` 或 `id` 为空白**一律返回 `null`（供加载器判定"manifest 不可用"，不伪造）
+
+### `plugin_qr_login.dart` — PluginQrLogin（Phase 4.4）
+
+校外 CAS 扫码登录的页面定位配置。**内核不硬编码任何学校 URL / 选择器**，
+全部来自插件 manifest 的 `qrLogin` 对象。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `host` | `String` | 二维码页所在主机，必填；同 host 或 `.<host>` 子域匹配，前缀伪装不匹配 |
+| `containerSelector` | `String` | 二维码区域容器选择器；空串 = 从 `document` 找 |
+| `imageSelector` | `String` | 二维码 `<img>` 选择器，默认 `#qr_img` |
+| `uuidSelector` | `String` | 二维码 UUID 隐藏域选择器，默认 `#uuid` |
+
+方法：
+- `bool get isConfigured` — `host` 非空
+- `bool matchesHost(String url)` — 同 host / 同主域子域才返回 true（fail closed）
+- `factory PluginQrLogin.fromJson(Map<String, dynamic> json)`
+- `static PluginQrLogin? tryParse(Object? value)` — 非对象 / 缺 host 返回 `null`
+- `Map<String, dynamic> toJson()`
+
+登录页（`webview_login_page.dart`）在以下条件同时满足时启用扫码辅助：
+1. 插件声明了 `qrLogin`；
+2. 网络模式判为 `offCampus`（或探测失败按校外兜底）；
+3. 当前 URL 属于 `qrLogin.host`。
+此时注入 JS 读取二维码 `<img>`，用 canvas 转 PNG → 原生面板显示 →
+保存到相册 → `weixin://dl/scan` 拉起微信扫一扫。CAS 页面自己的 1s 轮询
+（`isUsed()`）检测到确认后自动提交表单；登录页在 `onResume` 时再补一次
+`isUsed()`，避免 App 切到微信后 WebView 定时器被暂停。
 
 ### `plugin_handle.dart` — PluginHandle
 

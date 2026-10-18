@@ -14,6 +14,11 @@
          最后一步被拦成 "add widget failed, <pkg> has no permission"（真机 logcat 原文）。
          声明这条 AOSP 早已废弃的 normal 级权限后该 op 变为 allow，链路才能走通。 -->
     <uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT"/>
+    <!-- 校外扫码登录：把 CAS 二维码写进系统相册，供微信「扫一扫 → 相册」识别。
+         Android 10+ 走 MediaStore，不需要权限；只有 7–9 需要这条（maxSdkVersion=28）。 -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28"/>
     <!-- 网络安全配置（Phase 4.2.2）：只对白名单域名放行明文 HTTP。
          教务系统登录会从 https 重定向到 http，默认策略下会被拦成
          `net::ERR_CLEARTEXT_NOT_PERMITTED`。**没有**用 usesCleartextTraffic="true"
@@ -164,5 +169,8 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Android 11+ 包可见性：二维码桥要判断微信是否安装、并拉起
+             weixin://dl/scan。不声明的话 getPackageInfo / startActivity 会被拦。 -->
+        <package android:name="com.tencent.mm"/>
     </queries>
 </manifest>

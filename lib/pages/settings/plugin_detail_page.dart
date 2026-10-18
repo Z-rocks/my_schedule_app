@@ -246,6 +246,11 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
           // 登录后自动去的地方（教务系统登录完常停在首页，
           // 而 checkUrl 在"选课结果"这类深层页面）。
           postLoginUrl: manifest?.postLoginUrl.trim() ?? '',
+          // 校外登录：先探测校园网；校外换桌面 UA，并允许扫码辅助。
+          campusProbeUrl: manifest?.campusProbeUrl.trim() ?? '',
+          offCampusHost: manifest?.offCampusHost.trim() ?? '',
+          offCampusUserAgent: manifest?.offCampusUserAgent.trim() ?? '',
+          qrLogin: manifest?.qrLogin,
           title: '登录 ${meta.name}',
           // 传入 pluginId → 由登录页负责落盘，避免调用方忘记保存
           pluginId: meta.id,

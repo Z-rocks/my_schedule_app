@@ -1,6 +1,15 @@
 package com.zys.myschedule
 
+import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.ContentValues
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import com.zys.myschedule.widget.WidgetPinBridge
 import com.zys.myschedule.widget.WidgetPinRequest
 import com.zys.myschedule.widget.WidgetSnapshotContract
@@ -11,7 +20,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * 主 Activity：在 Flutter 标准宿主之外多了两条小组件通道。
+ * 主 Activity：在 Flutter 标准宿主之外多了几条原生通道。
  *
  * 1. `com.zys.myschedule/widget`（Dart → Kotlin）：
  *    - `writeSnapshot({json})`：Dart 把课表/作业/考试快照 JSON 发来，
@@ -26,11 +35,17 @@ import io.flutter.plugin.common.MethodChannel
  *
  * 3. `com.zys.myschedule/system`（Dart → Kotlin）：小组件省电引导，
  *    跳系统应用信息页 / 电池优化列表。
+ *
+ * 4. `com.zys.myschedule/login_qr`（Dart → Kotlin）：校外扫码登录，
+ *    把 CAS 二维码写进相册并拉起微信扫一扫。
  */
 class MainActivity : FlutterActivity() {
 
     private var navMethodChannel: MethodChannel? = null
     private var widgetMethodChannel: MethodChannel? = null
+
+    /** Android 7–9 保存相册前的运行时权限申请；等待回调期间暂存参数。 */
+    private var pendingQrSave: PendingQrSave? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -149,6 +164,30 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
+        // 4. `com.zys.myschedule/login_qr`（Dart → Kotlin）：校外扫码登录。
+        //    - saveImageToGallery：二维码写系统相册（Android 10+ 免权限）；
+        //    - openWeChatScanner：拉起微信扫一扫（weixin://dl/scan）；
+        //    - isWeChatInstalled / deleteImage：判断安装、登录后清理。
+        val loginQr = MethodChannel(messenger, "com.zys.myschedule/login_qr")
+        loginQr.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "saveImageToGallery" -> {
+                    val bytes = call.argument<ByteArray>("bytes")
+                    val name = call.argument<String>("name") ?: "campus_login_qr.png"
+                    if (bytes == null || bytes.isEmpty()) {
+                        result.error("bad_args", "bytes 为空", null)
+                    } else {
+                        saveImageToGallery(bytes, name, result)
+                    }
+                }
+
+                "openWeChatScanner" -> result.success(openWeChatScanner())
+                "isWeChatInstalled" -> result.success(isWeChatInstalled())
+                "deleteImage" -> result.success(deleteImage(call.argument<String>("uri")))
+                else -> result.notImplemented()
+            }
+        }
+
         // 引擎刚配好：如果启动 intent 里带着点击目标，转存起来等 Dart 取。
         consumeIntentTarget(intent)?.let { pendingLaunchTarget = it }
     }
@@ -178,6 +217,7 @@ class MainActivity : FlutterActivity() {
         widgetMethodChannel?.let { WidgetPinBridge.detach(it) }
         widgetMethodChannel = null
         navMethodChannel = null
+        pendingQrSave = null
         super.onDestroy()
     }
 
@@ -190,7 +230,136 @@ class MainActivity : FlutterActivity() {
         return if (target.isNullOrEmpty()) null else target
     }
 
+    // ───────────────────── 校外扫码登录 ─────────────────────
+
+    /**
+     * 把二维码 PNG 写进系统相册。
+     *
+     * - Android 10+：MediaStore + IS_PENDING，不需要存储权限；
+     * - Android 7–9：需要 WRITE_EXTERNAL_STORAGE，先申请再写。
+     *
+     * 返回 `content://` URI 字符串，供 Dart 侧登录完成后删除。
+     */
+    private fun saveImageToGallery(
+        bytes: ByteArray,
+        name: String,
+        result: MethodChannel.Result,
+    ) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingQrSave = PendingQrSave(bytes, name, result)
+            requestPermissions(
+                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                REQ_QR_SAVE,
+            )
+            return
+        }
+
+        try {
+            val uri: Uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                    put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                    put(
+                        MediaStore.Images.Media.RELATIVE_PATH,
+                        Environment.DIRECTORY_PICTURES + "/CampusAssistant",
+                    )
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+                val inserted = contentResolver.insert(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    values,
+                ) ?: throw IllegalStateException("MediaStore 插入失败")
+                contentResolver.openOutputStream(inserted)?.use { it.write(bytes) }
+                    ?: throw IllegalStateException("无法打开相册输出流")
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                contentResolver.update(inserted, values, null, null)
+                inserted
+            } else {
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    ?: throw IllegalStateException("二维码解码失败")
+                @Suppress("DEPRECATION")
+                val path = MediaStore.Images.Media.insertImage(
+                    contentResolver,
+                    bitmap,
+                    name,
+                    null,
+                ) ?: throw IllegalStateException("相册写入失败")
+                Uri.parse(path)
+            }
+            result.success(uri.toString())
+        } catch (e: Exception) {
+            result.error("save_failed", e.message ?: "保存二维码失败", null)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_QR_SAVE) return
+        val pending = pendingQrSave ?: return
+        pendingQrSave = null
+        if (grantResults.isNotEmpty() &&
+            grantResults[0] == PackageManager.PERMISSION_GRANTED
+        ) {
+            saveImageToGallery(pending.bytes, pending.name, pending.result)
+        } else {
+            pending.result.error("permission_denied", "未授予存储权限", null)
+        }
+    }
+
+    /** 拉起微信扫一扫；未安装微信 / 没有对应 Activity 返回 false。 */
+    private fun openWeChatScanner(): Boolean {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("weixin://dl/scan")).apply {
+            setPackage("com.tencent.mm")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return try {
+            startActivity(intent)
+            true
+        } catch (e: ActivityNotFoundException) {
+            false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun isWeChatInstalled(): Boolean {
+        return try {
+            packageManager.getPackageInfo("com.tencent.mm", 0)
+            true
+        } catch (e: PackageManager.NameNotFoundException) {
+            false
+        }
+    }
+
+    /** 删除登录二维码；找不到 / 已删除返回 false。 */
+    private fun deleteImage(uri: String?): Boolean {
+        if (uri.isNullOrBlank()) return false
+        return try {
+            contentResolver.delete(Uri.parse(uri), null, null) > 0
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Android 7–9 存储权限回调期间暂存的保存请求。 */
+    private data class PendingQrSave(
+        val bytes: ByteArray,
+        val name: String,
+        val result: MethodChannel.Result,
+    )
+
     companion object {
+        /** 保存二维码前的运行时权限请求码（与小组件无关，取个不冲突的值）。 */
+        private const val REQ_QR_SAVE = 4701
+
         /**
          * 冷启动时暂存的小组件点击目标（Dart 侧 `WidgetNav` 来取）。
          * @Volatile：主线程与 Dart bridge 线程都可能访问。

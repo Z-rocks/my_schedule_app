@@ -335,7 +335,12 @@ class PluginRuntime {
       " checkUrl: $kPluginGlobalName.checkUrl,"
       // 登录成功后自动导航的目标（可选）：教务系统登录后常停在首页，
       // 而 checkUrl 在更深的业务页，声明它才能"登录完自动到那一步"。
-      " postLoginUrl: $kPluginGlobalName.postLoginUrl"
+      " postLoginUrl: $kPluginGlobalName.postLoginUrl,"
+      // 校外登录：校园网探测 + 桌面 UA + CAS 二维码定位（均可选）。
+      " campusProbeUrl: $kPluginGlobalName.campusProbeUrl,"
+      " offCampusHost: $kPluginGlobalName.offCampusHost,"
+      " offCampusUserAgent: $kPluginGlobalName.offCampusUserAgent,"
+      " qrLogin: $kPluginGlobalName.qrLogin"
       "})",
       timeout: loadTimeout,
     );
