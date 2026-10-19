@@ -4,11 +4,14 @@
 // 跑法：flutter test test/_live_update_check.dart
 //
 // 命名不带 `_test.dart` 后缀，避免 `flutter test` 默认全量跑时联网。
+//
+// ⚠️ 不要在这里写死"本地版本 X 应是最新"：线上每发一版，这种断言就会假失败。
+// 需要验证 upToDate 时，先查出线上真实最新版本，再拿它当"当前版本"查第二次。
 import 'package:flutter_test/flutter_test.dart';
 import 'package:my_schedule_app/services/update_service.dart';
 
 void main() {
-  test('真实 Gitee：0.3.0 应能发现 0.3.1，且直链指向通用包', () async {
+  test('真实 Gitee：0.3.0 应能发现线上新版本，且直链指向通用包', () async {
     final UpdateCheckResult r = await UpdateService.check(
       currentVersion: '0.3.0+3',
     );
@@ -28,9 +31,16 @@ void main() {
     expect(r.changelog, isNotEmpty, reason: 'Release body 应该被解析出来');
   });
 
-  test('真实 Gitee：本地已是 0.3.1 → upToDate', () async {
+  test('真实 Gitee：以线上最新版本为当前版本 → upToDate', () async {
+    final UpdateCheckResult probe = await UpdateService.check(
+      currentVersion: '0.0.1+1',
+    );
+    expect(probe.latestVersion, isNotEmpty, reason: '先要能查到线上版本');
+    // ignore: avoid_print
+    print('[live] 线上最新=${probe.latestVersion}，用它当当前版本再查一次');
+
     final UpdateCheckResult r = await UpdateService.check(
-      currentVersion: '0.3.1+4',
+      currentVersion: probe.latestVersion,
     );
     // ignore: avoid_print
     print('[live] upToDate 检查 → ${r.status} ${r.reason}');
