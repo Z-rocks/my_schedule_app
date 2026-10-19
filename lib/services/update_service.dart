@@ -166,7 +166,7 @@ class UpdateCheckResult {
 /// 一次源查询的结果：要么拿到 [result]，要么拿到 [error]。
 class _Attempt {
   const _Attempt.ok(UpdateCheckResult this.result) : error = '';
-  const _Attempt.fail(String this.error) : result = null;
+  const _Attempt.fail(this.error) : result = null;
 
   final UpdateCheckResult? result;
   final String error;

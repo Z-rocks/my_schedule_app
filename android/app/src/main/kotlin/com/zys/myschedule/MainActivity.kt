@@ -1,6 +1,7 @@
 package com.zys.myschedule
 
 import android.Manifest
+import android.app.AlarmManager
 import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.Intent
@@ -8,8 +9,14 @@ import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.Settings
+import com.zys.myschedule.reminder.HomeworkReminderFireService
+import com.zys.myschedule.reminder.HomeworkReminderNotifier
+import com.zys.myschedule.reminder.HomeworkReminderScheduler
+import com.zys.myschedule.reminder.ReminderContract
 import com.zys.myschedule.widget.WidgetPinBridge
 import com.zys.myschedule.widget.WidgetPinRequest
 import com.zys.myschedule.widget.WidgetSnapshotContract
@@ -120,6 +127,7 @@ class MainActivity : FlutterActivity() {
                     // extra 先暂存在 pendingLaunchTarget，等 Dart 侧来取。
                     val target = pendingLaunchTarget
                     pendingLaunchTarget = null
+                    Log.i(TAG_NAV, "Dart 取初始目标：$target")
                     result.success(target)
                 }
 
@@ -188,8 +196,91 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        // 5. `com.zys.myschedule/reminder`（Dart → Kotlin）：作业提醒。
+        //    Dart 算好排期（哪些作业、什么时刻提醒）下发；本侧只负责
+        //    "排闹钟 / 发通知 / 报权限状态"，不认识作业与插件。
+        //    通知渠道在这里建一次，保证系统设置页里能看到"作业提醒"分组。
+        HomeworkReminderNotifier.ensureChannels(applicationContext)
+        MethodChannel(messenger, ReminderContract.CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "syncPlan" -> {
+                        val json = call.argument<String>("json")
+                        if (json.isNullOrBlank()) {
+                            result.error("bad_args", "json 为空", null)
+                        } else {
+                            result.success(
+                                HomeworkReminderScheduler.sync(applicationContext, json),
+                            )
+                        }
+                    }
+
+                    "cancelAll" -> {
+                        HomeworkReminderScheduler.cancelAll(applicationContext)
+                        result.success(null)
+                    }
+
+                    "hasNotificationPermission" ->
+                        result.success(
+                            HomeworkReminderNotifier.canPost(applicationContext),
+                        )
+
+                    "requestNotificationPermission" ->
+                        result.success(requestNotificationPermission())
+
+                    "canScheduleExactAlarms" -> {
+                        val am = getSystemService(AlarmManager::class.java)
+                        result.success(
+                            am != null && HomeworkReminderScheduler.canScheduleExact(am),
+                        )
+                    }
+
+                    "openExactAlarmSettings" ->
+                        result.success(openExactAlarmSettings())
+
+                    "openNotificationSettings" ->
+                        result.success(openNotificationSettings())
+
+                    "showTestNotification" ->
+                        result.success(
+                            HomeworkReminderNotifier.postTest(applicationContext),
+                        )
+
+                    // 登记后台校验入口句柄：闹钟触发时用它起临时引擎。
+                    "registerCheckHandle" -> {
+                        val handle = call.argument<Number>("handle")?.toLong() ?: 0L
+                        getSharedPreferences(ReminderContract.PREFS, MODE_PRIVATE)
+                            .edit()
+                            .putLong(ReminderContract.PREF_CHECK_HANDLE, handle)
+                            .apply()
+                        result.success(handle != 0L)
+                    }
+
+                    // 设置页「立即测试完整链路」：与闹钟触发走同一段服务代码。
+                    "runCheckNow" -> {
+                        val itemJson = call.argument<String>("itemJson").orEmpty()
+                        result.success(
+                            try {
+                                HomeworkReminderFireService.start(
+                                    applicationContext,
+                                    itemJson,
+                                )
+                                itemJson.isNotEmpty()
+                            } catch (e: Exception) {
+                                false
+                            },
+                        )
+                    }
+
+                    else -> result.notImplemented()
+                }
+            }
+
         // 引擎刚配好：如果启动 intent 里带着点击目标，转存起来等 Dart 取。
-        consumeIntentTarget(intent)?.let { pendingLaunchTarget = it }
+        consumeIntentTarget(intent)?.let {
+            pendingLaunchTarget = it
+            Log.i(TAG_NAV, "冷启动暂存 target=$it")
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -198,6 +289,7 @@ class MainActivity : FlutterActivity() {
         // App 已在运行：直接推给 Dart 的 handler；
         // handler 还没注册（极端情况）时目标暂存，等下次 takeInitialTarget。
         val target = consumeIntentTarget(intent)
+        Log.i(TAG_NAV, "onNewIntent target=$target channelReady=${navMethodChannel != null}")
         if (target != null) {
             val channel = navMethodChannel
             if (channel != null) {
@@ -349,6 +441,71 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // ───────────────────── 作业提醒（Phase 9）─────────────────────
+
+    /**
+     * 申请通知权限（Android 13+）。
+     *
+     * 返回 `true` 表示"弹窗已拉起或本来就已授权"——系统弹窗是异步的，
+     * Dart 侧稍后再查 [HomeworkReminderNotifier.canPost] 拿真实结果。
+     */
+    private fun requestNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return HomeworkReminderNotifier.canPost(applicationContext)
+        }
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return true
+        }
+        requestPermissions(
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+            REQ_NOTIFICATIONS,
+        )
+        return true
+    }
+
+    /** 跳系统"闹钟和提醒"授权页（Android 12+）。 */
+    private fun openExactAlarmSettings(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
+        return try {
+            startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                    Uri.parse("package:$packageName"),
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** 跳本应用的通知设置页（用户把通知关掉后的补救入口）。 */
+    private fun openNotificationSettings(): Boolean {
+        return try {
+            startActivity(
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            true
+        } catch (e: Exception) {
+            // 极老系统没有该页面：退回应用详情页。
+            try {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:$packageName"),
+                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+                true
+            } catch (inner: Exception) {
+                false
+            }
+        }
+    }
+
     /** Android 7–9 存储权限回调期间暂存的保存请求。 */
     private data class PendingQrSave(
         val bytes: ByteArray,
@@ -357,8 +514,13 @@ class MainActivity : FlutterActivity() {
     )
 
     companion object {
+        private const val TAG_NAV = "WidgetNav"
+
         /** 保存二维码前的运行时权限请求码（与小组件无关，取个不冲突的值）。 */
         private const val REQ_QR_SAVE = 4701
+
+        /** 通知权限（Android 13+）的请求码。 */
+        private const val REQ_NOTIFICATIONS = 4702
 
         /**
          * 冷启动时暂存的小组件点击目标（Dart 侧 `WidgetNav` 来取）。

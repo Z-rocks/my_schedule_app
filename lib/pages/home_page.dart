@@ -34,9 +34,16 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    // 小组件点击跳转（Phase W1）：Kotlin 把目标经 WidgetNav 递过来，
+    // 小组件 / 通知点击跳转（Phase W1）：Kotlin 把目标经 WidgetNav 递过来，
     // 这里消费并切到对应 tab；目标模块被用户关了就停在原来的页面。
     WidgetNav.pendingTarget.addListener(_onWidgetTarget);
+    // **必须补这一下**：冷启动（进程被拉起）或 Activity 重建时，目标在
+    // HomePage 构建之前就已经写进 pendingTarget 了，只靠监听会漏掉
+    // （ValueNotifier 不会为"注册前发生的变更"补发通知）。
+    // 放到帧后执行：initState 里直接 setState 会在首帧前触发多余重建。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _onWidgetTarget();
+    });
   }
 
   @override
@@ -58,6 +65,11 @@ class _HomePageState extends State<HomePage> {
     };
     final List<ModuleInfo> modules = context.read<ModuleProvider>().visibleModules;
     final int index = modules.indexWhere((ModuleInfo m) => m.type == want);
+    debugPrint('[WidgetNav] 切 tab：target=$target index=$index');
+    // 先退回到标签页根节点：点击来自"外部"（桌面卡片 / 通知栏），
+    // 用户上次可能停在设置、作业提醒之类的二级页面上，不退栈的话
+    // 切好的 tab 会被那层页面盖住，看起来像"没跳转"。
+    Navigator.of(context).popUntil((Route<dynamic> route) => route.isFirst);
     if (index >= 0) setState(() => _currentIndex = index);
     // index < 0：模块被隐藏/关闭，什么都不做，停在当前页。
   }

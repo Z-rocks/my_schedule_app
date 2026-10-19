@@ -15,6 +15,7 @@ import 'plugin_manage_page.dart';
 import 'timetable_settings_page.dart';
 import 'widget_guide_page.dart';
 import 'workshop_page.dart';
+import 'homework_reminder_page.dart';
 
 /// 设置主页。
 ///
@@ -197,6 +198,17 @@ class SettingsPage extends StatelessWidget {
                 title: '课表设置',
                 showChevron: true,
                 onTap: () => _push(context, const TimetableSettingsPage()),
+              ),
+            ],
+          ),
+          _SettingsGroup(
+            title: '提醒',
+            children: <Widget>[
+              _SettingsTile(
+                title: '作业提醒',
+                subtitleText: '截止前按档位提醒，发通知前先查作业状态',
+                showChevron: true,
+                onTap: () => _push(context, const HomeworkReminderPage()),
               ),
             ],
           ),

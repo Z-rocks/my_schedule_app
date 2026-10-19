@@ -24,6 +24,7 @@ import '../../models/sync_report.dart';
 import '../../providers/message_provider.dart';
 import '../../providers/plugin_provider.dart';
 import '../../runtime/plugin_handle.dart';
+import '../../services/homework_reminder_service.dart';
 import '../../services/plugin_entity_sync_service.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
@@ -249,6 +250,13 @@ class _PluginEntitySyncPageState extends State<PluginEntitySyncPage> {
         _syncing = false;
         _progress = null;
       }
+    }
+
+    // 作业同步成功 → 记住本次的课程入参（Phase 9）。
+    // 后台提醒校验要靠它直接调 `fetchHomeworks`；不记的话每次提醒都得多拉
+    // 一次课程列表，而学习通有风控（12 秒内 136 请求触发验证码）。
+    if (widget.capability == 'homework' && report.isSuccess) {
+      unawaited(HomeworkReminderService.saveCourseRefs(meta.id, chosen));
     }
 
     // 把结果沉淀成一条站内消息：SnackBar 一闪而过，

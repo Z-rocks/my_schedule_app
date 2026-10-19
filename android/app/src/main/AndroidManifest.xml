@@ -19,6 +19,22 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28"/>
+    <!-- ===== 作业提醒（Phase 9）=====
+         1. POST_NOTIFICATIONS：Android 13+ 发通知必须运行时授权；
+         2. SCHEDULE_EXACT_ALARM：Android 12+ 精确闹钟（用户可在系统里撤销，
+            撤销后代码自动降级为不精确闹钟，仍会提醒、只是可能晚几分钟）；
+         3. USE_EXACT_ALARM：本 App 属"用户可见的提醒"用途，声明后安装即授予
+            精确闹钟能力（不依赖用户去系统设置里单独开）；
+         4. RECEIVE_BOOT_COMPLETED：重启后重排闹钟（AlarmManager 不持久化，
+            不重排就等于"重启一次手机，提醒永久失效"）；
+         5. FOREGROUND_SERVICE(+DATA_SYNC)：到点时要起临时 Flutter 引擎去
+            查作业状态，必须在前台服务里做（广播接收器只有 10s 预算）。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <!-- 网络安全配置（Phase 4.2.2）：只对白名单域名放行明文 HTTP。
          教务系统登录会从 https 重定向到 http，默认策略下会被拦成
          `net::ERR_CLEARTEXT_NOT_PERMITTED`。**没有**用 usesCleartextTraffic="true"
@@ -152,6 +168,36 @@
                 <action android:name="com.zys.myschedule.action.WIDGET_PIN_RESULT" />
             </intent-filter>
         </receiver>
+
+        <!-- ===== 作业提醒（Phase 9）=====
+             闹钟 → 广播 → 前台校验服务（起临时引擎查作业状态）→ 通知。
+             exported=false：只有本应用自己的 PendingIntent 能触发。 -->
+        <receiver
+            android:name=".reminder.HomeworkReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.zys.myschedule.action.HOMEWORK_REMINDER_FIRE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 开机 / 覆盖安装后重排闹钟。exported=true 是系统广播的要求
+             （BOOT_COMPLETED 由系统进程发送）。 -->
+        <receiver
+            android:name=".reminder.ReminderBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 校验服务：前台服务类型 dataSync（Android 14+ 必须显式声明类型）。
+             dataSync 是"短时数据同步"语义，与"查一次作业状态"完全吻合。 -->
+        <service
+            android:name=".reminder.HomeworkReminderFireService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

@@ -16,6 +16,8 @@ import 'providers/semester_provider.dart';
 import 'providers/settings_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/storage_service.dart';
+import 'services/homework_check_entry.dart';
+import 'services/homework_reminder_service.dart';
 import 'services/widget_bridge.dart';
 
 Future<void> main() async {
@@ -91,6 +93,17 @@ Future<void> main() async {
     semesterProvider: semesterProvider,
     pluginProvider: pluginProvider,
     themeProvider: themeProvider,
+  ).start();
+
+  // 作业提醒（Phase 9）：先把后台校验入口的回调句柄交给原生（闹钟触发时
+  // 原生靠它起临时引擎跑 `homeworkNotificationCheckMain`），再启动编排器——
+  // 之后作业 / 插件 / 回前台变化都会重排提醒。
+  await HomeworkReminderService.registerBackgroundCheckHandle(
+    homeworkNotificationCheckMain,
+  );
+  HomeworkReminderController(
+    homeworkProvider: homeworkProvider,
+    pluginProvider: pluginProvider,
   ).start();
 
   runApp(buildApp(
@@ -261,3 +274,13 @@ Widget buildApp({
     child: const MyApp(),
   );
 }
+/// 作业提醒的后台校验入口（由原生通过 `DartCallbackHandle` 调起）。
+///
+/// ## ⚠️ 必须留在 main.dart
+///
+/// AOT（release）下 `DartEntrypoint` 只按函数名在**根库**里查找，完全忽略
+/// `callbackLibraryPath`。把入口放到别的文件会出现：debug 正常，release 一触发
+/// 就报 `Could not resolve main entrypoint function`，引擎起不来，校验永远失败。
+/// 实际逻辑在 `runHomeworkCheckEntrypoint()`（services/homework_check_entry.dart）。
+@pragma('vm:entry-point')
+void homeworkNotificationCheckMain() => runHomeworkCheckEntrypoint();

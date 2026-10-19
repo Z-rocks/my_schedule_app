@@ -226,6 +226,7 @@ class WidgetNav {
   }
 
   static void _applyTarget(String? value) {
+    debugPrint('[WidgetNav] 收到目标：$value');
     switch (value) {
       case 'home':
       case 'homework':
