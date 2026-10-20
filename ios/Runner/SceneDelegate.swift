@@ -18,16 +18,17 @@ class SceneDelegate: FlutterSceneDelegate {
   ) {
     super.scene(scene, willConnectTo: session, options: connectionOptions)
     SceneDelegate.registerChannels(in: window)
-    // 兜底：个别情况下父类是异步挂 rootViewController 的，
-    // 等一帧再试一次；还不行就放弃（Dart 侧所有调用都有 try/catch）。
+    // 兜底 1：等一帧再试（父类可能异步挂 rootViewController）。
     DispatchQueue.main.async { [weak self] in
       SceneDelegate.registerChannels(in: self?.window)
     }
-  }
-
-  override func sceneDidBecomeActive(_ scene: UIScene) {
-    super.sceneDidBecomeActive(scene)
-    SceneDelegate.registerChannels(in: window)
+    // 兜底 2：scene 激活时再试一次。不 override sceneDidBecomeActive——
+    // 那是可选协议方法，父类不一定实现，写 super 调用会编译失败。
+    NotificationCenter.default.addObserver(
+      forName: UIScene.didActivateNotification, object: scene, queue: .main
+    ) { [weak self] _ in
+      SceneDelegate.registerChannels(in: self?.window)
+    }
   }
 
   private static func registerChannels(in window: UIWindow?) {

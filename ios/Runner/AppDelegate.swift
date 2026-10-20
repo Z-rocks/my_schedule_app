@@ -21,13 +21,23 @@ import Photos
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
+  /// 前台展示通知用的代理。
+  ///
+  /// 为什么不用 AppDelegate 自己实现：`FlutterAppDelegate` 本身已经声明了
+  /// `UNUserNotificationCenterDelegate` 一致性（用于把通知转发给插件），
+  /// 再写 `extension AppDelegate: UNUserNotificationCenterDelegate` 会报
+  /// "redundant conformance"。这里用一个独立对象，职责也更清楚。
+  private let foregroundPresenter = ForegroundNotificationPresenter()
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    // 作业提醒通知：App 在前台时也弹横幅（与 Android 行为一致）。
-    UNUserNotificationCenter.current().delegate = self
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    let launched = super.application(
+      application, didFinishLaunchingWithOptions: launchOptions)
+    // 放在 super 之后：覆盖掉 FlutterAppDelegate 自己设的 delegate。
+    UNUserNotificationCenter.current().delegate = foregroundPresenter
+    return launched
   }
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
@@ -35,9 +45,8 @@ import Photos
   }
 }
 
-// MARK: - 前台也显示通知横幅
-
-extension AppDelegate: UNUserNotificationCenterDelegate {
+/// App 在前台时也弹横幅（与 Android 行为一致）。
+final class ForegroundNotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
   func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification,
@@ -158,7 +167,8 @@ final class ReminderChannelHandler: NSObject {
       let args = call.arguments as? [String: Any],
       let json = args["json"] as? String,
       let data = json.data(using: .utf8),
-      let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let parsed = try? JSONSerialization.jsonObject(with: data),
+      let root = parsed as? [String: Any],
       let items = root["items"] as? [[String: Any]]
     else {
       NSLog("[Reminder] syncPlan 参数解析失败")
@@ -308,12 +318,10 @@ final class LoginQrChannelHandler: NSObject {
     }
 
     // 只需要"添加"权限（Info.plist 的 NSPhotoLibraryAddUsageDescription）。
+    // 相册里的文件名由系统生成，Dart 传的 `name` 在 iOS 用不上（那是 Android 侧的事）。
     PHPhotoLibrary.shared().performChanges(
       {
-        let request = PHAssetChangeRequest.creationRequestForAsset(from: image)
-        if let name = args["name"] as? String {
-          request.placeholderForCreatedAsset?.localizedFileName = name
-        }
+        _ = PHAssetChangeRequest.creationRequestForAsset(from: image)
       },
       completionHandler: { success, error in
         if success {
