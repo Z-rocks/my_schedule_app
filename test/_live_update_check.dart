@@ -31,6 +31,17 @@ void main() {
     expect(r.changelog, isNotEmpty, reason: 'Release body 应该被解析出来');
   });
 
+  test('真实 Gitee：arm64 设备更新时选裁剪包，不是通用包', () async {
+    final UpdateCheckResult r = await UpdateService.check(
+      currentVersion: '0.3.0+3',
+      abi: 'arm64-v8a',
+    );
+    // ignore: avoid_print
+    print('[live] arm64 选包 → ${r.apkUrl}');
+    expect(r.apkUrl, endsWith('/app-arm64-v8a-release.apk'),
+        reason: '手机更新应该拿 23MB 裁剪包，不是 59MB 通用包');
+  });
+
   test('真实 Gitee：以线上最新版本为当前版本 → upToDate', () async {
     final UpdateCheckResult probe = await UpdateService.check(
       currentVersion: '0.0.1+1',

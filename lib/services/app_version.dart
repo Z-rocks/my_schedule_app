@@ -20,7 +20,7 @@ import 'system_bridge.dart';
 ///
 /// 只在读不到平台包信息时使用；Android 真机永远走系统读取，不会用到它。
 /// 修改 `pubspec.yaml` 的 version 时请同步此值——测试会检查两者是否一致。
-const String kFallbackAppVersion = '0.3.3';
+const String kFallbackAppVersion = '0.3.4';
 
 /// 版本号读取入口（带缓存）。
 ///

@@ -19,6 +19,8 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import 'system_bridge.dart';
+
 /// 版本分发源。顺序即尝试顺序。
 enum UpdateSource {
   /// Gitee 镜像（国内快，主源）。
@@ -184,7 +186,14 @@ class ReleaseInfo {
   });
 
   /// 从任一家的 JSON 解析；缺 tag 时返回 null（没有版本号就没有意义）。
-  static ReleaseInfo? fromJson(Map<String, dynamic> json, UpdateSource source) {
+  ///
+  /// [abi] 是设备主 ABI（`arm64-v8a` 等），用来挑对应架构的裁剪包；
+  /// 空串表示不知道，按通用包优先处理。
+  static ReleaseInfo? fromJson(
+    Map<String, dynamic> json,
+    UpdateSource source, {
+    String abi = '',
+  }) {
     final String tag = (json['tag_name'] as String? ?? '').trim();
     if (tag.isEmpty) return null;
     // GitHub 给 html_url；Gitee 没有，用仓库地址拼。
@@ -194,7 +203,7 @@ class ReleaseInfo {
       changelog: (json['body'] as String? ?? '').trim(),
       releaseUrl:
           htmlUrl.isNotEmpty ? htmlUrl : source.releasePageUrl(tag),
-      apkUrl: _firstApkUrl(json['assets']),
+      apkUrl: selectApkUrl(json['assets'], abi),
       prerelease: json['prerelease'] == true,
     );
   }
@@ -219,19 +228,30 @@ class UpdateService {
   /// [UpdateStatus.failed]，由 UI 决定怎么提示。
   ///
   /// [dio] 仅用于测试注入。
+  ///
+  /// [abi] 是设备主 ABI，用来挑裁剪包。不传则向平台询问（Android 返回
+  /// `arm64-v8a` 等，其它平台空串 → 走通用包）。测试可显式传值，
+  /// 传空串表示"当作不知道 ABI"。
   static Future<UpdateCheckResult> check({
     required String currentVersion,
     Dio? dio,
+    String? abi,
     List<UpdateSource> sources = const <UpdateSource>[
       UpdateSource.gitee,
       UpdateSource.github,
     ],
   }) async {
     final Dio client = dio ?? _defaultClient();
+    final String deviceAbi = abi ?? await SystemBridge.primaryAbi();
     final List<String> errors = <String>[];
 
     for (final UpdateSource source in sources) {
-      final _Attempt attempt = await _trySource(client, source, currentVersion);
+      final _Attempt attempt = await _trySource(
+        client,
+        source,
+        currentVersion,
+        deviceAbi,
+      );
       final UpdateCheckResult? result = attempt.result;
       if (result != null) return result;
       debugPrint('[UpdateService] ${source.label} 失败：${attempt.error}');
@@ -266,6 +286,7 @@ class UpdateService {
     Dio client,
     UpdateSource source,
     String currentVersion,
+    String abi,
   ) async {
     try {
       final Response<dynamic> response = await client.get<dynamic>(source.apiUrl);
@@ -278,7 +299,7 @@ class UpdateService {
         return _Attempt.fail('返回的数据无法识别');
       }
 
-      final ReleaseInfo? info = ReleaseInfo.fromJson(json, source);
+      final ReleaseInfo? info = ReleaseInfo.fromJson(json, source, abi: abi);
       if (info == null) {
         return _Attempt.fail('Release 缺少版本号（tag_name）');
       }
@@ -359,17 +380,32 @@ class UpdateService {
 /// Release 里通用包的文件名（`flutter build apk --release` 的默认产物名）。
 const String kUniversalApkName = 'app-release.apk';
 
+/// 某个 ABI 的裁剪包文件名，如 `app-arm64-v8a-release.apk`。
+///
+/// 与 `tools/build_release_apks.sh` 的产物命名保持一致——那边是逐 ABI 单独
+/// 构建后改名，不是 `--split-per-abi`（后者的 versionCode 会变成 `2000+N`，
+/// 和通用包的 `N` 混装会撞降级，见 [kUniversalApkName] 上方的说明）。
+String apkNameForAbi(String abi) =>
+    'app-${abi.trim().toLowerCase()}-release.apk';
+
 /// 从 `assets` 数组里挑一个 APK 的下载地址。
 ///
-/// 两条规则，按优先级：
-/// 1. **优先精确匹配通用包** `app-release.apk`。Release 里同时挂分架构包时
-///    （`app-arm64-v8a-release.apk` 等），通用包才能在任意机型上装。
-/// 2. 没有通用包时取第一个 `.apk`。
+/// 优先级：
+/// 1. **设备 ABI 对应的裁剪包**（`app-arm64-v8a-release.apk`）：21MB，
+///    比通用包小一半多，手机走流量更新时差别很大。
+/// 2. 通用包 `app-release.apk`：ABI 未知、或这次没传裁剪包时的兜底。
+/// 3. 第一个 `.apk`。
 ///
 /// 不能直接取第 0 个：Gitee 在没有上传附件时会自动塞源码
 /// `v1.2.3.zip` / `.tar.gz`，GitHub 的 `assets` 顺序也不保证按上传时间。
-String _firstApkUrl(Object? assets) {
+///
+/// 也不能"挑不到裁剪包就随便拿一个"：把 arm64 包给 armeabi-v7a 老机型会装不上。
+/// 所以裁剪包只认**精确匹配**，其余一律退到通用包。
+@visibleForTesting
+String selectApkUrl(Object? assets, String abi) {
   if (assets is! List) return '';
+  final String want = abi.trim().isEmpty ? '' : apkNameForAbi(abi);
+  String universal = '';
   String firstApk = '';
   for (final Object? asset in assets) {
     if (asset is! Map) continue;
@@ -378,10 +414,11 @@ String _firstApkUrl(Object? assets) {
     final String url =
         (asset['browser_download_url']?.toString() ?? '').trim();
     if (url.isEmpty) continue;
-    if (name == kUniversalApkName) return url;
+    if (want.isNotEmpty && name == want) return url;
+    if (universal.isEmpty && name == kUniversalApkName) universal = url;
     if (firstApk.isEmpty) firstApk = url;
   }
-  return firstApk;
+  return universal.isNotEmpty ? universal : firstApk;
 }
 
 /// 去掉版本号前面的 `v` / `V`。

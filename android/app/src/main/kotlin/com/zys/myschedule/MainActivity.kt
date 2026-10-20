@@ -161,6 +161,10 @@ class MainActivity : FlutterActivity() {
                         result.success(
                             SystemSettingsBridge.appVersion(applicationContext),
                         )
+                    // 主 ABI（`arm64-v8a` / `armeabi-v7a` / `x86_64`）：检查更新时
+                    // 用它挑裁剪包，避免每次都拉 58MB 的通用包。
+                    "primaryAbi" ->
+                        result.success(SystemSettingsBridge.primaryAbi())
                     // 检查更新 → 前往下载：用系统浏览器打开 Release 页面。
                     "openUrl" -> {
                         val url = call.argument<String>("url") ?: ""

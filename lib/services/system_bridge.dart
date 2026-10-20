@@ -87,6 +87,22 @@ class SystemBridge {
     }
   }
 
+  /// 主 ABI，形如 `arm64-v8a` / `armeabi-v7a` / `x86_64`。
+  ///
+  /// 检查更新时用它挑裁剪包（`app-arm64-v8a-release.apk`），
+  /// 挑不到再回落通用包。取不到返回空串，调用方必须能处理空值。
+  static Future<String> primaryAbi() async {
+    if (!supported) return '';
+    try {
+      final String? value = await _channel.invokeMethod<String>('primaryAbi');
+      return value ?? '';
+    } on MissingPluginException {
+      return '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
   static Future<bool> _open(String method) async {
     if (!supported) return false;
     try {

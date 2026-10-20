@@ -104,6 +104,19 @@ object SystemSettingsBridge {
         ""
     }
 
+    /**
+     * 主 ABI，取值与 Flutter 的 split 命名一致：`arm64-v8a` / `armeabi-v7a` / `x86_64`。
+     *
+     * 检查更新时用它挑裁剪包（`app-arm64-v8a-release.apk` 等），
+     * 挑不到再回落通用包。minSdk 24，`Build.SUPPORTED_ABIS` 必然存在。
+     */
+    fun primaryAbi(): String = try {
+        Build.SUPPORTED_ABIS.firstOrNull()?.trim() ?: ""
+    } catch (e: Exception) {
+        // 理论上不会抛；真抛了返回空串，Dart 侧回落通用包。
+        ""
+    }
+
     private fun start(context: Context, intent: Intent): Boolean = try {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)

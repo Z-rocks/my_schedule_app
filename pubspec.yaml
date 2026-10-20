@@ -16,7 +16,11 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.3.3+6
+# 0.3.4 起 build number 从 3000 起步：之前发过 versionCode=2005/2006 的
+# split-per-abi 包（Flutter 会给分架构包加 abiCode*1000），统一 versionCode
+# 方案必须严格大于它们，否则老用户覆盖安装会 INSTALL_FAILED_VERSION_DOWNGRADE。
+# 之后每版 +1 即可（3001、3002……），**不要**再用 --split-per-abi。
+version: 0.3.4+3000
 
 environment:
   sdk: ^3.13.4

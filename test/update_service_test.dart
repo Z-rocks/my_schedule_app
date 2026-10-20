@@ -355,4 +355,105 @@ void main() {
       expect(r.apkUrl, endsWith('/app-arm64-v8a-release.apk'));
     });
   });
+
+  // v0.3.4 起：手机更新时优先拿裁剪包（21MB），不再一律拉通用包（58MB）。
+  // 但裁剪包必须**精确匹配**设备 ABI——把 arm64 包发给 armeabi-v7a 老机型
+  // 会直接装不上，所以匹配不上时只能退回通用包，不能"随便拿一个"。
+  group('按设备 ABI 选包', () {
+    final List<Map<String, String>> assets = <Map<String, String>>[
+      <String, String>{
+        'name': 'app-release.apk',
+        'browser_download_url': 'https://x/app-release.apk',
+      },
+      <String, String>{
+        'name': 'app-arm64-v8a-release.apk',
+        'browser_download_url': 'https://x/app-arm64-v8a-release.apk',
+      },
+      <String, String>{
+        'name': 'app-armeabi-v7a-release.apk',
+        'browser_download_url': 'https://x/app-armeabi-v7a-release.apk',
+      },
+    ];
+
+    test('arm64-v8a → arm64 裁剪包', () {
+      expect(selectApkUrl(assets, 'arm64-v8a'),
+          'https://x/app-arm64-v8a-release.apk');
+    });
+
+    test('armeabi-v7a → v7 裁剪包（不能误拿 arm64）', () {
+      expect(selectApkUrl(assets, 'armeabi-v7a'),
+          'https://x/app-armeabi-v7a-release.apk');
+    });
+
+    test('ABI 未知 → 通用包', () {
+      expect(selectApkUrl(assets, ''), 'https://x/app-release.apk');
+    });
+
+    test('Release 里没有该 ABI 的包 → 回落通用包，不拿别的架构顶', () {
+      final List<Map<String, String>> onlyArm64 = <Map<String, String>>[
+        <String, String>{
+          'name': 'app-release.apk',
+          'browser_download_url': 'https://x/app-release.apk',
+        },
+        <String, String>{
+          'name': 'app-arm64-v8a-release.apk',
+          'browser_download_url': 'https://x/app-arm64-v8a-release.apk',
+        },
+      ];
+      expect(selectApkUrl(onlyArm64, 'x86_64'), 'https://x/app-release.apk');
+    });
+
+    test('连通用包都没有时才退回第一个 apk', () {
+      final List<Map<String, String>> noUniversal = <Map<String, String>>[
+        <String, String>{
+          'name': 'app-arm64-v8a-release.apk',
+          'browser_download_url': 'https://x/app-arm64-v8a-release.apk',
+        },
+      ];
+      expect(selectApkUrl(noUniversal, ''), 'https://x/app-arm64-v8a-release.apk');
+    });
+
+    test('只有源码包 → 空串（交给 Release 页面兜底）', () {
+      final List<Map<String, String>> onlySource = <Map<String, String>>[
+        <String, String>{
+          'name': 'v0.3.4.zip',
+          'browser_download_url': 'https://x/v0.3.4.zip',
+        },
+      ];
+      expect(selectApkUrl(onlySource, 'arm64-v8a'), isEmpty);
+    });
+
+    test('裁剪包文件名与构建脚本产物一致', () {
+      expect(apkNameForAbi('arm64-v8a'), 'app-arm64-v8a-release.apk');
+      expect(apkNameForAbi('ARM64-V8A'), 'app-arm64-v8a-release.apk');
+    });
+
+    test('check 传入 abi 时，端到端选到裁剪包', () async {
+      final _FakeAdapter adapter = _FakeAdapter(<String, Object>{
+        UpdateSource.gitee.apiUrl: _giteeRelease(
+          tag: 'v0.3.4',
+          assets: <Map<String, String>>[
+            <String, String>{
+              'name': 'app-release.apk',
+              'browser_download_url':
+                  'https://gitee.com/x/y/releases/download/v0.3.4/app-release.apk',
+            },
+            <String, String>{
+              'name': 'app-arm64-v8a-release.apk',
+              'browser_download_url':
+                  'https://gitee.com/x/y/releases/download/v0.3.4/app-arm64-v8a-release.apk',
+            },
+          ],
+        ),
+      });
+
+      final UpdateCheckResult r = await UpdateService.check(
+        currentVersion: '0.3.3+6',
+        dio: _fakeDio(adapter),
+        abi: 'arm64-v8a',
+      );
+
+      expect(r.apkUrl, endsWith('/app-arm64-v8a-release.apk'));
+    });
+  });
 }
