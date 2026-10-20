@@ -243,6 +243,9 @@ class UpdateService {
   }) async {
     final Dio client = dio ?? _defaultClient();
     final String deviceAbi = abi ?? await SystemBridge.primaryAbi();
+    // 排查用：用户反馈"还是下了通用包"时，先看这行 ABI 是不是空
+    // （空 = 通道没通 / 非 Android），再看选包结果。
+    debugPrint('[UpdateService] 设备 ABI=${deviceAbi.isEmpty ? '(未知)' : deviceAbi}');
     final List<String> errors = <String>[];
 
     for (final UpdateSource source in sources) {
