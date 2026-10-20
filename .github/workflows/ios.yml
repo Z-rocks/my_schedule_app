@@ -16,8 +16,15 @@ on:
         type: boolean
         default: false
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+    # 只在这些路径变动时自动构建：Dart 代码、iOS 工程、依赖、工作流本身。
+    # 纯文档/工具脚本的提交不浪费 macOS 构建时间。
+    paths:
+      - 'ios/**'
+      - 'lib/**'
+      - 'pubspec.yaml'
+      - '.github/workflows/ios.yml'
 
 jobs:
   build-unsigned:
