@@ -94,3 +94,49 @@ flutter build ios --release --no-codesign
 - `lib/pages/settings/homework_reminder_page.dart` / `settings_page.dart`：
   按平台隐藏小组件 / 精确闹钟 / 完整校验，文案区分
 - `lib/pages/login/webview_login_page.dart`：二维码面板文案按平台区分
+
+## 6. 没有 Mac 怎么出 ipa
+
+**结论先说：Windows 本机出不了 ipa，虚拟机/模拟器也不解决"发行"。**
+
+- `.ipa` 必须由 Xcode 的工具链（`xcodebuild` + codesign）产出，Xcode 只跑在 macOS 上；
+- iOS **模拟器**只能跑 `.app`（模拟器架构），装不到真机，而且它本身也要 macOS；
+- 在 Windows/Linux 上装 macOS 虚拟机（VMware/QEMU 打补丁）技术上能起来，但：
+  违反 Apple 许可（macOS 只能装在 Apple 硬件上）、Xcode 16 在无 Metal 加速的虚拟显卡下
+  编译极慢、模拟器基本不可用、AMD 平台几乎没戏。**不建议走**。
+
+### 三条可行路线
+
+| 路线 | 成本 | 能拿到什么 | 适合 |
+|---|---|---|---|
+| **A. GitHub Actions（已配好）** | 公开仓库免费；私有仓库 2000 分钟/月（macOS 按 10× 折算 ≈ 200 分钟） | 未签名 ipa | 自己/同学小范围装 |
+| B. Codemagic / Bitrise 等移动 CI | Codemagic 有免费额度，超出按分钟计费 | 未签名或签名 ipa | 不想依赖 GitHub |
+| C. 云 Mac（MacinCloud / AWS EC2 mac）或二手 Mac mini | 云按小时；M1 mini 二手约 2–3k | 完整 Xcode，能跑模拟器 | 长期要做 iOS |
+
+**路线 A 已就绪**：`.github/workflows/ios.yml`
+- 手动触发（Actions → iOS Build → Run workflow）或打 `v*` tag 自动跑；
+- 产物在 Artifacts：`ios-unsigned-ipa`；
+- 想同时出签名包：Run workflow 时勾 `signed`，并在仓库 Secrets 配
+  `BUILD_CERTIFICATE_BASE64` / `P12_PASSWORD` / `PROVISIONING_PROFILE_BASE64` /
+  `KEYCHAIN_PASSWORD` / `APPLE_TEAM_ID`。
+
+**工作流怎么上到 GitHub**：本机 `git push` 到 github.com 不通（见 README 网络说明）。
+两条路：① 在能上 GitHub 的机器上 push；② Gitee 仓库 → 设置 → 镜像管理 → 添加
+GitHub 的 **push 镜像**（填 GitHub PAT），之后 Gitee 每次提交自动同步过去。
+
+### 拿到 ipa 之后怎么装到 iPhone（Windows 侧）
+
+1. 下载 **Sideloadly**（Windows 版）或 AltStore；
+2. iPhone 用数据线连电脑，Sideloadly 里填自己的 Apple ID（免费账号即可，
+   会自动申请免费证书并重签 ipa）；
+3. 装完在 iPhone「设置 → 通用 → VPN与设备管理」里信任该开发者证书；
+   iOS 16+ 还要在「隐私与安全性」里打开**开发者模式**并重启；
+4. **免费账号的限制**：证书 7 天过期、最多 3 个 App、需要每周重新签名一次。
+
+### 想正式分发（同学扫码就装、不用每周重签）
+
+只有一条路：Apple Developer Program（**688 元/年**）。
+拿到账号后，用上面的 `signed` 任务出正式包 → Transporter 或
+`xcrun altool --upload-app` 传到 App Store Connect → **TestFlight** 分发
+（每个构建 90 天有效，最多 10000 名外部测试员）。这一步不需要你有 Mac。
+
