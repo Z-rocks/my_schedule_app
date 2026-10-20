@@ -15,7 +15,11 @@ import uuid
 TOKEN = os.environ["GITEE_TOKEN"]
 RELEASE_ID = os.environ["GITEE_RELEASE_ID"]
 OWNER, REPO = "zrocks", "my_schedule_app"
-APK_DIR = "build/app/outputs/flutter-apk"
+# v0.3.4 起由 tools/build_release_apks.sh 产出（逐 ABI 构建，统一 versionCode）。
+# 老目录 build/app/outputs/flutter-apk 只作为回落，避免旧流程下脚本跑不动。
+APK_DIR = "build/release-apks"
+if not os.path.isdir(APK_DIR):
+    APK_DIR = "build/app/outputs/flutter-apk"
 
 # 上传顺序：通用包优先，再分架构包（与 v0.3.1 保持一致）
 FILES = [
