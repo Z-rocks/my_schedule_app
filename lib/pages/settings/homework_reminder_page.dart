@@ -259,8 +259,11 @@ class _HomeworkReminderPageState extends State<HomeworkReminderPage>
                 contentPadding: EdgeInsets.zero,
                 title: Text('开启作业提醒', style: _titleStyle(theme)),
                 subtitle: Text(
-                  '作业快到截止时间时发系统通知；每次提醒前会先查一次'
-                  '作业状态，已经提交的不打扰。',
+                  ReminderBridge.isBackgroundCheckSupported
+                      ? '作业快到截止时间时发系统通知；每次提醒前会先查一次'
+                          '作业状态，已经提交的不打扰。'
+                      : '作业快到截止时间时发系统通知。'
+                          '（iOS 版提醒时不查状态，已提交也可能提醒）',
                   style: _captionStyle(theme),
                 ),
               ),
@@ -328,29 +331,32 @@ class _HomeworkReminderPageState extends State<HomeworkReminderPage>
             ],
           ),
           SizedBox(height: theme.sectionGap),
-          _card(
-            theme,
-            children: <Widget>[
-              SwitchListTile(
-                value: _settings.notifyWhenCheckFails,
-                onChanged: (bool value) {
-                  setState(() {
-                    _settings =
-                        _settings.copyWith(notifyWhenCheckFails: value);
-                  });
-                  unawaited(_applySettings());
-                },
-                contentPadding: EdgeInsets.zero,
-                title: Text('查不到状态时仍然提醒', style: _titleStyle(theme)),
-                subtitle: Text(
-                  '断网、未登录、插件不可用时会查不出作业状态。'
-                  '开着更稳妥（宁可多提醒一次，也不漏截止）；'
-                  '关掉则只在确认未提交时才提醒。',
-                  style: _captionStyle(theme),
+          // 「查不到状态仍然提醒」只作用于 Android 的到点后台校验；
+          // iOS 到点直接提醒、不查状态，该开关无效，不显示。
+          if (ReminderBridge.isBackgroundCheckSupported)
+            _card(
+              theme,
+              children: <Widget>[
+                SwitchListTile(
+                  value: _settings.notifyWhenCheckFails,
+                  onChanged: (bool value) {
+                    setState(() {
+                      _settings =
+                          _settings.copyWith(notifyWhenCheckFails: value);
+                    });
+                    unawaited(_applySettings());
+                  },
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('查不到状态时仍然提醒', style: _titleStyle(theme)),
+                  subtitle: Text(
+                    '断网、未登录、插件不可用时会查不出作业状态。'
+                    '开着更稳妥（宁可多提醒一次，也不漏截止）；'
+                    '关掉则只在确认未提交时才提醒。',
+                    style: _captionStyle(theme),
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
           SizedBox(height: theme.sectionGap),
           _card(
             theme,
@@ -367,14 +373,16 @@ class _HomeworkReminderPageState extends State<HomeworkReminderPage>
                     ? () => ReminderBridge.openNotificationSettings()
                     : _requestNotificationPermission,
               ),
-              _permissionRow(
-                theme,
-                title: '精确闹钟',
-                ok: _exactAlarmAllowed,
-                okText: '已允许',
-                badText: '未允许（提醒可能晚几分钟）',
-                onTap: () => ReminderBridge.openExactAlarmSettings(),
-              ),
+              // "精确闹钟"是 Android 12+ 的独立授权，iOS 不存在该概念。
+              if (ReminderBridge.isExactAlarmSupported)
+                _permissionRow(
+                  theme,
+                  title: '精确闹钟',
+                  ok: _exactAlarmAllowed,
+                  okText: '已允许',
+                  badText: '未允许（提醒可能晚几分钟）',
+                  onTap: () => ReminderBridge.openExactAlarmSettings(),
+                ),
             ],
           ),
           SizedBox(height: theme.sectionGap),
@@ -412,37 +420,47 @@ class _HomeworkReminderPageState extends State<HomeworkReminderPage>
                 ],
               ),
               const SizedBox(height: 4),
-              Row(
-                children: <Widget>[
-                  TextButton.icon(
-                    onPressed: _saving || _testingChain ? null : _runFullCheck,
-                    icon: _testingChain
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.play_circle_outline, size: 18),
-                    label: Text(_testingChain ? '正在校验…' : '立即走一遍完整校验'),
-                  ),
-                ],
-              ),
-              Text(
-                '完整校验会像闹钟到点那样：起一次后台引擎 → 查一次作业状态 → '
-                '已提交则不打扰。用它可以在不等到截止的情况下确认整条链路通不通。',
-                style: _captionStyle(theme),
-              ),
+              // 「完整校验」走的是 Android 原生的"起临时引擎 → 查状态"链路，
+              // iOS 没有这条链路（到点直接提醒），不显示该入口。
+              if (ReminderBridge.isBackgroundCheckSupported) ...<Widget>[
+                Row(
+                  children: <Widget>[
+                    TextButton.icon(
+                      onPressed:
+                          _saving || _testingChain ? null : _runFullCheck,
+                      icon: _testingChain
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.play_circle_outline, size: 18),
+                      label: Text(_testingChain ? '正在校验…' : '立即走一遍完整校验'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '完整校验会像闹钟到点那样：起一次后台引擎 → 查一次作业状态 → '
+                  '已提交则不打扰。用它可以在不等到截止的情况下确认整条链路通不通。',
+                  style: _captionStyle(theme),
+                ),
+              ],
             ],
           ),
           SizedBox(height: theme.sectionGap),
           Padding(
             padding: EdgeInsets.symmetric(horizontal: theme.cardPadding / 2),
             child: Text(
-              '说明：提醒由系统闹钟触发，App 没打开也会响。触发时会临时检查'
-              '一次作业状态（需要网络）；检查结果只用于决定"这次要不要打扰你"，'
-              '不会修改你的作业数据。\n'
-              '部分厂商的省电策略可能清掉闹钟，建议在系统设置里允许本应用'
-              '"自启动 / 后台运行"。',
+              ReminderBridge.isBackgroundCheckSupported
+                  ? '说明：提醒由系统闹钟触发，App 没打开也会响。触发时会临时检查'
+                      '一次作业状态（需要网络）；检查结果只用于决定"这次要不要打扰你"，'
+                      '不会修改你的作业数据。\n'
+                      '部分厂商的省电策略可能清掉闹钟，建议在系统设置里允许本应用'
+                      '"自启动 / 后台运行"。'
+                  : '说明：提醒由系统本地通知触发，App 没打开也会响。\n'
+                      'iOS 版暂不支持到点前检查作业状态：提醒内容以排期时的快照为准，'
+                      '已提前交了的作业也可能收到提醒，请以作业列表为准。',
               style: _captionStyle(theme),
             ),
           ),

@@ -26,6 +26,23 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- 校外登录二维码保存到相册（只新增、不读取） -->
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>校外登录时把确认二维码保存到相册，方便用微信「扫一扫」识别。</string>
+	<!-- 检测是否安装微信 / 拉起微信扫一扫（canOpenURL 白名单） -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>weixin</string>
+	</array>
+	<!-- 教务系统登录会从 https 302 到 http（如 http://xjw1.ncst.edu.cn），
+	     iOS 的 ATS 默认拦明文。这里只对 WebView 内容放行（WKWebView），
+	     不放开全局 NSAllowsArbitraryLoads；
+	     Dart 侧 dio 走 BSD socket，本来就不受 ATS 约束。 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+	</dict>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

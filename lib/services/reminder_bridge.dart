@@ -1,9 +1,9 @@
-// 作业提醒的原生通道封装（Dart → Kotlin）。
+// 作业提醒的原生通道封装（Dart → Kotlin / Swift）。
 //
 // 只做"转发 + 兜底"：任何平台不支持 / 通道不可用时返回安全默认值，
 // **绝不抛异常**——提醒功能坏掉不该影响 App 正常使用。
 //
-// 通道契约（Kotlin 侧 `ReminderContract.CHANNEL` 必须一致）：
+// 通道契约（原生侧 `ReminderContract.CHANNEL` 必须一致）：
 //   syncPlan(json)                  → bool  全量替换排期（先取消旧闹钟再排新的）
 //   cancelAll()                     → void  取消全部提醒
 //   hasNotificationPermission()     → bool  Android 13+ 通知权限
@@ -13,6 +13,12 @@
 //   openNotificationSettings()      → bool  跳应用通知设置页
 //   showTestNotification(title, body) → bool 立刻发一条测试通知
 //   registerCheckHandle(handle)     → bool  登记后台校验入口的 Dart 回调句柄
+//
+// ## iOS（2026-10 发行版）
+// iOS 侧由 `ios/Runner/AppDelegate.swift` 用 **UNUserNotificationCenter** 实现同一通道：
+// syncPlan 把排期里的每条转成本地通知（通知文案直接用排期里的字段拼好，
+// **不做到点前查状态**——iOS 不允许 App 在后台起引擎查接口）。
+// 因此 iOS 上 [isBackgroundCheckSupported] / [isExactAlarmSupported] 均为 false。
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -25,8 +31,24 @@ class ReminderBridge {
   static const MethodChannel _channel =
       MethodChannel('com.zys.myschedule/reminder');
 
-  /// 是否支持原生提醒（目前只有 Android 实现了闹钟 + 通知）。
-  static bool get isSupported => !kIsWeb && Platform.isAndroid;
+  /// 是否支持原生提醒。
+  ///
+  /// Android：Kotlin 闹钟 + 通知（可后台校验）。
+  /// iOS：Swift UNUserNotificationCenter 本地通知（到点直接提醒）。
+  static bool get isSupported =>
+      !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+
+  /// 是否支持"到点前先查一次作业状态"的后台校验（仅 Android）。
+  ///
+  /// iOS 不允许后台起引擎查接口，到点直接按排期时的快照提醒；
+  /// 设置页据此隐藏「立即走一遍完整校验」等仅 Android 的入口。
+  static bool get isBackgroundCheckSupported =>
+      !kIsWeb && Platform.isAndroid;
+
+  /// 是否存在"精确闹钟"这一独立权限概念（仅 Android 12+）。
+  ///
+  /// iOS 的本地通知本来就准时，没有这个开关。
+  static bool get isExactAlarmSupported => !kIsWeb && Platform.isAndroid;
 
   /// 全量下发排期。返回是否成功交给原生调度。
   static Future<bool> syncPlan(String planJson) async {
@@ -80,7 +102,10 @@ class ReminderBridge {
   }
 
   /// 是否允许精确闹钟（Android 12+ 需要用户单独授权）。
+  ///
+  /// iOS 的本地通知由系统保证准时，恒为 true。
   static Future<bool> canScheduleExactAlarms() async {
+    if (isExactAlarmSupported == false) return true;
     if (!isSupported) return false;
     try {
       return await _channel.invokeMethod<bool>('canScheduleExactAlarms') ??
@@ -93,7 +118,7 @@ class ReminderBridge {
 
   /// 跳系统"闹钟和提醒"授权页。
   static Future<bool> openExactAlarmSettings() async {
-    if (!isSupported) return false;
+    if (!isExactAlarmSupported) return false;
     try {
       return await _channel.invokeMethod<bool>('openExactAlarmSettings') ??
           false;
@@ -137,8 +162,10 @@ class ReminderBridge {
   ///
   /// 与真实闹钟触发走**同一段原生代码**（`HomeworkReminderFireService`），
   /// 所以能验证引擎启动、插件加载、API 查询是否都正常。
+  ///
+  /// 仅 Android：iOS 没有"后台校验"链路，返回 false。
   static Future<bool> runCheckNow(String itemJson) async {
-    if (!isSupported) return false;
+    if (!isBackgroundCheckSupported) return false;
     try {
       return await _channel.invokeMethod<bool>(
             'runCheckNow',
@@ -156,8 +183,10 @@ class ReminderBridge {
   /// 原生在闹钟触发时用这个句柄起一个临时 Flutter 引擎执行
   /// `homeworkNotificationCheckMain`（见 `homework_check_entry.dart`）。
   /// 句柄只在 App 启动时登记一次；未登记时原生退化为"不校验直接提醒"。
+  ///
+  /// 仅 Android：iOS 侧没有后台校验，直接返回 false。
   static Future<bool> registerCheckHandle(int rawHandle) async {
-    if (!isSupported) return false;
+    if (!isBackgroundCheckSupported) return false;
     try {
       return await _channel.invokeMethod<bool>(
             'registerCheckHandle',

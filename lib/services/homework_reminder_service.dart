@@ -199,7 +199,8 @@ class HomeworkReminderService {
   /// 句柄缺失（例如代码被 tree-shake）时只记日志：原生会退化为
   /// "到点不校验、直接提醒"，功能仍然可用。
   static Future<void> registerBackgroundCheckHandle(Function entrypoint) async {
-    if (!ReminderBridge.isSupported) return;
+    // iOS 侧无后台校验（到点直接提醒），不登记句柄。
+    if (!ReminderBridge.isBackgroundCheckSupported) return;
     try {
       final CallbackHandle? handle =
           PluginUtilities.getCallbackHandle(entrypoint);

@@ -1253,7 +1253,11 @@ class _WebViewLoginPageState extends State<WebViewLoginPage>
                 ],
               ),
               Text(
-                '校外登录需要用微信确认。二维码只在本次登录有效，登录成功后会自动从相册删除。',
+                QrLoginBridge.canDeleteAfterLogin
+                    ? '校外登录需要用微信确认。二维码只在本次登录有效，'
+                        '登录成功后会自动从相册删除。'
+                    : '校外登录需要用微信确认。二维码只在本次登录有效，'
+                        '登录成功后请手动把它从相册删掉。',
                 style: TextStyle(
                   fontSize: theme.captionSize,
                   color: theme.onBackground,

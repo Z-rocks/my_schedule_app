@@ -1,12 +1,16 @@
 // 设置主页：分组列出扩展 / 外观 / 布局 / 数据 / 关于入口
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/theme_provider.dart';
 import '../../services/app_version.dart';
+import '../../services/reminder_bridge.dart';
 import '../../services/system_bridge.dart';
 import '../../services/update_service.dart';
+import '../../services/widget_bridge.dart';
 import '../../theme/default_skins.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
@@ -206,33 +210,37 @@ class SettingsPage extends StatelessWidget {
             children: <Widget>[
               _SettingsTile(
                 title: '作业提醒',
-                subtitleText: '截止前按档位提醒，发通知前先查作业状态',
+                subtitleText: ReminderBridge.isBackgroundCheckSupported
+                    ? '截止前按档位提醒，发通知前先查作业状态'
+                    : '截止前按档位提醒',
                 showChevron: true,
                 onTap: () => _push(context, const HomeworkReminderPage()),
               ),
             ],
           ),
-          _SettingsGroup(
-            title: '桌面小组件',
-            children: <Widget>[
-              _SettingsTile(
-                title: '添加与使用',
-                showChevron: true,
-                onTap: () => _push(context, const WidgetGuidePage()),
-              ),
-              _SettingsTile(
-                title: '后台刷新设置',
-                subtitleText: '让卡片随数据变化即时更新',
-                showChevron: true,
-                onTap: () => _push(
-                  context,
-                  const WidgetGuidePage(
-                    initialSection: WidgetGuideSection.battery,
+          // 小组件目前只有 Android 实现；iOS 发行版不显示该分组。
+          if (isWidgetPlatformSupported)
+            _SettingsGroup(
+              title: '桌面小组件',
+              children: <Widget>[
+                _SettingsTile(
+                  title: '添加与使用',
+                  showChevron: true,
+                  onTap: () => _push(context, const WidgetGuidePage()),
+                ),
+                _SettingsTile(
+                  title: '后台刷新设置',
+                  subtitleText: '让卡片随数据变化即时更新',
+                  showChevron: true,
+                  onTap: () => _push(
+                    context,
+                    const WidgetGuidePage(
+                      initialSection: WidgetGuideSection.battery,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
           _SettingsGroup(
             title: '数据',
             children: <Widget>[
@@ -348,6 +356,13 @@ class _CheckUpdateTileState extends State<_CheckUpdateTile> {
     if (_checking) return;
     setState(() => _checking = true);
 
+    // 桌面 / 未知平台：没有对应的安装包，别引导用户去下 APK。
+    if (!SystemBridge.supported) {
+      setState(() => _checking = false);
+      _snack('当前平台不支持自动更新');
+      return;
+    }
+
     final String current = await AppVersion.load();
     final UpdateCheckResult result =
         await UpdateService.check(currentVersion: current);
@@ -393,6 +408,18 @@ class _CheckUpdateTileState extends State<_CheckUpdateTile> {
                 // 为了它引入一个 Markdown 渲染器不值得，用户关心的是"改了什么"。
                 Text(result.changelog),
               ],
+              // 本平台这次没传安装包（iOS 还没打包 / Release 漏传）：
+              // 说清楚去哪装，别让用户以为"点了没反应"。
+              if (result.apkUrl.isEmpty) ...<Widget>[
+                const SizedBox(height: 12),
+                Text(
+                  Platform.isIOS
+                      ? 'iOS 版请用 TestFlight 安装；下面的按钮会打开 Release 页面。'
+                      : '这个 Release 没有本平台的安装包，'
+                          '下面的按钮会打开 Release 页面。',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ],
             ],
           ),
         ),
@@ -403,7 +430,7 @@ class _CheckUpdateTileState extends State<_CheckUpdateTile> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('前往下载'),
+            child: Text(result.apkUrl.isEmpty ? '前往查看' : '前往下载'),
           ),
         ],
       ),

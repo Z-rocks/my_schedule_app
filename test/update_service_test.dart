@@ -456,4 +456,114 @@ void main() {
       expect(r.apkUrl, endsWith('/app-arm64-v8a-release.apk'));
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // 按平台取包（2026-10 iOS 发行版）：同一个 Release 里同时挂 APK 和 ipa，
+  // 各端只能拿自己那一种——Android 拿 apk 装不上 iOS，反之亦然。
+  // ---------------------------------------------------------------------------
+  group('按平台选包', () {
+    final List<Map<String, String>> mixedAssets = <Map<String, String>>[
+      <String, String>{
+        'name': 'app-release.apk',
+        'browser_download_url': 'https://x/v0.3.5/app-release.apk',
+      },
+      <String, String>{
+        'name': 'app-arm64-v8a-release.apk',
+        'browser_download_url': 'https://x/v0.3.5/app-arm64-v8a-release.apk',
+      },
+      <String, String>{
+        'name': 'my_schedule_app.ipa',
+        'browser_download_url': 'https://x/v0.3.5/my_schedule_app.ipa',
+      },
+      <String, String>{
+        'name': 'v0.3.5.zip',
+        'browser_download_url': 'https://x/v0.3.5/v0.3.5.zip',
+      },
+    ];
+
+    test('iOS 只取 ipa，绝不回落到 apk', () {
+      expect(
+        selectPackageUrl(mixedAssets, kind: PackageKind.ipa),
+        'https://x/v0.3.5/my_schedule_app.ipa',
+      );
+      expect(selectIpaUrl(mixedAssets), 'https://x/v0.3.5/my_schedule_app.ipa');
+    });
+
+    test('Android 只取 apk（按 ABI 裁剪包优先），绝不取 ipa', () {
+      expect(
+        selectPackageUrl(mixedAssets, abi: 'arm64-v8a'),
+        'https://x/v0.3.5/app-arm64-v8a-release.apk',
+      );
+      expect(
+        selectPackageUrl(mixedAssets, abi: ''),
+        'https://x/v0.3.5/app-release.apk',
+      );
+    });
+
+    test('iOS 这次没传 ipa 时为空串，downloadUrl 回落到 Release 页面', () {
+      final List<Map<String, String>> androidOnly = mixedAssets
+          .where((Map<String, String> a) => !a['name']!.endsWith('.ipa'))
+          .toList();
+      expect(selectIpaUrl(androidOnly), isEmpty);
+    });
+
+    test('check(kind: ipa) 端到端选到 ipa', () async {
+      final _FakeAdapter adapter = _FakeAdapter(<String, Object>{
+        UpdateSource.gitee.apiUrl: _giteeRelease(
+          tag: 'v0.3.5',
+          assets: mixedAssets,
+        ),
+      });
+
+      final UpdateCheckResult r = await UpdateService.check(
+        currentVersion: '0.3.4',
+        dio: _fakeDio(adapter),
+        kind: PackageKind.ipa,
+      );
+
+      expect(r.status, UpdateStatus.available);
+      expect(r.apkUrl, endsWith('/my_schedule_app.ipa'));
+      expect(r.downloadUrl, r.apkUrl);
+    });
+
+    test('check(kind: apk) 端到端仍然只拿 apk', () async {
+      final _FakeAdapter adapter = _FakeAdapter(<String, Object>{
+        UpdateSource.gitee.apiUrl: _giteeRelease(
+          tag: 'v0.3.5',
+          assets: mixedAssets,
+        ),
+      });
+
+      final UpdateCheckResult r = await UpdateService.check(
+        currentVersion: '0.3.4',
+        dio: _fakeDio(adapter),
+        abi: 'arm64-v8a',
+        kind: PackageKind.apk,
+      );
+
+      expect(r.apkUrl, endsWith('/app-arm64-v8a-release.apk'));
+    });
+
+    test('iOS 无 ipa 时 downloadUrl 回落到 Release 页面', () async {
+      final List<Map<String, String>> androidOnly = mixedAssets
+          .where((Map<String, String> a) => !a['name']!.endsWith('.ipa'))
+          .toList();
+      final _FakeAdapter adapter = _FakeAdapter(<String, Object>{
+        UpdateSource.gitee.apiUrl: _giteeRelease(
+          tag: 'v0.3.5',
+          assets: androidOnly,
+        ),
+      });
+
+      final UpdateCheckResult r = await UpdateService.check(
+        currentVersion: '0.3.4',
+        dio: _fakeDio(adapter),
+        kind: PackageKind.ipa,
+      );
+
+      expect(r.status, UpdateStatus.available);
+      expect(r.apkUrl, isEmpty);
+      expect(r.downloadUrl, contains('/releases/tag/v0.3.5'));
+    });
+  });
 }
