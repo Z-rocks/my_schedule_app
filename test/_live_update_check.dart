@@ -42,6 +42,28 @@ void main() {
         reason: '手机更新应该拿 23MB 裁剪包，不是 59MB 通用包');
   });
 
+  test('真实 Gitee：iOS 端只会拿 ipa，绝不会拿 apk', () async {
+    final UpdateCheckResult r = await UpdateService.check(
+      currentVersion: '0.3.0+3',
+      kind: PackageKind.ipa,
+    );
+    // ignore: avoid_print
+    print('[live] iOS 选包 → apkUrl=${r.apkUrl.isEmpty ? "(空)" : r.apkUrl}'
+        ' downloadUrl=${r.downloadUrl}');
+
+    expect(r.status, UpdateStatus.available);
+    // 两种合法状态：Release 里有 ipa → 指向 .ipa；没有 ipa → 空并回落 Release 页。
+    // 断言写成"绝不出现 .apk"，无论将来传不传 ipa 都不会假失败。
+    expect(r.apkUrl.endsWith('.apk'), isFalse,
+        reason: 'iOS 绝不能下 Android 包');
+    if (r.apkUrl.isEmpty) {
+      expect(r.downloadUrl, contains('/releases/tag/'),
+          reason: '没有 ipa 时应回落到 Release 页面');
+    } else {
+      expect(r.apkUrl, endsWith('.ipa'));
+    }
+  });
+
   test('真实 Gitee：以线上最新版本为当前版本 → upToDate', () async {
     final UpdateCheckResult probe = await UpdateService.check(
       currentVersion: '0.0.1+1',
