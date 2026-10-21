@@ -111,11 +111,13 @@ void main() {
       expect(first['session'], 3);
       expect(first['length'], 2);
       expect(first['sectionText'], '3-4节');
+      // v3：教室挂在"这一段课"上，不再挂在课程上。
+      expect(first['room'], '教三101');
 
       final List<dynamic> table =
           schedule['courseTable'] as List<dynamic>;
       expect((table.first as Map)['name'], '高等数学');
-      expect((table.first as Map)['room'], '教三101');
+      expect((table.first as Map).containsKey('room'), false);
 
       // cells[周三-1][3-1] 与 [周三-1][4-1] 都是课程 0；周一第 1 节为空。
       final List<dynamic> cells = schedule['cells'] as List<dynamic>;
@@ -347,6 +349,99 @@ void main() {
       // 2026-10-15 周四，两门课都在周三。
       final Map<String, dynamic>? next = nextAt(DateTime(2026, 10, 15, 10, 0));
       expect(next, isNull);
+    });
+  });
+
+  group('教室按"哪一天、第几节"取值（快照 v3）', () {
+    Course courseWith(List<TimePlace> places) => Course(
+          id: 'ncst:multi',
+          name: '大学物理',
+          teacher: '李四',
+          unit: 3,
+          category: '必修',
+          timePlaces: places,
+          sourcePluginId: 'ncst',
+        );
+
+    TimePlace place({
+      required int day,
+      required int startSession,
+      int length = 2,
+      required String room,
+    }) =>
+        TimePlace(
+          day: day,
+          startSession: startSession,
+          length: length,
+          room: room,
+          weeks: List<int>.generate(20, (int i) => i + 1),
+          rawWeeksText: '1-20周',
+        );
+
+    Map<String, dynamic> scheduleAt(List<Course> courses, DateTime now) =>
+        WidgetSnapshotService.build(
+          courses: courses,
+          semester: semester,
+          homeworks: const <Homework>[],
+          exams: const <Exam>[],
+          now: now,
+        ).toJson()['schedule'] as Map<String, dynamic>;
+
+    test('同一门课在一周不同天：显示当天的教室，不拿第一处的教室顶', () {
+      // 旧实现取 displayTimePlaces 里第一个非空 room → 周三也会显示"教一101"。
+      final Map<String, dynamic> schedule = scheduleAt(
+        <Course>[
+          courseWith(<TimePlace>[
+            place(day: 1, startSession: 1, room: '教一101'), // 周一
+            place(day: 3, startSession: 3, room: '教二202'), // 周三
+          ]),
+        ],
+        DateTime(2026, 10, 14, 9, 0), // 周三
+      );
+
+      final Map<String, dynamic> first =
+          (schedule['todaySessions'] as List).first as Map<String, dynamic>;
+      expect(first['room'], '教二202');
+      expect((schedule['nextSession'] as Map)['room'], '教二202');
+    });
+
+    test('同一门课同一天两段不同教室：拆成两段，各自带自己的教室', () {
+      // 旧实现按课程实例合并 → 会并成"3-6节"一段、教室只剩一处。
+      final Map<String, dynamic> schedule = scheduleAt(
+        <Course>[
+          courseWith(<TimePlace>[
+            place(day: 3, startSession: 3, room: '教一101'),
+            place(day: 3, startSession: 5, room: '实验楼B302'),
+          ]),
+        ],
+        DateTime(2026, 10, 14, 9, 0),
+      );
+
+      final List<dynamic> sessions = schedule['todaySessions'] as List<dynamic>;
+      expect(sessions.length, 2);
+      expect((sessions[0] as Map)['session'], 3);
+      expect((sessions[0] as Map)['length'], 2);
+      expect((sessions[0] as Map)['room'], '教一101');
+      expect((sessions[1] as Map)['session'], 5);
+      expect((sessions[1] as Map)['length'], 2);
+      expect((sessions[1] as Map)['room'], '实验楼B302');
+    });
+
+    test('该段安排没填教室：给空串，不拿这门课别的时段的教室兜底', () {
+      final Map<String, dynamic> schedule = scheduleAt(
+        <Course>[
+          courseWith(<TimePlace>[
+            place(day: 1, startSession: 1, room: '教一101'),
+            place(day: 3, startSession: 3, room: '  '), // 周三没填
+          ]),
+        ],
+        DateTime(2026, 10, 14, 9, 0),
+      );
+
+      final Map<String, dynamic> first =
+          (schedule['todaySessions'] as List).first as Map<String, dynamic>;
+      expect(first['room'], '');
+      expect((schedule['nextSession'] as Map)['room'], '');
     });
   });
 

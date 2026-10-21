@@ -81,9 +81,11 @@ class TodayWidgetProvider : BaseWidgetProvider() {
                 views.setInt(R.id.next_color_bar, "setBackgroundColor", course.color)
                 views.setTextViewText(R.id.next_section, next.sectionText)
 
-                if (course.room.isNotEmpty()) {
+                // 教室取 next.room（这一段课的教室，v3）。**不回退**到课程级教室：
+                // 同一门课换了时段可能换教室，回退就是显示错教室。
+                if (next.room.isNotEmpty()) {
                     views.setViewVisibility(R.id.next_room, View.VISIBLE)
-                    views.setTextViewText(R.id.next_room, course.room)
+                    views.setTextViewText(R.id.next_room, next.room)
                 } else {
                     views.setViewVisibility(R.id.next_room, View.GONE)
                 }

@@ -551,6 +551,9 @@ class _TimetableViewState extends State<TimetableView> {
 
     final Widget grid = TimetableGrid(
       grid: TimetableLogic.buildGrid(courses, week),
+      // 教室必须按"哪一天、第几节"取：同一门课换教室时，
+      // 按课程取第一处教室会显示错（与小组件同一份逻辑）。
+      placeGrid: TimetableLogic.buildPlaceGrid(courses, week),
       // Phase 4.4：优先用插件同步下来的**真实作息**；没有插件提供时
       // 回退到内置默认值（各校作息不同，硬编码只是最后兜底）。
       sectionTimes: _sectionTimes?.times ?? kDefaultSectionTimes,

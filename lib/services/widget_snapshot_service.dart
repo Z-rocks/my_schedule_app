@@ -14,6 +14,7 @@ import '../models/course.dart';
 import '../models/exam.dart';
 import '../models/homework.dart';
 import '../models/semester_config.dart';
+import '../models/time_place.dart';
 import '../services/section_time_service.dart';
 import '../services/timetable_logic.dart';
 
@@ -22,8 +23,12 @@ import '../services/timetable_logic.dart';
 ///
 /// v2（2026-10-17）：新增 `schedule.nextSession`（当前/下一节课）。
 /// 卡片从"今天全部课程"改成"下一节课 + 今日课程列表"，两处都依赖它。
+///
+/// v3（2026-10-21）：教室从"每门课一个"改成"每一段课一个"。
+/// `courseTable[].room` 删除，改由 `todaySessions[].room` / `nextSession.room`
+/// 承载——同一门课在不同星期 / 不同节次可能换教室，按课程存必然张冠李戴。
 /// **两端必须同改**：`WidgetSnapshotContract.VERSION`（Kotlin）。
-const int kWidgetSnapshotVersion = 2;
+const int kWidgetSnapshotVersion = 3;
 
 /// 作业卡片最多带几条（RemoteViews 静态渲染的舒适上限，拆解文档 D5）。
 const int kWidgetHomeworkItems = 5;
@@ -152,8 +157,13 @@ class WidgetSnapshotService {
     required DateTime now,
   }) {
     final List<List<Course?>> grid = TimetableLogic.buildGrid(courses, week);
+    // 与 grid 同形的时间地点网格：教室必须按"哪一天、第几节"取，
+    // 不能按课程取（v3 修正）。两套网格的填充规则完全一致（都是先到先得），
+    // 因此 `placeGrid[day][session]` 一定是 `grid[day][session]` 那门课的安排。
+    final List<List<TimePlace?>> placeGrid = _buildPlaceGrid(courses, week);
 
     // 课程索引表：按 grid 出现顺序编号，weekGrid 只存索引，避免重复存课程名。
+    // 教室不在这里——它是"这一段课"的属性，跟着 todaySessions 走。
     final Map<String, int> courseIndex = <String, int>{};
     final List<Map<String, dynamic>> courseTable = <Map<String, dynamic>>[];
     int indexOfCourse(Course c) {
@@ -161,7 +171,6 @@ class WidgetSnapshotService {
         final int index = courseTable.length;
         courseTable.add(<String, dynamic>{
           'name': _truncate(c.displayName, kWidgetNameMaxChars),
-          'room': _roomOf(c),
           'color': _colorOf(c, colors),
         });
         return index;
@@ -193,13 +202,14 @@ class WidgetSnapshotService {
     for (int session = 1; session <= kMaxSessions; session++) {
       final Course? course = grid[today][session];
       if (course == null) continue;
-      final int length = _mergedLength(grid, today, session);
+      final int length = _mergedLength(grid, placeGrid, today, session);
       final int index = indexOfCourse(course);
       todaySessions.add(<String, dynamic>{
         'courseIdx': index,
         'session': session,
         'length': length,
         'sectionText': _sectionText(session, length, sectionTimes),
+        'room': _roomOfPlace(placeGrid[today][session]),
       });
       spans.add(_spanOf(session, length, sectionTimes));
       session += length - 1; // 跳过已合并的格子
@@ -271,6 +281,9 @@ class WidgetSnapshotService {
     return <String, dynamic>{
       'courseIdx': session['courseIdx'],
       'sectionText': session['sectionText'],
+      // 教室跟着"这一段课"走，不是跟着课程走（v3）：下一节课在别的教室时，
+      // 卡片不能拿这门课别的时段的教室顶上。
+      'room': session['room'] ?? '',
       'state': state,
       'label': label,
     };
@@ -314,16 +327,24 @@ class WidgetSnapshotService {
     return '$h:$m';
   }
 
-  /// 当天列里从 [session] 开始、同一门课连续占用的节数（至少 1）。
+  /// 当天列里从 [session] 开始、同一门课**同一段安排**连续占用的节数（至少 1）。
+  ///
+  /// 除了比课程实例，还要比 [TimePlace] 实例：同一门课同一天可能拆成两段
+  /// （如 3-4 节在 A 楼、5-6 节在 B 楼），按课程合并会把两段并成一段，
+  /// 节次和教室都会错。`buildGrid` 对每段安排填的是同一个 [Course] 实例，
+  /// 所以只能靠 [placeGrid] 区分。
   static int _mergedLength(
     List<List<Course?>> grid,
+    List<List<TimePlace?>> placeGrid,
     int day,
     int session,
   ) {
     final Course course = grid[day][session]!;
+    final TimePlace? place = placeGrid[day][session];
     int length = 1;
     while (session + length <= kMaxSessions &&
-        identical(grid[day][session + length], course)) {
+        identical(grid[day][session + length], course) &&
+        identical(placeGrid[day][session + length], place)) {
       length++;
     }
     return length;
@@ -348,14 +369,25 @@ class WidgetSnapshotService {
     return '$range $startTime-$endTime';
   }
 
-  /// 课程的展示教室：取第一个有教室的地点（显示层只需要"在哪上"）。
-  static String _roomOf(Course course) {
-    for (final dynamic tp in course.displayTimePlaces) {
-      final String room = (tp as dynamic).room as String;
-      if (room.trim().isNotEmpty) return room;
-    }
-    return '';
-  }
+  /// "本周每格对应哪一段安排"的网格，直接复用 [TimetableLogic.buildPlaceGrid]。
+  ///
+  /// 不在这里自己再写一份：两份实现一旦有一处规则漂移（比如某天忘了过滤
+  /// 单双周），教室就会和课程对不上——那正是 v3 要修的 bug。
+  static List<List<TimePlace?>> _buildPlaceGrid(
+    List<Course> courses,
+    int week,
+  ) =>
+      TimetableLogic.buildPlaceGrid(courses, week);
+
+  /// 某一段安排的展示教室；没有安排或没填教室时返回空串。
+  ///
+  /// 用 [TimePlace.displayRoom] 而不是裸 `room`：`room` 常是
+  /// `"曹妃甸校区 HE-405"` 这种"校区 + 教室"拼接，课表卡片只显示教室部分，
+  /// 小组件也必须一致——否则同一节课在两处显示的教室不一样。
+  ///
+  /// **不要**退回到"这门课别的时段的教室"：那正是旧实现的错——
+  /// 用户看到的教室必须就是这节课的教室，没有就不显示。
+  static String _roomOfPlace(TimePlace? place) => place?.displayRoom ?? '';
 
   // ——————————————————————— 作业 ———————————————————————
 

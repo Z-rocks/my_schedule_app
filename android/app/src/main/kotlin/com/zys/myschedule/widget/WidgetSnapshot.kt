@@ -45,7 +45,6 @@ data class ScheduleSnapshot(
 
 data class WidgetCourse(
     val name: String,
-    val room: String,
     /** ARGB 整数（Dart 侧已算好，含用户自定义色 / 哈希兜底色）。 */
     val color: Int,
 )
@@ -56,6 +55,12 @@ data class TodaySession(
     val length: Int,
     /** 例："3-4节 10:25-11:10"（插件没给作息时只有 "3-4节"）。 */
     val sectionText: String,
+    /**
+     * 这一段课的教室（v3）。**按"哪一天、第几节"取值**，不是按课程取——
+     * 同一门课换了时段可能换教室，拿课程级的教室必然显示错。
+     * 该段安排没填教室时为空串（渲染时隐藏教室行）。
+     */
+    val room: String = "",
 )
 
 /**
@@ -71,6 +76,8 @@ data class NextSession(
     val sectionText: String,
     val state: String,
     val label: String,
+    /** 这一节课的教室（v3，来自对应 [TodaySession]）。 */
+    val room: String = "",
 )
 
 data class HomeworkSnapshot(
@@ -164,7 +171,6 @@ object WidgetSnapshotParser {
                 table.add(
                     WidgetCourse(
                         name = c.optString("name", EMPTY_COURSE),
-                        room = c.optString("room", ""),
                         color = c.optInt("color", 0xFFB0BEC5.toInt()),
                     )
                 )
@@ -197,6 +203,7 @@ object WidgetSnapshotParser {
                         session = s.optInt("session", 1),
                         length = s.optInt("length", 1),
                         sectionText = s.optString("sectionText", ""),
+                        room = s.optString("room", ""),
                     )
                 )
             }
@@ -223,6 +230,7 @@ object WidgetSnapshotParser {
             sectionText = obj.optString("sectionText", ""),
             state = obj.optString("state", "unknown"),
             label = obj.optString("label", ""),
+            room = obj.optString("room", ""),
         )
     }
 

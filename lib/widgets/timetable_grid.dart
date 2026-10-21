@@ -50,6 +50,13 @@ class TimetableGrid extends StatelessWidget {
   /// 课程网格，`grid[day][session] = Course?`。
   final List<List<Course?>> grid;
 
+  /// 与 [grid] 同形的"每格对应哪一段安排"网格
+  /// （`TimetableLogic.buildPlaceGrid` 产出）。
+  ///
+  /// 教室 / 校区只能按段取：同一门课在不同星期、或同一天拆成两段时
+  /// 可能换教室，按课程取第一处教室必然张冠李戴。
+  final List<List<TimePlace?>> placeGrid;
+
   /// 节次 → 时间文本，如 `{1: "08:30-09:15"}`。
   final Map<int, String> sectionTimes;
 
@@ -74,6 +81,7 @@ class TimetableGrid extends StatelessWidget {
   const TimetableGrid({
     super.key,
     required this.grid,
+    required this.placeGrid,
     required this.sectionTimes,
     required this.currentWeek,
     this.weekStartDate,
@@ -335,22 +343,34 @@ class TimetableGrid extends StatelessWidget {
   ///
   /// `buildGrid` 会把同一门课的实例填进跨节涉及的每一格，因此
   /// "上一格不是同一实例"就是块的起点；再向下数连续的同实例格数得到节数。
-  /// 用 `identical` 而非 `==`：同一门课的不同实例不该被合并。
+  ///
+  /// **要同时比 [Course] 与 [TimePlace] 实例**：同一门课同一天可能拆成两段
+  /// （3-4 节在 A 楼、5-6 节在 B 楼），`buildGrid` 给这两段填的是同一个
+  /// [Course] 实例，只比课程会把它们并成"3-6节"一块——节次和教室双错。
   List<_PlacedCourse> _collectPlacements(int dayCount) {
     final List<_PlacedCourse> result = <_PlacedCourse>[];
     for (int day = 1; day <= dayCount; day++) {
       if (day >= grid.length) break;
       final List<Course?> column = grid[day];
+      final List<TimePlace?> placeColumn =
+          day < placeGrid.length ? placeGrid[day] : const <TimePlace?>[];
       for (int session = 1; session <= kMaxSessions; session++) {
         if (session >= column.length) break;
         final Course? course = column[session];
         if (course == null) continue;
+        final TimePlace? place =
+            session < placeColumn.length ? placeColumn[session] : null;
+        bool sameBlockAt(int index) =>
+            index < column.length &&
+            identical(column[index], course) &&
+            (index < placeColumn.length
+                ? identical(placeColumn[index], place)
+                : place == null);
         // 只处理块顶部
-        if (session > 1 && identical(column[session - 1], course)) continue;
+        if (session > 1 && sameBlockAt(session - 1)) continue;
 
         int length = 1;
-        while (session + length < column.length &&
-            identical(column[session + length], course)) {
+        while (session + length < column.length && sameBlockAt(session + length)) {
           length++;
         }
         result.add(_PlacedCourse(
@@ -358,22 +378,11 @@ class TimetableGrid extends StatelessWidget {
           day: day,
           startSession: session,
           length: length,
-          timePlace: _timePlaceFor(course, day, session),
+          timePlace: place,
         ));
       }
     }
     return result;
-  }
-
-  /// 找出该课程在 (day, startSession) 对应的 [TimePlace]，用于取教室 / 校区。
-  ///
-  /// 网格里只有 [Course]，没有 [TimePlace]，而卡片要显示教室，
-  /// 所以按"星期 + 起始节次"回查；查不到返回 `null`（卡片只显示课程名）。
-  TimePlace? _timePlaceFor(Course course, int day, int session) {
-    for (final TimePlace tp in course.displayTimePlaces) {
-      if (tp.day == day && tp.startSession == session) return tp;
-    }
-    return null;
   }
 
   /// 课程卡片颜色。
@@ -407,27 +416,9 @@ String _endOfTimeRange(String time) {
   return dash < 0 ? '' : time.substring(dash + 1);
 }
 
-/// 把 `TimePlace.room`（如 `"曹妃甸校区 HE-405"`）拆成"校区 + 教室"。
-///
-/// 模型层目前只有 `room` 一个字段，而它常常是"校区 + 教室"拼在一起
-/// （如 `"曹妃甸校区 HE-405"`），所以按**首个空白**拆分：
-/// 第一段是校区，其余是教室；没有空白时整串都算教室、校区为空。
-///
-/// 卡片只用 `.room`（Phase 2.2b.4 起不再显示校区）；`.campus` 目前没有调用方，
-/// 保留它是为了详情弹层将来能分开展示，以及 Phase 4 给 `TimePlace` 加
-/// 独立的 `campus` 字段时可以直接替换（届时按 CONTEXT 4.2.1 写迁移）。
-({String campus, String room}) splitCampusAndRoom(String raw) {
-  final String text = raw.trim();
-  if (text.isEmpty) return (campus: '', room: '');
-
-  final int space = text.indexOf(RegExp(r'\s'));
-  if (space < 0) return (campus: '', room: text);
-
-  final String campus = text.substring(0, space).trim();
-  final String room = text.substring(space).trim();
-  if (room.isEmpty) return (campus: '', room: campus);
-  return (campus: campus, room: room);
-}
+// `splitCampusAndRoom` 已下沉到模型层（`models/time_place.dart`），
+// 小组件快照要复用同一套"校区 + 教室"拆分规则。本文件通过上面的
+// `import '../models/time_place.dart'` 直接使用，不再重复定义。
 
 /// 单个课程卡片：课程名 + 教室。
 ///

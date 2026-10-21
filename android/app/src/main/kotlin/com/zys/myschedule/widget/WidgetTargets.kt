@@ -8,7 +8,12 @@ package com.zys.myschedule.widget
  * 不认识的版本按空态处理（"请打开 App 更新"），不会崩。
  */
 object WidgetSnapshotContract {
-    const val VERSION = 2
+    /**
+     * v3（2026-10-21）：教室从 `courseTable[].room`（每门课一个）移到
+     * `todaySessions[].room` / `nextSession.room`（每一段课一个）。
+     * 同一门课在不同星期 / 不同节次换教室时，旧 schema 只能张冠李戴。
+     */
+    const val VERSION = 3
 
     /** MethodChannel 名（Dart 侧 `widgetChannel` 必须一致）。 */
     const val CHANNEL_WIDGET = "com.zys.myschedule/widget"

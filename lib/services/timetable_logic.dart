@@ -181,6 +181,43 @@ class TimetableLogic {
     return column[session];
   }
 
+  /// 构建"每一格对应哪一段安排"的网格：`placeGrid[day][session] = TimePlace?`。
+  ///
+  /// 形状与填充规则和 [buildGrid] **逐条一致**（同样的单双周过滤、同样的
+  /// 跨节填充、同样的"先到先得不覆盖"），因此
+  /// `placeGrid[day][session]` 一定是 `buildGrid(courses, week)[day][session]`
+  /// 那门课对应的安排。
+  ///
+  /// 为什么需要它：`buildGrid` 只返回 [Course]，把"教室 / 起止节次"这些
+  /// **属于某一段安排**的信息丢了。课表卡片和小组件都要按"哪一天、第几节"
+  /// 取教室——按课程取第一个教室，遇到同一门课换教室就必然显示错。
+  static List<List<TimePlace?>> buildPlaceGrid(
+    List<Course> courses,
+    int week,
+  ) {
+    final List<List<TimePlace?>> grid = List<List<TimePlace?>>.generate(
+      kDaysPerWeek + 1,
+      (int _) => List<TimePlace?>.filled(kMaxSessions + 1, null),
+    );
+
+    for (final Course course in courses) {
+      if (course.isHidden) continue;
+
+      for (final TimePlace tp in course.displayTimePlaces) {
+        if (tp.day < 1 || tp.day > kDaysPerWeek) continue;
+        if (!hasClassInWeek(tp, week)) continue;
+
+        for (int offset = 0; offset < tp.length; offset++) {
+          final int session = tp.startSession + offset;
+          if (session < 1 || session > kMaxSessions) continue;
+          grid[tp.day][session] ??= tp; // 与 buildGrid 同为"先到先得"
+        }
+      }
+    }
+
+    return grid;
+  }
+
   /// 网格中本周有课的格子数量（用于判断"课表是否为空"）。
   static int filledCellCount(List<List<Course?>> grid) {
     int count = 0;

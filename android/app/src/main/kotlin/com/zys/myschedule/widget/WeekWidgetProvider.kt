@@ -79,9 +79,10 @@ class WeekWidgetProvider : BaseWidgetProvider() {
                 row.setTextViewText(R.id.row_name, course.name)
                 row.setInt(R.id.row_color_bar, "setBackgroundColor", course.color)
                 row.setTextViewText(R.id.row_section, session.sectionText)
-                if (course.room.isNotEmpty()) {
+                // 教室取 session.room（这一段课的教室，v3）；没有就隐藏，不回退。
+                if (session.room.isNotEmpty()) {
                     row.setViewVisibility(R.id.row_room, View.VISIBLE)
-                    row.setTextViewText(R.id.row_room, course.room)
+                    row.setTextViewText(R.id.row_room, session.room)
                 } else {
                     row.setViewVisibility(R.id.row_room, View.GONE)
                 }

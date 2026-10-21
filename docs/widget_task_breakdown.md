@@ -682,6 +682,28 @@ for (id in appWidgetIds) {
 > ⚠️ 升级后旧 v1 快照会被判版本不匹配 → 四张卡在 App 首次 `onResume` 推送前显示
 > 「打开 App 刷新一下」。预期行为。
 
+### 6.4.3b 快照 v3：教室按"这一段课"存
+
+**症状**：小组件显示的教室不是实际上课教室。
+
+**根因**：v2 把教室挂在课程上（`courseTable[].room`），取的是
+`displayTimePlaces` 里**第一个非空 room**。一门课只要有多个 `TimePlace`
+（不同星期、单双周不同教室、同一天拆两段），小组件就必然张冠李戴。
+课表页面没这个 bug——它是按 `day + startSession` 回查 `TimePlace` 的
+（`timetable_grid.dart` 的 `_timePlaceFor`）。
+
+**改法**：
+- `courseTable[]` 只留 `{name, color}`，**删除 `room`**；
+- `todaySessions[]` 与 `nextSession` 各带 `room`，值来自
+  `placeGrid[day][session].room`（`WidgetSnapshotService._buildPlaceGrid`，
+  与 `TimetableLogic.buildGrid` 同规则填充）；
+- 该段安排没填教室 → 空串 → Kotlin 隐藏教室行，**不回退**到课程级教室
+  （回退等于继续显示错教室）；
+- 顺带修正合并：`_mergedLength` 除了比课程实例，还要比 `TimePlace` 实例，
+  否则同一天两段不同教室会被并成一段（节次和教室都错）。
+
+版本号两端同改：`kWidgetSnapshotVersion`（Dart）= `WidgetSnapshotContract.VERSION`（Kotlin）= 3。
+
 ### 6.4.4 删除的死代码
 
 `widget_today_row.xml`、`widget_week_cell.xml`、`widget_week_column.xml`、
