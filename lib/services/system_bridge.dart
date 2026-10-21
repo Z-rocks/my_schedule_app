@@ -3,7 +3,10 @@
 // Kotlin 侧 [SystemSettingsBridge] 提供三个方法：manufacturer（厂商名，
 // 用于给用户展示对应的操作路径）、openAppDetails（应用信息页）、
 // openBatterySettings（电池优化列表页）。这里做一层封装：
-// - 非 Android 平台（iOS/桌面）所有方法直接返回不可用，不抛异常；
+// - Android 专属能力（厂商名 / 应用详情 / 电池优化 / 主 ABI）在其它平台
+//   直接返回不可用，不空打通道；
+// - 跨平台能力（openUrl / appVersion）iOS 也有实现（`AppDelegate.swift`
+//   的 SystemChannelHandler），用于"前往下载 / 检查更新"与版本号显示；
 // - 通道异常（老版本 APK 覆盖安装等）一律兜底为 false/空串。
 import 'dart:io';
 
@@ -18,12 +21,19 @@ class SystemBridge {
     'com.zys.myschedule/system',
   );
 
-  /// 是否支持（仅 Android 真机有效）。
-  static bool get supported => !kIsWeb && Platform.isAndroid;
+  /// 是否有系统桥实现（Android / iOS）。
+  static bool get supported =>
+      !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
-  /// 设备厂商（小写，如 `xiaomi`）。取不到返回空串。
+  /// 是否支持 Android 专属的系统设置跳转（厂商名 / 应用详情 / 电池优化）。
+  ///
+  /// iOS 没有这些页面，相关入口在 UI 上已经隐藏。
+  static bool get isAndroidSettingsSupported =>
+      !kIsWeb && Platform.isAndroid;
+
+  /// 设备厂商（小写，如 `xiaomi`）。取不到返回空串。仅 Android。
   static Future<String> manufacturer() async {
-    if (!supported) return '';
+    if (!isAndroidSettingsSupported) return '';
     try {
       final String? value = await _channel.invokeMethod<String>(
         'manufacturer',
@@ -51,7 +61,7 @@ class SystemBridge {
 
   /// 用系统浏览器打开 http / https 链接（"检查更新 → 前往下载"用）。
   ///
-  /// 非 Android 平台 / 链接非法 / 通道不可用一律返回 `false`，
+  /// Android / iOS 都支持；链接非法 / 通道不可用返回 `false`，
   /// 由调用方决定降级（例如复制链接到剪贴板）。
   static Future<bool> openUrl(String url) async {
     if (!supported || url.trim().isEmpty) return false;
@@ -68,13 +78,14 @@ class SystemBridge {
     }
   }
 
-  /// 本应用版本号，形如 `0.2.0+2`（versionName + versionCode）。
+  /// 本应用版本号，形如 `0.2.0+2`（Android：versionName + versionCode；
+  /// iOS：CFBundleShortVersionString + CFBundleVersion）。
   ///
-  /// **Android 上是版本号的唯一真相**：值来自系统包信息，而系统的
-  /// versionName 由 Flutter 构建时按 `pubspec.yaml` 的 `version` 写入，
+  /// **是版本号的唯一真相**：值来自系统包信息，而系统的版本号由 Flutter
+  /// 构建时按 `pubspec.yaml` 的 `version` 写入，
   /// 所以 Dart 侧不需要（也不应该）再维护一份常量。
   ///
-  /// 非 Android 平台 / 通道不可用时返回空串，由调用方兜底。
+  /// 平台不支持 / 通道不可用时返回空串，由调用方兜底。
   static Future<String> appVersion() async {
     if (!supported) return '';
     try {
@@ -92,7 +103,8 @@ class SystemBridge {
   /// 检查更新时用它挑裁剪包（`app-arm64-v8a-release.apk`），
   /// 挑不到再回落通用包。取不到返回空串，调用方必须能处理空值。
   static Future<String> primaryAbi() async {
-    if (!supported) return '';
+    // iOS 没有 ABI 概念，恒为空串（更新时取 .ipa，不需要选架构）。
+    if (!isAndroidSettingsSupported) return '';
     try {
       final String? value = await _channel.invokeMethod<String>('primaryAbi');
       return value ?? '';
@@ -104,7 +116,7 @@ class SystemBridge {
   }
 
   static Future<bool> _open(String method) async {
-    if (!supported) return false;
+    if (!isAndroidSettingsSupported) return false;
     try {
       final bool? ok = await _channel.invokeMethod<bool>(method);
       return ok ?? false;

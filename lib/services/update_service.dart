@@ -14,12 +14,34 @@
 // | tag/正文/预发布 | tag_name / body / prerelease | 同 |
 // | 页面地址 | html_url | **没有**，用 repoWebUrl + /releases/tag/<tag> 拼 |
 // | 附件 | assets[].browser_download_url | 同（无附件时会自动带源码 zip/tar） |
+//
+// ## 按平台取包（2026-10）
+// 同一个 Release 里会同时挂 Android 的四个 APK 和 iOS 的 ipa。检查更新时按
+// 当前平台只取自己那一种（[PackageKind]）：Android 取 ABI 对应的 APK，
+// iOS 取 `.ipa`。iOS 这次没有 ipa（还没在 Mac 上打包）时，[UpdateCheckResult.apkUrl]
+// 为空，UI 会退回 Release 页面并提示走 TestFlight。
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import 'system_bridge.dart';
+
+/// 安装包类型：Android = apk，iOS = ipa。
+enum PackageKind {
+  apk,
+  ipa;
+
+  /// 本机该拿哪种包。
+  static PackageKind get current {
+    if (!kIsWeb && Platform.isIOS) return PackageKind.ipa;
+    return PackageKind.apk;
+  }
+
+  /// 文件后缀（含点）。
+  String get extension => '.$name';
+}
 
 /// 版本分发源。顺序即尝试顺序。
 enum UpdateSource {
@@ -152,7 +174,10 @@ class UpdateCheckResult {
   /// Release 页面地址（兜底下载入口）。
   final String releaseUrl;
 
-  /// Release 里第一个 `.apk` 资产地址；没有则为空串。
+  /// Release 里属于**本平台**的安装包地址（Android = `.apk`，iOS = `.ipa`）；
+  /// 没有则为空串（UI 退回 [releaseUrl]）。
+  ///
+  /// 名字沿用 `apkUrl` 是为了不动历史调用点；语义已扩展为"本平台安装包"。
   final String apkUrl;
 
   /// 这次结果来自哪个源（[UpdateSource.label]），UI 用来告诉用户"从哪下的"。
@@ -189,10 +214,12 @@ class ReleaseInfo {
   ///
   /// [abi] 是设备主 ABI（`arm64-v8a` 等），用来挑对应架构的裁剪包；
   /// 空串表示不知道，按通用包优先处理。
+  /// [kind] 决定取哪种安装包（Android = apk，iOS = ipa）。
   static ReleaseInfo? fromJson(
     Map<String, dynamic> json,
     UpdateSource source, {
     String abi = '',
+    PackageKind kind = PackageKind.apk,
   }) {
     final String tag = (json['tag_name'] as String? ?? '').trim();
     if (tag.isEmpty) return null;
@@ -203,7 +230,7 @@ class ReleaseInfo {
       changelog: (json['body'] as String? ?? '').trim(),
       releaseUrl:
           htmlUrl.isNotEmpty ? htmlUrl : source.releasePageUrl(tag),
-      apkUrl: selectApkUrl(json['assets'], abi),
+      apkUrl: selectPackageUrl(json['assets'], abi: abi, kind: kind),
       prerelease: json['prerelease'] == true,
     );
   }
@@ -232,10 +259,14 @@ class UpdateService {
   /// [abi] 是设备主 ABI，用来挑裁剪包。不传则向平台询问（Android 返回
   /// `arm64-v8a` 等，其它平台空串 → 走通用包）。测试可显式传值，
   /// 传空串表示"当作不知道 ABI"。
+  ///
+  /// [kind] 是要取的安装包类型；不传则按当前平台判断
+  /// （iOS → `.ipa`，其余 → `.apk`）。测试可显式传值模拟另一端。
   static Future<UpdateCheckResult> check({
     required String currentVersion,
     Dio? dio,
     String? abi,
+    PackageKind? kind,
     List<UpdateSource> sources = const <UpdateSource>[
       UpdateSource.gitee,
       UpdateSource.github,
@@ -243,9 +274,11 @@ class UpdateService {
   }) async {
     final Dio client = dio ?? _defaultClient();
     final String deviceAbi = abi ?? await SystemBridge.primaryAbi();
+    final PackageKind packageKind = kind ?? PackageKind.current;
     // 排查用：用户反馈"还是下了通用包"时，先看这行 ABI 是不是空
     // （空 = 通道没通 / 非 Android），再看选包结果。
-    debugPrint('[UpdateService] 设备 ABI=${deviceAbi.isEmpty ? '(未知)' : deviceAbi}');
+    debugPrint('[UpdateService] 设备 ABI=${deviceAbi.isEmpty ? '(未知)' : deviceAbi}'
+        '，取包类型=${packageKind.name}');
     final List<String> errors = <String>[];
 
     for (final UpdateSource source in sources) {
@@ -254,6 +287,7 @@ class UpdateService {
         source,
         currentVersion,
         deviceAbi,
+        packageKind,
       );
       final UpdateCheckResult? result = attempt.result;
       if (result != null) return result;
@@ -290,6 +324,7 @@ class UpdateService {
     UpdateSource source,
     String currentVersion,
     String abi,
+    PackageKind kind,
   ) async {
     try {
       final Response<dynamic> response = await client.get<dynamic>(source.apiUrl);
@@ -302,7 +337,12 @@ class UpdateService {
         return _Attempt.fail('返回的数据无法识别');
       }
 
-      final ReleaseInfo? info = ReleaseInfo.fromJson(json, source, abi: abi);
+      final ReleaseInfo? info = ReleaseInfo.fromJson(
+        json,
+        source,
+        abi: abi,
+        kind: kind,
+      );
       if (info == null) {
         return _Attempt.fail('Release 缺少版本号（tag_name）');
       }
@@ -390,6 +430,36 @@ const String kUniversalApkName = 'app-release.apk';
 /// 和通用包的 `N` 混装会撞降级，见 [kUniversalApkName] 上方的说明）。
 String apkNameForAbi(String abi) =>
     'app-${abi.trim().toLowerCase()}-release.apk';
+
+/// 从 `assets` 数组里挑**本平台**的安装包地址。
+///
+/// - `kind == PackageKind.ipa`：取第一个 `.ipa`（iOS 的包不分架构，
+///   `flutter build ipa` 出来就是一个通用包）；没有则空串。
+/// - `kind == PackageKind.apk`：见 [selectApkUrl]。
+@visibleForTesting
+String selectPackageUrl(
+  Object? assets, {
+  String abi = '',
+  PackageKind kind = PackageKind.apk,
+}) {
+  if (kind == PackageKind.ipa) return selectIpaUrl(assets);
+  return selectApkUrl(assets, abi);
+}
+
+/// 从 `assets` 里挑 `.ipa` 地址（iOS）。没有则空串。
+@visibleForTesting
+String selectIpaUrl(Object? assets) {
+  if (assets is! List) return '';
+  for (final Object? asset in assets) {
+    if (asset is! Map) continue;
+    final String name = (asset['name']?.toString() ?? '').toLowerCase();
+    if (!name.endsWith('.ipa')) continue;
+    final String url =
+        (asset['browser_download_url']?.toString() ?? '').trim();
+    if (url.isNotEmpty) return url;
+  }
+  return '';
+}
 
 /// 从 `assets` 数组里挑一个 APK 的下载地址。
 ///

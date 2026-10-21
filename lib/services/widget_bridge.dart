@@ -13,7 +13,9 @@
 // 绝不影响 App 主流程（见 [WidgetRefreshController]，所有调用点包 try/catch）。
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -25,6 +27,12 @@ import '../providers/semester_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/section_time_service.dart';
 import '../services/widget_snapshot_service.dart';
+
+/// 当前平台是否有小组件实现（**仅 Android**）。
+///
+/// iOS 发行版刻意不做小组件：Dart 侧所有小组件调用（快照刷新、点击跳转、
+/// 添加引导）都应先判这个值，避免在没有原生实现的平台上空打通道。
+bool get isWidgetPlatformSupported => !kIsWeb && Platform.isAndroid;
 
 /// Dart → Kotlin：写快照 + 触发小组件刷新。
 const MethodChannel widgetChannel = MethodChannel('com.zys.myschedule/widget');
@@ -200,7 +208,10 @@ class WidgetNav {
   ///
   /// 同时处理冷启动竞态：widget 拉起 App 时 Dart 引擎还没起来，
   /// MainActivity 会把 extra 暂存，等这里主动来取（`takeInitialTarget`）。
+  ///
+  /// 不支持小组件的平台（iOS / 桌面）不注册、不取初始目标。
   static Future<void> init() async {
+    if (!isWidgetPlatformSupported) return;
     if (_initialized) return;
     _initialized = true;
     widgetNavChannel.setMethodCallHandler(
@@ -269,7 +280,10 @@ class WidgetRefreshController with WidgetsBindingObserver {
   bool _started = false;
 
   /// 开始监听。重复调用安全（幂等）。
+  ///
+  /// 不支持小组件的平台（iOS / 桌面）直接不启动，省掉无意义的通道调用。
   void start() {
+    if (!isWidgetPlatformSupported) return;
     if (_started) return;
     _started = true;
     WidgetsBinding.instance.addObserver(this);

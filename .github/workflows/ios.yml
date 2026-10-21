@@ -1,0 +1,138 @@
+# 在 GitHub 的 macOS 机器上打 iOS 包（本机是 Windows，出不了 ipa）。
+#
+# 产物是**未签名 ipa**：Windows 上用 Sideloadly / AltStore 配免费 Apple ID 自签安装
+# （7 天有效，需每周重签）；有 688 元/年的开发者账号则配下面的 secrets 出正式签名包，
+# 走 TestFlight 分发。详细说明见 docs/iOS.md 第 6 节。
+#
+# 为什么不用 `flutter build ipa`：它必须签名（要证书 + 描述文件）。
+# 未签名包的标准做法就是 `flutter build ios --no-codesign` + 手动打 Payload 目录。
+name: iOS Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      signed:
+        description: '出正式签名包（需先配好证书 secrets）'
+        type: boolean
+        default: false
+  push:
+    branches:
+      - main
+    # 只在这些路径变动时自动构建：Dart 代码、iOS 工程、依赖、工作流本身。
+    # 纯文档/工具脚本的提交不浪费 macOS 构建时间。
+    paths:
+      - 'ios/**'
+      - 'lib/**'
+      - 'pubspec.yaml'
+      - '.github/workflows/ios.yml'
+
+jobs:
+  build-unsigned:
+    name: 未签名 ipa
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.signed || github.event_name == 'push' }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+
+      - name: 依赖
+        run: flutter pub get
+
+      - name: 编译（不签名）
+        run: flutter build ios --release --no-codesign
+
+      - name: 打包成 ipa
+        run: |
+          set -euo pipefail
+          APP=build/ios/iphoneos/Runner.app
+          OUT=build/ios/ipa
+          rm -rf "$OUT"
+          mkdir -p "$OUT/Payload"
+          cp -R "$APP" "$OUT/Payload/"
+          cd "$OUT"
+          zip -qry my_schedule_app-unsigned.ipa Payload
+          ls -lh my_schedule_app-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned-ipa
+          path: build/ios/ipa/my_schedule_app-unsigned.ipa
+          if-no-files-found: error
+
+  build-signed:
+    name: 签名 ipa（TestFlight 用）
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.signed }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+
+      # 证书 secrets（在仓库 Settings → Secrets 里配）：
+      #   BUILD_CERTIFICATE_BASE64  —— .p12 的 base64
+      #   P12_PASSWORD              —— .p12 密码
+      #   PROVISIONING_PROFILE_BASE64 —— .mobileprovision 的 base64
+      #   KEYCHAIN_PASSWORD         —— 临时 keychain 密码（随便设）
+      #   APPLE_TEAM_ID             —— 开发者账号 Team ID
+      - name: 导入证书与描述文件
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          CERT=$RUNNER_TEMP/cert.p12
+          PROFILE=$RUNNER_TEMP/profile.mobileprovision
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode > "$CERT"
+          echo -n "$PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE"
+
+          KEYCHAIN=$RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychain -d user -s "$KEYCHAIN"
+
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp "$PROFILE" ~/Library/MobileDevice/Provisioning\ Profiles/
+
+      - name: 依赖
+        run: flutter pub get
+
+      - name: 打签名 ipa
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          # ExportOptions 里要写死 Team ID，所以在这里按 secret 生成，
+          # 不把团队信息提交进仓库。
+          cat > ios/ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>uploadSymbols</key><true/>
+            <key>signingStyle</key><string>manual</string>
+          </dict>
+          </plist>
+          PLIST
+          flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-signed-ipa
+          path: build/ios/ipa/*.ipa
+          if-no-files-found: error
