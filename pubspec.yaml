@@ -20,9 +20,8 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # split-per-abi 包（Flutter 会给分架构包加 abiCode*1000），统一 versionCode
 # 方案必须严格大于它们，否则老用户覆盖安装会 INSTALL_FAILED_VERSION_DOWNGRADE。
 # 之后每版 +1 即可（3001、3002……），**不要**再用 --split-per-abi。
-# 0.4.0+3002：iOS 发行版（首个 iOS 包）+ 检查更新按平台取包
-#             + 小组件 / 课表教室按段取（v0.4.0 未发过，3001 只是分支内编号）。
-version: 0.4.0+3002
+# 0.4.1+3002：修小组件 / 课表教室显示（0.4.0 已发布，versionCode 只能往上加）。
+version: 0.4.1+3002
 
 environment:
   sdk: ^3.13.4
