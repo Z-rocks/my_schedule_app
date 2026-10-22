@@ -324,6 +324,10 @@ class AppLog {
       _logFile = File('${dir.path}${Platform.pathSeparator}app.log');
       await _loadExisting();
       await _rewriteFile();
+      // 裁剪基准时间必须在这里定下来：`_lastPrune` 初值是 epoch，
+      // 不重置的话"距上次裁剪超过 1 小时"对**每一条**日志都成立，
+      // 启动后第一次写日志就会立刻触发一次裁剪 + 整文件重写。
+      _lastPrune = DateTime.now();
 
       // 前台期间定时裁剪：App 长期挂着不重启时，靠它保证"只留近一天"。
       _pruneTimer?.cancel();
