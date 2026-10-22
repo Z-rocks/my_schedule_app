@@ -22,7 +22,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # 之后每版 +1 即可（3001、3002……），**不要**再用 --split-per-abi。
 # 0.4.1+3002：修小组件 / 课表教室显示（0.4.0 已发布，versionCode 只能往上加）。
 # 0.5.0+3003：新增大物实验插件 + 插件上下文注入学期 + "装通用包就更新通用包"。
-version: 0.5.0+3003
+version: 0.5.1+3004
 
 environment:
   sdk: ^3.13.4
