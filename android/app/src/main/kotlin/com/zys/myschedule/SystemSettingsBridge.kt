@@ -117,6 +117,44 @@ object SystemSettingsBridge {
         ""
     }
 
+    /**
+     * 当前**安装的这个 APK** 是不是通用包（一个包里塞了多个 ABI）。
+     *
+     * 检查更新默认按设备 ABI 下裁剪包（体积小一半多），但如果用户当初装的是
+     * 通用包，给他换成单架构包会带来两个副作用：
+     * 1. 他手里那份 APK 从此"只认 arm64"，转发给别人（模拟器 / 老机型）装不上；
+     * 2. 用户会怀疑"更新把我的包换了"，即使覆盖安装本身是成功的。
+     *
+     * 所以策略是"装什么就更新什么"：通用包用户继续拿通用包。
+     * （覆盖安装本身不受 ABI 影响，只要求包名 / 签名 / versionCode 兼容。）
+     *
+     * 判定方式：读本 APK 的 `lib/` 目录，出现 **≥2 个 ABI 子目录** 即通用包。
+     * 只遍历 zip 中央目录、不解压，开销是毫秒级。
+     */
+    fun installedIsUniversalApk(context: Context): Boolean = try {
+        val sourceDir = context.applicationInfo.sourceDir
+        if (sourceDir.isNullOrEmpty()) {
+            false
+        } else {
+            val abis = HashSet<String>()
+            java.util.zip.ZipFile(sourceDir).use { zip ->
+                val entries = zip.entries()
+                // 形如 `lib/arm64-v8a/libflutter.so`，只取第一级目录名
+                while (entries.hasMoreElements() && abis.size < 2) {
+                    val name = entries.nextElement().name
+                    if (!name.startsWith("lib/")) continue
+                    val rest = name.substring(4)
+                    val slash = rest.indexOf('/')
+                    if (slash > 0) abis.add(rest.substring(0, slash))
+                }
+            }
+            abis.size >= 2
+        }
+    } catch (e: Exception) {
+        // 读不到就当作"不是通用包"，Dart 侧按 ABI 挑裁剪包（原有行为）。
+        false
+    }
+
     private fun start(context: Context, intent: Intent): Boolean = try {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)

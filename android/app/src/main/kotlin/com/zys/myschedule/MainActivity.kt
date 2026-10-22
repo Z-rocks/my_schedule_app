@@ -165,6 +165,12 @@ class MainActivity : FlutterActivity() {
                     // 用它挑裁剪包，避免每次都拉 58MB 的通用包。
                     "primaryAbi" ->
                         result.success(SystemSettingsBridge.primaryAbi())
+                    // 当前装的是不是通用包：是的话更新也下通用包，
+                    // 不让用户手里的 APK 从"到处能装"变成"只认 arm64"。
+                    "installedIsUniversalApk" ->
+                        result.success(
+                            SystemSettingsBridge.installedIsUniversalApk(applicationContext),
+                        )
                     // 检查更新 → 前往下载：用系统浏览器打开 Release 页面。
                     "openUrl" -> {
                         val url = call.argument<String>("url") ?: ""

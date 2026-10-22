@@ -350,7 +350,7 @@ class _TimetableViewState extends State<TimetableView> {
             const Spacer(),
             // Phase 4.4：有可同步的插件时，课表页也能直接同步
             // （原来只能进「设置 → 插件管理 → 详情」才能点同步）。
-            if (_syncablePlugin != null)
+            if (_syncablePlugins.isNotEmpty)
               IconButton(
                 icon: _syncing
                     ? SizedBox(
@@ -381,22 +381,20 @@ class _TimetableViewState extends State<TimetableView> {
     );
   }
 
-  /// 课表页可用的同步插件（`null` = 不显示同步按钮）。
+  /// 课表页可用的同步插件（空列表 = 不显示同步按钮）。
   ///
-  /// 只在**恰好一个**候选插件时给按钮：多个插件都能同步课程时，
-  /// 课表页没有足够的空间让用户选"用哪个"，那种情况引导去插件管理页更合适。
-  PluginMeta? get _syncablePlugin {
-    final List<PluginMeta> candidates = context
-        .read<PluginProvider>()
-        .enabledPlugins
-        .where((PluginMeta p) => p.effectiveCapabilities.contains('timetable'))
-        .toList(growable: false);
-    if (candidates.length != 1) return null;
-    final PluginHandle? handle =
-        context.read<PluginProvider>().getHandle(candidates.first.id);
-    if (handle == null || !handle.isUsable) return null;
-    if (!handle.entries.contains('fetchCourses')) return null;
-    return candidates.first;
+  /// **Phase 9 起允许多个**：大物实验插件与教务插件都声明 `timetable`，
+  /// 原来"只在恰好一个候选时给按钮"的做法会让两个插件同时启用时
+  /// 同步按钮直接消失（用户会以为功能坏了）。现在多个候选时点按钮弹一个
+  /// 选择器，让用户决定同步哪一个数据源。
+  List<PluginMeta> get _syncablePlugins {
+    final PluginProvider provider = context.read<PluginProvider>();
+    return provider.enabledPlugins.where((PluginMeta p) {
+      if (!p.effectiveCapabilities.contains('timetable')) return false;
+      final PluginHandle? handle = provider.getHandle(p.id);
+      if (handle == null || !handle.isUsable) return false;
+      return handle.entries.contains('fetchCourses');
+    }).toList(growable: false);
   }
 
   /// 课表页的「同步」入口：复用 [CourseSyncService]（与插件详情页同一套逻辑）。
@@ -405,11 +403,21 @@ class _TimetableViewState extends State<TimetableView> {
   /// （课表页没有登录入口），以及结果只用 SnackBar 呈现
   /// （课表页顶部放不下结果卡片，详细信息去详情页看）。
   Future<void> _syncNow() async {
-    final PluginMeta? meta = _syncablePlugin;
-    if (meta == null || _syncing) return;
+    if (_syncing) return;
+    final List<PluginMeta> candidates = _syncablePlugins;
+    if (candidates.isEmpty) return;
+
+    final PluginMeta? meta = candidates.length == 1
+        ? candidates.first
+        : await _pickSyncPlugin(candidates);
+    // 选择器是异步的：用户可能在这期间离开课表页，之后碰 context 会报错。
+    if (meta == null || !mounted) return;
 
     final PluginProvider pluginProvider = context.read<PluginProvider>();
     final CourseProvider courseProvider = context.read<CourseProvider>();
+    // 学期配置在下面 `await CookieService.loadCookie` 之前取好，
+    // 否则会被判定为"跨 async gap 使用 BuildContext"。
+    final SemesterConfig? semester = context.read<SemesterProvider>().config;
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
 
     final String cookie = await CookieService.loadCookie(meta.id);
@@ -429,6 +437,8 @@ class _TimetableViewState extends State<TimetableView> {
         pluginId: meta.id,
         handle: pluginProvider.getHandle(meta.id),
         courses: courseProvider,
+        // 与插件详情页一致：把学期配置给插件，供"日期 → 周次"换算用。
+        semester: semester,
         // Phase 7：与插件详情页一致，把结果沉淀成站内消息。
         onReport: (SyncReport r) => unawaited(
           context.read<MessageProvider>().addMessagePersisted(
@@ -459,6 +469,54 @@ class _TimetableViewState extends State<TimetableView> {
     setState(() {});
 
     messenger.showSnackBar(SnackBar(content: Text(_reportText(report))));
+  }
+
+  /// 多个插件都能同步课表时，让用户选同步哪一个数据源。
+  ///
+  /// 返回 `null` 表示用户取消了（点遮罩 / 返回键），调用方直接收手。
+  Future<PluginMeta?> _pickSyncPlugin(List<PluginMeta> candidates) async {
+    final AppTheme theme = AppThemeExtension.of(context);
+    return showModalBottomSheet<PluginMeta>(
+      context: context,
+      backgroundColor: theme.surface,
+      builder: (BuildContext sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Padding(
+                padding: EdgeInsets.all(theme.cardPadding),
+                child: Text(
+                  '从哪个系统同步课程？',
+                  style: TextStyle(
+                    fontSize: theme.titleSize,
+                    fontWeight: theme.titleFontWeight,
+                    color: theme.onBackground,
+                  ),
+                ),
+              ),
+              for (final PluginMeta meta in candidates)
+                ListTile(
+                  leading: Icon(Icons.sync, color: theme.primary),
+                  title: Text(
+                    meta.name,
+                    style: TextStyle(color: theme.onBackground),
+                  ),
+                  subtitle: meta.description.isEmpty
+                      ? null
+                      : Text(
+                          meta.description,
+                          style: TextStyle(fontSize: theme.captionSize),
+                        ),
+                  onTap: () => Navigator.of(sheetContext).pop(meta),
+                ),
+              SizedBox(height: theme.gridGap),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   /// 把同步报告压成一句课表页能说清的文案。

@@ -2169,11 +2169,96 @@ const EmptyState({
 
 ---
 
+### `assets/plugins/ncst-phylab.js` — 大物实验插件（**Phase 9 新增**）
+
+数据源是**物理实验中心**（`http://phylab.ncst.edu.cn:8100/`，ASP.NET + EasyUI 的
+「教学信息化管理系统」），和教务系统是**两个独立站点**：教务给理论课表，
+这里给**已经约好的实验场次**。同样只允许在此文件出现该校 URL / 字段名。
+
+`__plugin` 声明：
+
+| 字段 | 值 |
+|------|-----|
+| `id` | `'ncst-phylab'` |
+| `name` | `'华北理工大学大物实验'` |
+| `capabilities` | `['timetable']` |
+| `loginUrl` | `'http://phylab.ncst.edu.cn:8100/'` |
+| `checkUrl` | `'http://phylab.ncst.edu.cn:8100/BaseInfo/Index/'` |
+| `postLoginUrl` | `''`（登录后前端自己跳到 Index，无需内核导航） |
+| 入口函数 | **只有 `fetchCourses`** |
+
+**登录不做在插件里**：该站 `ValidateLogin` 要求密码先过
+`AES-128-ECB(key='1234567891234567')` 再 base64 一次，且成功后还要调
+`GetRoleUser` 写 Session（多角色时还要选角色）。沙箱里实现这套等于把密码
+留在本地，故**统一走内核 WebView 登录页**，插件只消费 `ctx.cookie`。
+
+**`fetchCourses(args)` 流程**：
+
+1. `ctx.cookie` 为空 → `{error:'未登录：…'}`（**不发任何网络请求**）
+2. `ctx.http.post` → `/XPK/StuCourseElectiveLook/LoadTableInfo`
+   （EasyUI datagrid 数据源，参数 `page=1&rows=1000&CourseID=&weeks=&labID=&weekID=`）
+3. 解析 `{total, rows}`，**逐行转成一场实验一门 `Course`**：
+   `name=LabName` / `teacher=UserName` / `category=CourseName + '·N号座'` /
+   `timePlaces[0] = {day, weeks: [week], room: ClassRoom, …}`
+4. 课程 id 用 `ncst-phylab:<SemesterID>-<CourseID>-<LabID>`——**跨同步稳定**，
+   否则每次同步都新增一批课程、用户改过的名字和颜色全丢。
+   同一实验排了多场时（预扫描 `baseCount > 1`），**每一场都追加日期后缀**
+   （`-d2026-10-05`）——只给"第二次出现"加后缀会随接口返回顺序互换 id。
+
+**周次从哪来（Phase 9.1：以 `ClassDate` 为准）**
+
+接口同时给了两套时间：`Weeks`/`WeekID`（第几周 / 星期几）和
+`ClassDate`（`2026/9/14 0:00:00`）。**以日期为准**：
+
+- 周次是"相对学期第 1 周"的**相对量**。实验系统和用户课表的学期起点
+  只要差一周，整批实验就整体错周，而且错了之后从数据上看不出错在哪；
+- 日期是**绝对**的。课表每列的日期本来就是 `startDate + (week-1)*7` 算的，
+  所以把日期除以用户的学期起点，必然落到课表正确的那一列；
+- 学期起点由宿主通过 `ctx.semester.startDate` 注入（见上文 ctx 表格）；
+- `day` 也优先由 `ClassDate` 的星期算出（`__phylab_weekdayOf`），
+  没有日期时才退回 `WeekID`。
+
+降级路径（都带 warning，**不静默**）：
+
+| 情况 | 行为 |
+|---|---|
+| 没配学期（`ctx.semester == null`） | 退回系统 `Weeks`/`WeekID`，提示去配学期 |
+| 日期落在学期范围外（早于第 1 周 / 超过总周数） | 退回系统周次，汇总提示条数 |
+| 日期换算的周次 ≠ 系统标注周次 | **按日期排**，并列出前 3 条差异（这正是两边学期起点不一致的证据） |
+| `ClassDate` 缺失或格式异常 | 退回系统周次 |
+
+日期换算全部走 `Date.UTC(y, m-1, d)` 的毫秒差 ÷ 86400000 ÷ 7，
+**不用 `new Date('2026/9/14')`** —— 后者按本地时区解析，夏令时/时区会让
+天数差不是 7 的整数倍，整批数据错一周。
+
+**时间映射（本插件最容易踩的地方）**：实验系统用的是自己的一套时段，
+每段 **2 小时 15 分**（上午 10:15-12:30 / 下午一 14:00-16:15 / 下午二 16:30-18:45），
+和教务的 45 分钟一节**对不齐**。`__phylab_sessionOf()` 先按 `TimePartName`
+（上午 / 下午一 / 下午二 …）查表，查不到再按 `StartTime` 落到最近的节次档，
+长度固定 2 节。真实日期与钟点写进 `TimePlace.rawWeeksText`
+（如 `第3周 · 2026-09-14 16:30-18:45`），详情弹层因此能显示
+「周一 第7-8节 第3周 · 2026-09-14 16:30-18:45」。该字段在内核里**只用于展示**，
+不参与周次解析（见 `TimePlace` 注释）。
+
+**会话失效的识别**：ASP.NET 会话过期后接口不再返回 JSON，而是
+**302 到 `/Index/Redirect/`**（宿主跟随重定向后拿到 HTML），
+所以"`JSON.parse` 失败"就等价于"登录已过期"，据此给出重登提示。
+
+**怎么装**：创意工坊 → 插件市场 → 「华北理工大学大物实验」
+（`PluginProvider.installCatalogPlugin`）。
+
+> ⚠️ 该站是 **http + 8100 端口**，必须在
+> `android/app/src/main/res/xml/network_security_config.xml` 放行
+> `phylab.ncst.edu.cn` 明文流量，否则 WebView 登录直接
+> `net::ERR_CLEARTEXT_NOT_PERMITTED`（**需重新打包安装**才生效）。
+
+---
+
 ## lib/runtime/
 
 ### 插件上下文（`ctx`）——Phase 3.6
 
-插件在沙箱里拿到的宿主能力，**五类**：
+插件在沙箱里拿到的宿主能力，**六类**：
 
 | 面 | API | 本阶段状态 |
 |----|-----|-----------|
@@ -2182,6 +2267,17 @@ const EmptyState({
 | 日志 | `ctx.log.info(msg)` / `ctx.log.error(msg)` | ✅ → `debugPrint` |
 | 通知 | `ctx.notify.schedule(title, body, triggerAtIso)` | ⏳ 占位（只记日志，Phase 7 接真实通知） |
 | 凭证 | `ctx.cookie`（属性） | ⏳ 只读；Phase 4 由 WebView 登录写入 |
+| 学期 | `ctx.semester`（属性，Phase 9.1） | ✅ 只读；`{startDate:'YYYY-MM-DD', totalWeeks}`，未配学期为 `null` |
+
+**`ctx.semester` 为什么必须有**：有的系统（大物实验）课表接口给的是**具体日期**
+（`2026/9/14`）而不是周次，插件要把它换算成内核要的 `(week, day)` 就必须知道
+"第 1 周从哪天开始"。学期是用户在内核里配的，插件无从得知，所以由
+`CourseSyncService.sync(semester: ...)` 透传到 `buildCtxStateScript` 注入。
+
+- `startDate` 只保留 `YYYY-MM-DD`（去掉时分秒）：插件是拿它做"日期差 ÷ 7"的
+  整数运算，带上时分秒只会引入时区误差；
+- 插件侧解析日期**必须用 `Date.UTC`**，不要用 `new Date('2026/9/14')` ——
+  后者按本地时区解析，夏令时/时区会让天数差不是 7 的整数倍，整批数据错一周。
 
 **不做**：权限系统（所有插件都能用全部 ctx）、网络白名单。
 

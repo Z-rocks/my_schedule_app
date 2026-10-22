@@ -6,10 +6,12 @@ import 'package:provider/provider.dart';
 
 import '../../models/message.dart';
 import '../../models/plugin_meta.dart';
+import '../../models/semester_config.dart';
 import '../../models/sync_report.dart';
 import '../../providers/course_provider.dart';
 import '../../providers/message_provider.dart';
 import '../../providers/plugin_provider.dart';
+import '../../providers/semester_provider.dart';
 import '../../runtime/plugin_handle.dart';
 import '../../runtime/plugin_manifest.dart';
 import '../../services/cookie_service.dart';
@@ -283,6 +285,9 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
   ) async {
     if (_syncing) return;
     final CourseProvider courses = context.read<CourseProvider>();
+    // 学期配置也在这里取好：下面有 `await CookieService.loadCookie`，
+    // 之后再 `context.read` 就会被判定为"跨 async gap 使用 BuildContext"。
+    final SemesterConfig? semester = context.read<SemesterProvider>().config;
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
 
     // 1) 先看登录态：没有 Cookie 就别白跑一趟网络
@@ -306,12 +311,17 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
     // 注意 catch 块不是多余的：`CourseSyncService.sync` 的契约是"不抛异常"，
     // 但万一它真的抛了，没有 catch 就会跳过 `finally` 之后的收尾，
     // 页面会**永远停在转圈状态**。
+    // 学期配置要在 await 之前取好：`CourseSyncService.sync` 是异步的，
+    // 把 `context.read(...)` 写进它的参数里会被判定为"跨 async gap 用 context"。
     late final SyncReport report;
     try {
       report = await CourseSyncService.sync(
         pluginId: meta.id,
         handle: handle,
         courses: courses,
+        // 学期配置注入给插件：给"具体日期"的接口（如大物实验）需要它
+        // 才能把日期换算成第几周。没配学期时为 null，插件会自行降级。
+        semester: semester,
         onProgress: (String stage, String message) {
           // 回调发生在 await 之间，此时 State 一定还挂着；
           // 但仍按规范查 mounted，避免页面被 pop 后 setState 报错。

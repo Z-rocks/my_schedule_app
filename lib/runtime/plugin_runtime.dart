@@ -273,6 +273,7 @@ class PluginRuntime {
     String entryFunction, {
     Map<String, dynamic>? args,
     Duration? timeout,
+    Map<String, Object?>? semester,
   }) {
     if (_disposed) {
       return Future<JsSandboxResult>.value(
@@ -283,6 +284,7 @@ class PluginRuntime {
       entryFunction,
       args: args,
       timeout: timeout ?? executeTimeout,
+      semester: semester,
     );
   }
 

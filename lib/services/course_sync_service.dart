@@ -15,6 +15,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../models/course.dart';
+import '../models/semester_config.dart';
 import '../models/sync_report.dart';
 import '../models/time_place.dart';
 import '../providers/course_provider.dart';
@@ -85,7 +86,10 @@ class CourseSyncService {
   ///
   /// - [handle] 由 `PluginProvider.getHandle(pluginId)` 提供；
   /// - [courses] 落盘目标（`CourseProvider`）；
-  /// - [onProgress] 可选进度回调（在 await 之间同步调用，可直接 setState）。
+  /// - [onProgress] 可选进度回调（在 await 之间同步调用，可直接 setState）；
+  /// - [semester] 学期配置，注入给插件当 `ctx.semester`。**只有**需要把
+  ///   "具体日期"换算成"第几周"的插件才会用到（例如大物实验系统给的是
+  ///   `2026/9/14` 而不是周次），不传就是 `null`，插件应自行降级。
   ///
   /// 重试语义：**只重试网络类失败**（超时 / 连不上 / 5xx）。凭证过期、
   /// 响应结构异常、插件不可用等一律不重试——重试只会让用户多等一轮。
@@ -95,12 +99,14 @@ class CourseSyncService {
     required CourseProvider courses,
     SyncProgressCallback? onProgress,
     SyncReportCallback? onReport,
+    SemesterConfig? semester,
   }) async {
     final SyncReport report = await _sync(
       pluginId: pluginId,
       handle: handle,
       courses: courses,
       onProgress: onProgress,
+      semester: semester,
     );
     // 无论成败都通知一次：调用方（页面）用它落一条站内消息。
     // 放在这里而不是每个 return 前，是为了**不可能漏掉**某条失败路径。
@@ -117,9 +123,15 @@ class CourseSyncService {
     required PluginHandle? handle,
     required CourseProvider courses,
     SyncProgressCallback? onProgress,
+    SemesterConfig? semester,
   }) async {
     final Stopwatch watch = Stopwatch()..start();
     final List<String> seenHttpErrors = <String>[];
+    // 学期摘要转成 JS 侧能直接吃的字面量；没配学期就是 null（插件自己降级）。
+    final Map<String, Object?>? semesterPayload = _semesterPayload(semester);
+    // 排查"实验没按日期落位"时第一眼要看的就是这行：注入了什么、有没有注入。
+    debugPrint('[CourseSyncService] 注入学期配置：'
+        '${semesterPayload ?? '未配置（插件将退回系统周次）'}');
 
     if (handle == null) {
       return SyncReport.failure(
@@ -148,7 +160,8 @@ class CourseSyncService {
             : '正在重试（第 $attempt 次，共 $kMaxAttempts 次）…',
       );
 
-      final JsSandboxResult result = await _executeFetch(handle);
+      final JsSandboxResult result =
+          await _executeFetch(handle, semester: semesterPayload);
       for (final String error in result.httpErrors) {
         if (!seenHttpErrors.contains(error)) seenHttpErrors.add(error);
       }
@@ -219,13 +232,36 @@ class CourseSyncService {
   ///
   /// `handle.execute` 本身已承诺不抛异常，这里是最后一道保险
   /// （例如 `PluginContext` 内部读到坏 JSON 之外的意外）。
-  static Future<JsSandboxResult> _executeFetch(PluginHandle handle) async {
+  static Future<JsSandboxResult> _executeFetch(
+    PluginHandle handle, {
+    Map<String, Object?>? semester,
+  }) async {
     try {
-      return await handle.execute('fetchCourses', timeout: kSyncTimeout);
+      return await handle.execute(
+        'fetchCourses',
+        timeout: kSyncTimeout,
+        semester: semester,
+      );
     } catch (e) {
       debugPrint('[CourseSyncService] 调用 fetchCourses 抛异常：$e');
       return JsSandboxResult.error('调用插件入口函数异常：$e');
     }
+  }
+
+  /// 学期配置 → 注入给插件的 `ctx.semester` 载荷。
+  ///
+  /// `startDate` 只保留年月日（`YYYY-MM-DD`）：插件是拿它做"日期差 ÷ 7"
+  /// 的整数运算，时分秒带上只会引入时区/夏令时误差。
+  static Map<String, Object?>? _semesterPayload(SemesterConfig? config) {
+    if (config == null) return null;
+    final DateTime start = config.startDate;
+    final String ymd = '${start.year.toString().padLeft(4, '0')}-'
+        '${start.month.toString().padLeft(2, '0')}-'
+        '${start.day.toString().padLeft(2, '0')}';
+    return <String, Object?>{
+      'startDate': ymd,
+      'totalWeeks': config.totalWeeks,
+    };
   }
 
   /// 把一次执行结果归类成"成功 / 可重试 / 不可重试"。

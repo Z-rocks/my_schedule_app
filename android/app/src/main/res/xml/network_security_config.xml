@@ -42,4 +42,13 @@
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">chaoxing.com</domain>
     </domain-config>
+
+    <!-- 物理实验中心（大物实验选课系统）：整站是 **http + 非标准端口 8100**
+         （http://phylab.ncst.edu.cn:8100），既没有 https 也没有证书可用。
+         不放行的话，插件详情页点「登录」时 WebView 会直接报
+         `net::ERR_CLEARTEXT_NOT_PERMITTED`——页面根本没发出去。
+         注意：`domain-config` 只管域名，端口不参与匹配，8100 不需要单独写。 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">phylab.ncst.edu.cn</domain>
+    </domain-config>
 </network-security-config>

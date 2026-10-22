@@ -27,6 +27,16 @@ const String kChaoxingPluginId = 'chaoxing';
 /// 内置学习通插件的 asset 路径（同 [kNcstPluginAssetPath]，不必改 pubspec）。
 const String kChaoxingPluginAssetPath = 'assets/plugins/chaoxing.js';
 
+/// 内置「大物实验」插件的 id。
+///
+/// 与教务系统插件是**两个独立数据源**：教务给的是理论课表，实验系统给的是
+/// 已经约好的实验场次。两者都声明 `timetable` 能力，课程靠
+/// `sourcePluginId` 区分，同步时互不覆盖（`CourseSyncService` 按 id 增量落盘）。
+const String kPhylabPluginId = 'ncst-phylab';
+
+/// 内置「大物实验」插件的 asset 路径。
+const String kPhylabPluginAssetPath = 'assets/plugins/ncst-phylab.js';
+
 /// 市场里的一个可安装插件。
 ///
 /// 字段与 `PluginProvider.installBuiltinPlugin` 的参数一一对应——
@@ -109,6 +119,14 @@ const List<PluginCatalogEntry> kPluginCatalog = <PluginCatalogEntry>[
     school: '通用（超星学习通）',
     capabilities: <String>['homework', 'exam'],
     assetPath: kChaoxingPluginAssetPath,
+  ),
+  PluginCatalogEntry(
+    id: kPhylabPluginId,
+    name: '华北理工大学大物实验',
+    description: '从物理实验中心系统拉取你已选好的实验场次，按实验日期排进课表（需先登录）',
+    school: '华北理工大学',
+    capabilities: <String>['timetable'],
+    assetPath: kPhylabPluginAssetPath,
   ),
 ];
 

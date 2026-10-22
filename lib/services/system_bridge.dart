@@ -115,6 +115,27 @@ class SystemBridge {
     }
   }
 
+  /// 当前安装的包是不是**通用包**（一个 APK 里塞了多个 ABI）。
+  ///
+  /// 用途：检查更新时"装什么就更新什么"——通用包用户继续拿通用包，
+  /// 不让更新把他手里的 APK 悄悄换成只认 arm64 的裁剪包。
+  ///
+  /// 判定是原生侧读本 APK 的 `lib/` 目录得出的（≥2 个 ABI 子目录即通用包）。
+  /// 非 Android / 通道不可用 / 读取失败一律返回 `false`，
+  /// 即**退回原有行为**（按 ABI 挑裁剪包），不会因为探测失败把包选错。
+  static Future<bool> installedIsUniversalApk() async {
+    if (!isAndroidSettingsSupported) return false;
+    try {
+      final bool? value =
+          await _channel.invokeMethod<bool>('installedIsUniversalApk');
+      return value ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
   static Future<bool> _open(String method) async {
     if (!isAndroidSettingsSupported) return false;
     try {
