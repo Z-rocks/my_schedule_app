@@ -21,6 +21,7 @@ import '../models/time_place.dart';
 import '../providers/course_provider.dart';
 import '../runtime/js_sandbox.dart';
 import '../runtime/plugin_handle.dart';
+import 'app_log.dart';
 
 /// 同步进度回调：`stage` 是稳定的机器可读阶段名（UI 靠它选图标/文案），
 /// `message` 是可以直接显示的进度文案。
@@ -101,6 +102,13 @@ class CourseSyncService {
     SyncReportCallback? onReport,
     SemesterConfig? semester,
   }) async {
+    // 用户行为埋点：同步是最容易出问题的链路（登录态 / 校园网 / 教务改版），
+    // 记下"谁在什么时候点了同步"是排查的起点。
+    AppLog.action('sync_start', <String, Object?>{
+      'plugin': pluginId,
+      'hasSemester': semester != null,
+    });
+
     final SyncReport report = await _sync(
       pluginId: pluginId,
       handle: handle,
@@ -108,10 +116,37 @@ class CourseSyncService {
       onProgress: onProgress,
       semester: semester,
     );
+    _logReport(report);
     // 无论成败都通知一次：调用方（页面）用它落一条站内消息。
     // 放在这里而不是每个 return 前，是为了**不可能漏掉**某条失败路径。
     onReport?.call(report);
     return report;
+  }
+
+  /// 把同步结果写进运行日志。
+  ///
+  /// 失败一律记 error 级——用户在日志页能一眼看到红色，
+  /// 导出后我按 `[sync] 同步失败` 就能直接定位到那一次执行。
+  static void _logReport(SyncReport report) {
+    final Map<String, Object?> data = <String, Object?>{
+      'plugin': report.pluginId,
+      'outcome': report.outcome.name,
+      'added': report.added,
+      'updated': report.updated,
+      'unchanged': report.unchanged,
+      'skipped': report.skipped,
+      'attempts': report.attempts,
+      'ms': report.duration.inMilliseconds,
+      if (report.warnings.isNotEmpty)
+        'warnings': report.warnings.take(5).toList(),
+      if (report.httpErrors.isNotEmpty)
+        'httpErrors': report.httpErrors.take(5).toList(),
+    };
+    if (report.isSuccess) {
+      AppLog.i('sync', '同步完成', data);
+    } else {
+      AppLog.e('sync', '同步失败：${report.reason}', data: data);
+    }
   }
 
   /// `sync` 的实际实现。

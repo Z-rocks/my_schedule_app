@@ -7,6 +7,7 @@ import '../../models/time_place.dart';
 import '../../models/user_override.dart';
 import '../../providers/course_provider.dart';
 import '../../providers/semester_provider.dart';
+import '../../services/app_log.dart';
 import '../../services/timetable_logic.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
@@ -251,6 +252,7 @@ class _CourseEditPageState extends State<CourseEditPage> {
 
     if (isUserCourse) {
       await courses.deleteCourse(course.id);
+      AppLog.action('course_delete', <String, Object?>{'id': course.id});
       if (!mounted) return;
       navigator.pop(false);
       messenger.showSnackBar(const SnackBar(content: Text('课程已删除')));
@@ -357,6 +359,13 @@ class _CourseEditPageState extends State<CourseEditPage> {
           : original.copyWith(userOverride: override);
 
       await courses.saveCourse(updated);
+      // 行为埋点：记"改了什么课"，但不记课程名之外的内容——
+      // 用户报"改完颜色又变回去"这类问题时，能对上时间点。
+      AppLog.action('course_edit', <String, Object?>{
+        'id': updated.id,
+        'userCreated': original.isUserCreated,
+        'places': places.length,
+      });
       if (!mounted) return;
       navigator.pop(true);
       messenger.showSnackBar(const SnackBar(content: Text('课程已保存')));
@@ -381,6 +390,10 @@ class _CourseEditPageState extends State<CourseEditPage> {
       ),
     );
     await courses.saveCourse(created);
+    AppLog.action('course_create', <String, Object?>{
+      'id': created.id,
+      'places': places.length,
+    });
     if (!mounted) return;
     navigator.pop(true);
     messenger.showSnackBar(const SnackBar(content: Text('课程已添加')));

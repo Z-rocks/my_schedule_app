@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../models/module.dart';
 import '../providers/module_provider.dart';
+import '../services/app_log.dart';
 import '../services/widget_bridge.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_extension.dart';
@@ -116,8 +117,19 @@ class _HomePageState extends State<HomePage> {
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: safeIndex,
-        onDestinationSelected: (int index) =>
-            setState(() => _currentIndex = index),
+        onDestinationSelected: (int index) {
+          // 行为埋点：标签切换是最高频的操作，日志里能看到
+          // "用户在哪个模块之间来回跳"——很多"数据没刷新"的反馈
+          // 其实是切走又切回，靠这条就能看出来。
+          if (index >= 0 && index < modules.length) {
+            AppLog.action('tab_switch', <String, Object?>{
+              // 插件模块的 `type` 是 null（它不是内置类型），退回能力 id。
+              'to': modules[index].type?.name ?? modules[index].capabilityId,
+              'index': index,
+            });
+          }
+          setState(() => _currentIndex = index);
+        },
         destinations: modules
             .map(
               (ModuleInfo module) => NavigationDestination(

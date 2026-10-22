@@ -12,6 +12,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import '../services/app_log.dart';
 import 'js_sandbox.dart';
 import 'plugin_context.dart';
 import 'plugin_ctx_script.dart';
@@ -308,6 +309,18 @@ class PluginRuntime {
     List<String> entries = const <String>[],
   }) {
     debugPrint('[PluginRuntime] 插件降级（${status.name}）：$reason');
+    // 所有降级路径都汇聚到这里（沙箱不可用 / 脚本读不到 / 语法错误 / 超时），
+    // 所以在这里记一条就能覆盖全部——排查"插件明明装了却不能用"全靠它。
+    AppLog.plugin(
+      manifest?.id ?? _pluginIdFromPath(sourcePath),
+      '插件加载降级：${status.name}',
+      level: LogLevel.warn,
+      data: <String, Object?>{
+        'status': status.name,
+        'reason': reason,
+        'path': sourcePath,
+      },
+    );
     return PluginHandle(
       status: status,
       manifest: manifest,
@@ -316,6 +329,14 @@ class PluginRuntime {
       entries: entries,
       reason: reason,
     );
+  }
+
+  /// 降级时可能还没有 manifest（脚本都没读出来），
+  /// 退而用文件名当标识，日志里至少能看出是哪个插件。
+  static String _pluginIdFromPath(String? path) {
+    if (path == null || path.isEmpty) return 'unknown';
+    final String name = path.split(RegExp(r'[/\\]')).last;
+    return name.endsWith('.js') ? name.substring(0, name.length - 3) : name;
   }
 
   /// 从 `__plugin` 的 id/name/version/capabilities 推导 manifest。

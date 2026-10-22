@@ -26,6 +26,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import 'app_log.dart';
 import 'system_bridge.dart';
 
 /// 安装包类型：Android = apk，iOS = ipa。
@@ -304,8 +305,23 @@ class UpdateService {
         preferUniversal,
       );
       final UpdateCheckResult? result = attempt.result;
-      if (result != null) return result;
+      if (result != null) {
+        AppLog.i('update', '检查更新完成', <String, Object?>{
+          'source': source.label,
+          'status': result.status.name,
+          'current': currentVersion,
+          'latest': result.latestVersion,
+          'abi': deviceAbi,
+          'universalApk': preferUniversal,
+        });
+        return result;
+      }
       debugPrint('[UpdateService] ${source.label} 失败：${attempt.error}');
+      // 更新源失败是用户能直接感知的问题（"点了检查更新没反应"），
+      // 记 warn 级让它在日志页标黄，而不是埋在 debug 里。
+      AppLog.w('update', '${source.label} 检查失败', <String, Object?>{
+        'error': attempt.error,
+      });
       errors.add('${source.label}：${attempt.error}');
     }
 

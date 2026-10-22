@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show AssetManifest, rootBundle;
 
 import '../models/skin_pack.dart';
+import '../services/app_log.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/default_skins.dart';
@@ -151,6 +152,7 @@ class ThemeProvider extends ChangeNotifier {
           : ThemeBrightnessMode.light;
     }
     _skinId = skin.id;
+    AppLog.action('theme_skin', <String, Object?>{'skin': skin.id});
     _notify();
     unawaited(saveToStorage());
   }
@@ -180,6 +182,7 @@ class ThemeProvider extends ChangeNotifier {
   void setMode(ThemeBrightnessMode mode) {
     if (_mode == mode) return;
     _mode = mode;
+    AppLog.action('theme_mode', <String, Object?>{'mode': mode.name});
     // 让引擎按新模式重新合成（有皮肤时用同一份皮肤重算）。
     _engine.setBrightness(_resolvedBrightness);
     _notify();

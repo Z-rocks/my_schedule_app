@@ -178,6 +178,21 @@ class MainActivity : FlutterActivity() {
                             SystemSettingsBridge.openUrl(applicationContext, url),
                         )
                     }
+                    // 日志导出头部用：`Xiaomi 2211133C` 这类可读型号。
+                    "deviceModel" ->
+                        result.success(SystemSettingsBridge.deviceModel())
+                    // 日志导出：把生成的 txt 交给系统分享面板（微信 / QQ / 邮件）。
+                    "shareFile" -> {
+                        val path = call.argument<String>("path") ?: ""
+                        result.success(
+                            SystemSettingsBridge.shareFile(
+                                applicationContext,
+                                path,
+                                call.argument<String>("mimeType") ?: "text/plain",
+                                call.argument<String>("subject") ?: "",
+                            ),
+                        )
+                    }
                     else -> result.notImplemented()
                 }
             }
