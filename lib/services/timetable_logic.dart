@@ -12,6 +12,87 @@ const int kMaxSessions = 12;
 /// 单个周次区间允许展开的最大周数，防止 `"1-999999"` 之类的输入撑爆内存。
 const int kMaxWeekNumber = 60;
 
+/// 课表网格里"一格"的内容：哪门课、哪一段安排。
+///
+/// 与 [TimetableLogic.buildGrid] 的单值 `Course?` 相比，本类型用于
+/// [TimetableLogic.buildCellGrid]，能表达"同一格有多门课"（时间重叠）。
+class TimetableCell {
+  const TimetableCell({required this.course, required this.timePlace});
+
+  /// 这一格属于哪门课。
+  final Course course;
+
+  /// 这一格属于该课程的哪一段安排（决定教室与起止节次）。
+  final TimePlace timePlace;
+
+  @override
+  String toString() => 'TimetableCell(${course.id}, '
+      'day=${timePlace.day}, start=${timePlace.startSession}, '
+      'length=${timePlace.length})';
+}
+
+/// 课表上一个**待渲染的课程块**（左上角 + 高度 + 并排槽位）。
+///
+/// 由 [TimetableLogic.layoutBlocks] 产出，渲染层只负责按
+/// [slotIndex] / [slotCount] 算左右位置，不再自己算布局。
+class TimetableBlock {
+  const TimetableBlock({
+    required this.course,
+    required this.day,
+    required this.startSession,
+    required this.length,
+    required this.timePlace,
+    this.slotIndex = 0,
+    this.slotCount = 1,
+  });
+
+  final Course course;
+
+  /// 星期几（1-7）。
+  final int day;
+
+  /// 起始节次（1-12）。
+  final int startSession;
+
+  /// 占几节（>= 1）。
+  final int length;
+
+  /// 这一段安排（教室、真实周次文本）；旧路径下可能为 `null`。
+  final TimePlace? timePlace;
+
+  /// 该块在"并排列"里的第几列（0 开始）。
+  final int slotIndex;
+
+  /// 该块所在重叠组一共要并排几列（1 = 不重叠，占满整列）。
+  final int slotCount;
+
+  /// 结束节次（含）。
+  int get endSession => startSession + length - 1;
+
+  /// 是否与另一个块时间重叠（同一天、节次区间相交）。
+  bool overlapsWith(TimetableBlock other) =>
+      day == other.day &&
+      startSession <= other.endSession &&
+      other.startSession <= endSession;
+
+  TimetableBlock copyWith({int? slotIndex, int? slotCount}) {
+    return TimetableBlock(
+      course: course,
+      day: day,
+      startSession: startSession,
+      length: length,
+      timePlace: timePlace,
+      slotIndex: slotIndex ?? this.slotIndex,
+      slotCount: slotCount ?? this.slotCount,
+    );
+  }
+
+  @override
+  String toString() => 'TimetableBlock(${course.id}, day=$day, '
+      'start=$startSession, length=$length, '
+      'slot=$slotIndex/$slotCount)';
+}
+
 /// 课表相关的纯函数工具。
 ///
 /// 全部为 `static`，**无状态、不依赖 Hive / Provider**，因此可以独立测试，
@@ -179,6 +260,180 @@ class TimetableLogic {
     final List<Course?> column = grid[day];
     if (session < 0 || session >= column.length) return null;
     return column[session];
+  }
+
+  /// 构建"每格的全部课程"网格：`grid[day][session] = List<TimetableCell>`。
+  ///
+  /// 与 [buildGrid] 的唯一区别是**不丢重叠**：同一格被多门课占用时全部保留，
+  /// 而 [buildGrid] 是"先到先得、后到的丢掉"。
+  ///
+  /// 为什么要多这一份网格：两门课时间重叠时（比如实验课撞上理论课），
+  /// 只保留一门会让另一门**在课表上完全消失**——用户根本不知道自己有冲突，
+  /// 而不是"显示了但看不清"。课表页用本方法并排渲染；小组件仍用 [buildGrid]
+  /// （卡片只有一格宽度，并排没有意义）。
+  ///
+  /// 跨节填充时**同一段安排复用同一个 [TimetableCell] 实例**，
+  /// 上层据此用 `identical` 判断"这一格和上一格是不是同一块"
+  /// （不能用值相等：同一门课的两段安排可能节次完全相同）。
+  static List<List<List<TimetableCell>>> buildCellGrid(
+    List<Course> courses,
+    int week,
+  ) {
+    final List<List<List<TimetableCell>>> grid =
+        List<List<List<TimetableCell>>>.generate(
+      kDaysPerWeek + 1,
+      (int _) => List<List<TimetableCell>>.generate(
+        kMaxSessions + 1,
+        (int _) => <TimetableCell>[],
+      ),
+    );
+
+    for (final Course course in courses) {
+      if (course.isHidden) continue;
+
+      for (final TimePlace tp in course.displayTimePlaces) {
+        if (tp.day < 1 || tp.day > kDaysPerWeek) continue;
+        if (!hasClassInWeek(tp, week)) continue;
+
+        final TimetableCell cell =
+            TimetableCell(course: course, timePlace: tp);
+        for (int offset = 0; offset < tp.length; offset++) {
+          final int session = tp.startSession + offset;
+          if (session < 1 || session > kMaxSessions) continue;
+          grid[tp.day][session].add(cell);
+        }
+      }
+    }
+
+    // 排序：起始节次升序 → 课程 id 字典序。
+    // Provider 给的顺序不一定稳定，不排序会让同一份数据两次渲染分出不同的
+    // 左右位置（用户会看到卡片"左右跳"）。id 兜底保证结果确定。
+    for (int day = 1; day <= kDaysPerWeek; day++) {
+      for (int session = 1; session <= kMaxSessions; session++) {
+        grid[day][session].sort(_compareCells);
+      }
+    }
+
+    return grid;
+  }
+
+  /// 同一格内两门课的排序规则（起始节次 → 课程 id）。
+  static int _compareCells(TimetableCell a, TimetableCell b) {
+    final int byStart = a.timePlace.startSession
+        .compareTo(b.timePlace.startSession);
+    if (byStart != 0) return byStart;
+    return a.course.id.compareTo(b.course.id);
+  }
+
+  /// 把一周的课程排成"待渲染的块"，**并给时间重叠的块分配并排列号**。
+  ///
+  /// 这是课表页的布局入口：渲染层拿到 [TimetableBlock.slotIndex] /
+  /// [TimetableBlock.slotCount] 直接算左右位置，不用再关心重叠。
+  ///
+  /// 重叠处理分两步：
+  /// 1. 从 [buildCellGrid] 里扫出所有"块"（同一段安排跨节只算一块）；
+  /// 2. 按天分组，把**连续重叠**的块归成一组，组内贪心分槽，
+  ///    槽数就是这一组要并排的列数。
+  ///
+  /// "连续重叠"的判据是"下一块的起始节次晚于组内目前最晚的结束"——
+  /// 所以 A(3-4) 与 B(4-5) 这种只重叠一格的也会分成两列，
+  /// 而不是把 B 整块盖在 A 上。不重叠的块单独成组、`slotCount == 1`。
+  static List<TimetableBlock> layoutBlocks(List<Course> courses, int week) {
+    final List<List<List<TimetableCell>>> cells =
+        buildCellGrid(courses, week);
+    final List<TimetableBlock> blocks = <TimetableBlock>[];
+
+    for (int day = 1; day <= kDaysPerWeek; day++) {
+      final List<List<TimetableCell>> column = cells[day];
+      for (int session = 1; session <= kMaxSessions; session++) {
+        for (final TimetableCell cell in column[session]) {
+          // 只处理块顶部：上一格里还有**同一个实例**说明本格是延续
+          if (session > 1 &&
+              column[session - 1]
+                  .any((TimetableCell c) => identical(c, cell))) {
+            continue;
+          }
+          int length = 1;
+          while (session + length <= kMaxSessions &&
+              column[session + length]
+                  .any((TimetableCell c) => identical(c, cell))) {
+            length++;
+          }
+          blocks.add(TimetableBlock(
+            course: cell.course,
+            day: day,
+            startSession: session,
+            length: length,
+            timePlace: cell.timePlace,
+          ));
+        }
+      }
+    }
+
+    return assignSlots(blocks);
+  }
+
+  /// 给课程块分配并排槽位（[layoutBlocks] 的第二步，单独暴露便于测试）。
+  ///
+  /// 按天分组后依次做"连续重叠分组 + 组内贪心分槽"。
+  /// 输入的 [blocks] 不会被修改，返回的是带槽位的新列表。
+  static List<TimetableBlock> assignSlots(List<TimetableBlock> blocks) {
+    final List<TimetableBlock> result = <TimetableBlock>[];
+    final Map<int, List<TimetableBlock>> byDay = <int, List<TimetableBlock>>{};
+    for (final TimetableBlock block in blocks) {
+      byDay.putIfAbsent(block.day, () => <TimetableBlock>[]).add(block);
+    }
+
+    final List<int> days = byDay.keys.toList()..sort();
+    for (final int day in days) {
+      final List<TimetableBlock> ofDay = byDay[day]!
+        ..sort(_compareBlocks);
+
+      List<TimetableBlock> group = <TimetableBlock>[];
+      int groupEnd = 0;
+
+      void flush() {
+        if (group.isEmpty) return;
+        final List<int> slotEnds = <int>[];
+        final List<TimetableBlock> placed = <TimetableBlock>[];
+        for (final TimetableBlock block in group) {
+          // 第一个"已经空出来"的槽：该槽里最后一块在本块开始前就结束了
+          int slot =
+              slotEnds.indexWhere((int end) => end < block.startSession);
+          if (slot < 0) {
+            slot = slotEnds.length;
+            slotEnds.add(0);
+          }
+          slotEnds[slot] = block.endSession;
+          placed.add(block.copyWith(slotIndex: slot));
+        }
+        for (final TimetableBlock block in placed) {
+          result.add(block.copyWith(slotCount: slotEnds.length));
+        }
+        group = <TimetableBlock>[];
+        groupEnd = 0;
+      }
+
+      for (final TimetableBlock block in ofDay) {
+        if (group.isNotEmpty && block.startSession > groupEnd) flush();
+        group.add(block);
+        if (block.endSession > groupEnd) groupEnd = block.endSession;
+      }
+      flush();
+    }
+    return result;
+  }
+
+  /// 同一列内两个块的排序：起始节次 → 课程 id → 教室。
+  ///
+  /// 三级全比是为了**结果确定**：Provider 给的顺序不稳定时，
+  /// 同一份数据两次渲染也要分出同样的左右位置，否则卡片会左右跳。
+  static int _compareBlocks(TimetableBlock a, TimetableBlock b) {
+    final int byStart = a.startSession.compareTo(b.startSession);
+    if (byStart != 0) return byStart;
+    final int byId = a.course.id.compareTo(b.course.id);
+    if (byId != 0) return byId;
+    return (a.timePlace?.room ?? '').compareTo(b.timePlace?.room ?? '');
   }
 
   /// 构建"每一格对应哪一段安排"的网格：`placeGrid[day][session] = TimePlace?`。

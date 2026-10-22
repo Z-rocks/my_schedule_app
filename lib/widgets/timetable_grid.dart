@@ -25,6 +25,12 @@ const double kCardInset = 2;
 const double kCardPaddingH = 3;
 const double kCardPaddingV = 4;
 
+/// 并排卡片之间的细缝（只在时间重叠、一列拆成多份时生效）。
+///
+/// 取 1 而不是 `kCardInset`：列宽本来就只有 50 上下，分成两份后
+/// 每份 24 左右，再各让出 2px 就等于把课程名全挤掉了。
+const double kOverlapGap = 1;
+
 /// 星期短标签（索引 0 = 周一），用于表头。
 const List<String> kWeekdayShortLabels = <String>[
   '一', '二', '三', '四', '五', '六', '日',
@@ -37,9 +43,9 @@ const List<String> kWeekdayLabels = <String>[
 
 /// 课表网格。
 ///
-/// **纯展示组件**：不读 Provider、不访问存储，只把 [grid] 画出来。
-/// 网格由 `TimetableLogic.buildGrid` 生成，尺寸 `(7+1) × (12+1)`，
-/// 索引 1-7（星期）与 1-12（节次）有效，索引 0 为占位。
+/// **纯展示组件**：不读 Provider、不访问存储，只把 [blocks] 画出来。
+/// 布局（跨节合并 + 重叠并排）全部由 `TimetableLogic.layoutBlocks` 算好，
+/// 这里只负责把每块的左上角、宽高换算成像素。
 ///
 /// **一屏 7 天**：每列宽度 = `(可用宽度 - 时间列宽) / 可见天数`，
 /// 整体只做纵向滚动，**不横向滚动**（Phase 2.2b.3 视觉稿要求）。
@@ -47,22 +53,19 @@ const List<String> kWeekdayLabels = <String>[
 /// 用 `Stack` + `Positioned` 而不是 `Table`：`Table` 不支持跨行合并
 /// （rowspan），而一门连上 3 节的课需要占满 3 格高度。
 class TimetableGrid extends StatelessWidget {
-  /// 课程网格，`grid[day][session] = Course?`。
-  final List<List<Course?>> grid;
-
-  /// 与 [grid] 同形的"每格对应哪一段安排"网格
-  /// （`TimetableLogic.buildPlaceGrid` 产出）。
+  /// 已排好槽位的课程块（`TimetableLogic.layoutBlocks` 产出）。
   ///
-  /// 教室 / 校区只能按段取：同一门课在不同星期、或同一天拆成两段时
-  /// 可能换教室，按课程取第一处教室必然张冠李戴。
-  final List<List<TimePlace?>> placeGrid;
+  /// 一块 = 一张卡片：跨节的课只有一块（不是每节一块），
+  /// 同一时间重叠的课各有各的块，靠 [TimetableBlock.slotIndex] /
+  /// [TimetableBlock.slotCount] 分成并排的窄卡。
+  final List<TimetableBlock> blocks;
 
   /// 节次 → 时间文本，如 `{1: "08:30-09:15"}`。
   final Map<int, String> sectionTimes;
 
   /// 当前显示第几周。
   ///
-  /// 网格本身已由调用方按周过滤过（`buildGrid(courses, week)`）；
+  /// 块本身已由调用方按周过滤过（`layoutBlocks(courses, week)`）；
   /// 这里保留它是为了让卡片 `Key` 随周次变化，切周时能正确重建。
   final int currentWeek;
 
@@ -80,8 +83,7 @@ class TimetableGrid extends StatelessWidget {
 
   const TimetableGrid({
     super.key,
-    required this.grid,
-    required this.placeGrid,
+    required this.blocks,
     required this.sectionTimes,
     required this.currentWeek,
     this.weekStartDate,
@@ -96,7 +98,7 @@ class TimetableGrid extends StatelessWidget {
     final double cellHeight = theme.timetableCellHeight;
     final double timeColumnWidth = theme.timetableTimeColumnWidth;
     final double bodyHeight = cellHeight * kMaxSessions;
-    final List<_PlacedCourse> placements = _collectPlacements(dayCount);
+    final List<TimetableBlock> placements = blocks;
 
     return SingleChildScrollView(
       child: SizedBox(
@@ -306,23 +308,32 @@ class TimetableGrid extends StatelessWidget {
 
   List<Widget> _buildCards(
     AppTheme theme,
-    List<_PlacedCourse> placements,
+    List<TimetableBlock> placements,
     double timeColumnWidth,
     double columnWidth,
     double cellHeight,
   ) {
-    return placements.map((_PlacedCourse placed) {
+    return placements.map((TimetableBlock placed) {
       final Course course = placed.course;
       const double inset = kCardInset;
+      // 并排：把整列宽度均分给同一时间块的课程。
+      // slotCount == 1 时结果与改动前完全一致（整列宽 - 两侧 inset）。
+      final double usableWidth = columnWidth - inset * 2;
+      final double slotWidth = usableWidth / placed.slotCount;
+      final double slotGap = placed.slotCount > 1 ? kOverlapGap : 0;
       return Positioned(
         key: ValueKey<String>(
-          '${course.id}-${placed.day}-${placed.startSession}-$currentWeek',
+          '${course.id}-${placed.day}-${placed.startSession}-'
+          '${placed.slotIndex}-$currentWeek',
         ),
-        left: timeColumnWidth + (placed.day - 1) * columnWidth + inset,
+        left: timeColumnWidth +
+            (placed.day - 1) * columnWidth +
+            inset +
+            placed.slotIndex * slotWidth,
         top: kGridHeaderHeight +
             (placed.startSession - 1) * cellHeight +
             inset,
-        width: columnWidth - inset * 2,
+        width: slotWidth - slotGap,
         // 跨节：卡片高度 = 节数 × 单元格高度（减去外缩进）
         height: placed.length * cellHeight - inset * 2,
         child: _CourseCard(
@@ -330,6 +341,8 @@ class TimetableGrid extends StatelessWidget {
           timePlace: placed.timePlace,
           color: _colorForCourse(course, theme),
           length: placed.length,
+          // 并排时列宽只剩一半，内边距必须收紧，否则一个字都放不下
+          dense: placed.slotCount > 1,
           onTap: onTapCourse == null ? null : () => onTapCourse!(course),
           onLongPress: onLongPressCourse == null
               ? null
@@ -337,52 +350,6 @@ class TimetableGrid extends StatelessWidget {
         ),
       );
     }).toList(growable: false);
-  }
-
-  /// 扫描网格，找出每个"课程块"的左上角与其高度。
-  ///
-  /// `buildGrid` 会把同一门课的实例填进跨节涉及的每一格，因此
-  /// "上一格不是同一实例"就是块的起点；再向下数连续的同实例格数得到节数。
-  ///
-  /// **要同时比 [Course] 与 [TimePlace] 实例**：同一门课同一天可能拆成两段
-  /// （3-4 节在 A 楼、5-6 节在 B 楼），`buildGrid` 给这两段填的是同一个
-  /// [Course] 实例，只比课程会把它们并成"3-6节"一块——节次和教室双错。
-  List<_PlacedCourse> _collectPlacements(int dayCount) {
-    final List<_PlacedCourse> result = <_PlacedCourse>[];
-    for (int day = 1; day <= dayCount; day++) {
-      if (day >= grid.length) break;
-      final List<Course?> column = grid[day];
-      final List<TimePlace?> placeColumn =
-          day < placeGrid.length ? placeGrid[day] : const <TimePlace?>[];
-      for (int session = 1; session <= kMaxSessions; session++) {
-        if (session >= column.length) break;
-        final Course? course = column[session];
-        if (course == null) continue;
-        final TimePlace? place =
-            session < placeColumn.length ? placeColumn[session] : null;
-        bool sameBlockAt(int index) =>
-            index < column.length &&
-            identical(column[index], course) &&
-            (index < placeColumn.length
-                ? identical(placeColumn[index], place)
-                : place == null);
-        // 只处理块顶部
-        if (session > 1 && sameBlockAt(session - 1)) continue;
-
-        int length = 1;
-        while (session + length < column.length && sameBlockAt(session + length)) {
-          length++;
-        }
-        result.add(_PlacedCourse(
-          course: course,
-          day: day,
-          startSession: session,
-          length: length,
-          timePlace: place,
-        ));
-      }
-    }
-    return result;
   }
 
   /// 课程卡片颜色。
@@ -434,6 +401,7 @@ class _CourseCard extends StatelessWidget {
     required this.timePlace,
     required this.color,
     required this.length,
+    this.dense = false,
     this.onTap,
     this.onLongPress,
   });
@@ -444,6 +412,9 @@ class _CourseCard extends StatelessWidget {
 
   /// 该课程块占几节（用于计算可用高度）。
   final int length;
+
+  /// 紧凑模式：卡片被并排压到半宽时打开，收紧左右内边距。
+  final bool dense;
 
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
@@ -486,8 +457,8 @@ class _CourseCard extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: kCardPaddingH,
+          padding: EdgeInsets.symmetric(
+            horizontal: dense ? 1 : kCardPaddingH,
             vertical: kCardPaddingV,
           ),
           // 内容按自然高度排布，超出卡片高度的部分**裁掉**（不用省略号）：
@@ -534,21 +505,4 @@ class _CourseCard extends StatelessWidget {
       ),
     );
   }
-}
-
-/// 一个待渲染的课程块（网格里的左上角 + 高度）。
-class _PlacedCourse {
-  const _PlacedCourse({
-    required this.course,
-    required this.day,
-    required this.startSession,
-    required this.length,
-    required this.timePlace,
-  });
-
-  final Course course;
-  final int day;
-  final int startSession;
-  final int length;
-  final TimePlace? timePlace;
 }
