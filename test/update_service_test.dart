@@ -359,7 +359,7 @@ void main() {
   // v0.3.4 起：手机更新时优先拿裁剪包（21MB），不再一律拉通用包（58MB）。
   // 但裁剪包必须**精确匹配**设备 ABI——把 arm64 包发给 armeabi-v7a 老机型
   // 会直接装不上，所以匹配不上时只能退回通用包，不能"随便拿一个"。
-  group('按设备 ABI 选包', () {
+  group('按设备 ABI 选包（含"通用包保持通用"）', () {
     final List<Map<String, String>> assets = <Map<String, String>>[
       <String, String>{
         'name': 'app-release.apk',
@@ -426,6 +426,90 @@ void main() {
     test('裁剪包文件名与构建脚本产物一致', () {
       expect(apkNameForAbi('arm64-v8a'), 'app-arm64-v8a-release.apk');
       expect(apkNameForAbi('ARM64-V8A'), 'app-arm64-v8a-release.apk');
+    });
+
+    // ── 装通用包就更新通用包（2026-10）──
+    final List<Map<String, String>> universalPlusSplit =
+        <Map<String, String>>[
+      <String, String>{
+        'name': 'app-arm64-v8a-release.apk',
+        'browser_download_url': 'https://x/app-arm64-v8a-release.apk',
+      },
+      <String, String>{
+        'name': 'app-release.apk',
+        'browser_download_url': 'https://x/app-release.apk',
+      },
+    ];
+
+    test('preferUniversal 时即使 ABI 明确也拿通用包', () {
+      expect(
+        selectApkUrl(universalPlusSplit, 'arm64-v8a', preferUniversal: true),
+        'https://x/app-release.apk',
+      );
+    });
+
+    test('preferUniversal 为 false 时行为不变（仍挑裁剪包）', () {
+      expect(
+        selectApkUrl(universalPlusSplit, 'arm64-v8a'),
+        'https://x/app-arm64-v8a-release.apk',
+      );
+    });
+
+    test('preferUniversal 但这次没传通用包 → 退回第一个 apk', () {
+      final List<Map<String, String>> noUniversal = <Map<String, String>>[
+        <String, String>{
+          'name': 'app-arm64-v8a-release.apk',
+          'browser_download_url': 'https://x/app-arm64-v8a-release.apk',
+        },
+      ];
+      expect(
+        selectApkUrl(noUniversal, 'arm64-v8a', preferUniversal: true),
+        'https://x/app-arm64-v8a-release.apk',
+      );
+    });
+
+    test('iOS 不受 preferUniversal 影响（ipa 本来就不分架构）', () {
+      final List<Map<String, String>> ipa = <Map<String, String>>[
+        <String, String>{
+          'name': 'app-release.ipa',
+          'browser_download_url': 'https://x/app-release.ipa',
+        },
+      ];
+      expect(
+        selectPackageUrl(ipa,
+            kind: PackageKind.ipa, preferUniversal: true),
+        'https://x/app-release.ipa',
+      );
+    });
+
+    test('check 传 universalInstalled: true 时端到端选到通用包', () async {
+      final _FakeAdapter adapter = _FakeAdapter(<String, Object>{
+        UpdateSource.gitee.apiUrl: _giteeRelease(
+          tag: 'v0.3.4',
+          assets: <Map<String, String>>[
+            <String, String>{
+              'name': 'app-release.apk',
+              'browser_download_url':
+                  'https://gitee.com/x/y/releases/download/v0.3.4/app-release.apk',
+            },
+            <String, String>{
+              'name': 'app-arm64-v8a-release.apk',
+              'browser_download_url':
+                  'https://gitee.com/x/y/releases/download/v0.3.4/app-arm64-v8a-release.apk',
+            },
+          ],
+        ),
+      });
+
+      final UpdateCheckResult r = await UpdateService.check(
+        currentVersion: '0.3.0',
+        dio: _fakeDio(adapter),
+        abi: 'arm64-v8a',
+        universalInstalled: true,
+      );
+
+      expect(r.status, UpdateStatus.available);
+      expect(r.apkUrl, endsWith('/app-release.apk'));
     });
 
     test('check 传入 abi 时，端到端选到裁剪包', () async {

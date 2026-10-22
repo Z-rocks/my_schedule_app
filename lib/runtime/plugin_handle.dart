@@ -130,6 +130,7 @@ class PluginHandle {
     String entryFunction, {
     Map<String, dynamic>? args,
     Duration timeout = kDefaultJsTimeout,
+    Map<String, Object?>? semester,
   }) async {
     if (status != JsSandboxStatus.success) {
       return JsSandboxResult.unavailable(reason ?? '插件未成功加载');
@@ -151,6 +152,7 @@ class PluginHandle {
       sandbox: sandbox,
       entryCallScript: script,
       timeout: timeout,
+      semester: semester,
     );
   }
 

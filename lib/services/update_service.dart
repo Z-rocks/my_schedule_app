@@ -215,11 +215,14 @@ class ReleaseInfo {
   /// [abi] 是设备主 ABI（`arm64-v8a` 等），用来挑对应架构的裁剪包；
   /// 空串表示不知道，按通用包优先处理。
   /// [kind] 决定取哪种安装包（Android = apk，iOS = ipa）。
+  /// [preferUniversal] 为 `true` 时**不挑裁剪包**，直接取通用包
+  /// （当前装的就是通用包 → 更新也保持通用包）。
   static ReleaseInfo? fromJson(
     Map<String, dynamic> json,
     UpdateSource source, {
     String abi = '',
     PackageKind kind = PackageKind.apk,
+    bool preferUniversal = false,
   }) {
     final String tag = (json['tag_name'] as String? ?? '').trim();
     if (tag.isEmpty) return null;
@@ -230,7 +233,12 @@ class ReleaseInfo {
       changelog: (json['body'] as String? ?? '').trim(),
       releaseUrl:
           htmlUrl.isNotEmpty ? htmlUrl : source.releasePageUrl(tag),
-      apkUrl: selectPackageUrl(json['assets'], abi: abi, kind: kind),
+      apkUrl: selectPackageUrl(
+        json['assets'],
+        abi: abi,
+        kind: kind,
+        preferUniversal: preferUniversal,
+      ),
       prerelease: json['prerelease'] == true,
     );
   }
@@ -266,6 +274,7 @@ class UpdateService {
     required String currentVersion,
     Dio? dio,
     String? abi,
+    bool? universalInstalled,
     PackageKind? kind,
     List<UpdateSource> sources = const <UpdateSource>[
       UpdateSource.gitee,
@@ -274,10 +283,14 @@ class UpdateService {
   }) async {
     final Dio client = dio ?? _defaultClient();
     final String deviceAbi = abi ?? await SystemBridge.primaryAbi();
+    // "装什么就更新什么"：通用包用户继续拿通用包。
+    // 判定不出来时按 false 处理（维持"按 ABI 挑裁剪包"的原有行为）。
+    final bool preferUniversal =
+        universalInstalled ?? await SystemBridge.installedIsUniversalApk();
     final PackageKind packageKind = kind ?? PackageKind.current;
-    // 排查用：用户反馈"还是下了通用包"时，先看这行 ABI 是不是空
-    // （空 = 通道没通 / 非 Android），再看选包结果。
+    // 排查用：用户反馈"还是下了通用包 / 怎么给我下了裁剪包"时，先看这行。
     debugPrint('[UpdateService] 设备 ABI=${deviceAbi.isEmpty ? '(未知)' : deviceAbi}'
+        '，当前装的是${preferUniversal ? '通用包 → 更新也取通用包' : '单架构包'}'
         '，取包类型=${packageKind.name}');
     final List<String> errors = <String>[];
 
@@ -288,6 +301,7 @@ class UpdateService {
         currentVersion,
         deviceAbi,
         packageKind,
+        preferUniversal,
       );
       final UpdateCheckResult? result = attempt.result;
       if (result != null) return result;
@@ -325,6 +339,7 @@ class UpdateService {
     String currentVersion,
     String abi,
     PackageKind kind,
+    bool preferUniversal,
   ) async {
     try {
       final Response<dynamic> response = await client.get<dynamic>(source.apiUrl);
@@ -342,6 +357,7 @@ class UpdateService {
         source,
         abi: abi,
         kind: kind,
+        preferUniversal: preferUniversal,
       );
       if (info == null) {
         return _Attempt.fail('Release 缺少版本号（tag_name）');
@@ -441,9 +457,10 @@ String selectPackageUrl(
   Object? assets, {
   String abi = '',
   PackageKind kind = PackageKind.apk,
+  bool preferUniversal = false,
 }) {
   if (kind == PackageKind.ipa) return selectIpaUrl(assets);
-  return selectApkUrl(assets, abi);
+  return selectApkUrl(assets, abi, preferUniversal: preferUniversal);
 }
 
 /// 从 `assets` 里挑 `.ipa` 地址（iOS）。没有则空串。
@@ -464,10 +481,14 @@ String selectIpaUrl(Object? assets) {
 /// 从 `assets` 数组里挑一个 APK 的下载地址。
 ///
 /// 优先级：
-/// 1. **设备 ABI 对应的裁剪包**（`app-arm64-v8a-release.apk`）：21MB，
+/// 1. **[preferUniversal] 为 `true` 时**：直接取通用包 `app-release.apk`。
+///    这是"装什么就更新什么"——当前装的是通用包，就别给他换成单架构包。
+///    覆盖安装本身不受 ABI 影响，但换包会让用户手里那份 APK 从此只认一个架构
+///    （转发给模拟器 / 老机型会装不上），也容易被误解成"更新把包换了"。
+/// 2. **设备 ABI 对应的裁剪包**（`app-arm64-v8a-release.apk`）：21MB，
 ///    比通用包小一半多，手机走流量更新时差别很大。
-/// 2. 通用包 `app-release.apk`：ABI 未知、或这次没传裁剪包时的兜底。
-/// 3. 第一个 `.apk`。
+/// 3. 通用包 `app-release.apk`：ABI 未知、或这次没传裁剪包时的兜底。
+/// 4. 第一个 `.apk`。
 ///
 /// 不能直接取第 0 个：Gitee 在没有上传附件时会自动塞源码
 /// `v1.2.3.zip` / `.tar.gz`，GitHub 的 `assets` 顺序也不保证按上传时间。
@@ -475,9 +496,10 @@ String selectIpaUrl(Object? assets) {
 /// 也不能"挑不到裁剪包就随便拿一个"：把 arm64 包给 armeabi-v7a 老机型会装不上。
 /// 所以裁剪包只认**精确匹配**，其余一律退到通用包。
 @visibleForTesting
-String selectApkUrl(Object? assets, String abi) {
+String selectApkUrl(Object? assets, String abi, {bool preferUniversal = false}) {
   if (assets is! List) return '';
-  final String want = abi.trim().isEmpty ? '' : apkNameForAbi(abi);
+  final String want =
+      (abi.trim().isEmpty || preferUniversal) ? '' : apkNameForAbi(abi);
   String universal = '';
   String firstApk = '';
   for (final Object? asset in assets) {

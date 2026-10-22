@@ -47,6 +47,7 @@ var __ctx_logs = [];
 var __ctx_notifies = [];
 var __ctx_cookie = '';
 var __ctx_http_errors = [];
+var __ctx_semester = null;
 
 // 请求去重键：同方法 + 同 URL + 同 body + 同请求头 → 只发一次。
 function __ctx_request_key(method, url, body, headersJson) {
@@ -159,6 +160,18 @@ var ctx = {
   // 凭证：宿主每轮预先注入（Phase 4 由 WebView 登录写入）。
   get cookie() { return __ctx_cookie; },
 
+  // 学期配置：`{ startDate: 'YYYY-MM-DD', totalWeeks: n }`，未配置学期时为 null。
+  //
+  // 用途（Phase 9）：有些系统的课表接口给的是**具体日期**而不是周次，
+  // 插件必须知道"第 1 周从哪天开始"才能把日期换算成课表要的
+  // `(week, day)`。这个换算只有拿到 startDate 才做得出来，而学期是
+  // 用户在内核里配的，插件无从得知 —— 所以由宿主注入。
+  //
+  // 约定：`startDate` 是**第 1 周周一**（与 `SemesterConfig` 一致），
+  // 字符串形式固定 `YYYY-MM-DD`，插件侧用 `new Date(s)` 解析时不会带时区坑
+  // （JS 规范里 `YYYY-MM-DD` 按 UTC 解析，只取年月日时不受影响）。
+  get semester() { return __ctx_semester; },
+
   // Phase 4.3：本轮最后一次"真失败"的短标识（timeout / connection /
   // bad_certificate / bad_response / cancelled / unknown），没有失败则为空串。
   //
@@ -176,13 +189,17 @@ var ctx = {
 
 /// 构造"本轮状态"脚本：由宿主在每轮执行插件函数**之前**求值。
 ///
-/// 三个参数都是"宿主已经算好的值"，全部以 JSON 字面量嵌入——
+/// 各参数都是"宿主已经算好的值"，全部以 JSON 字面量嵌入——
 /// Dart ↔ JS 边界只传字符串（CONTEXT/本阶段约束）。
 /// 同时把待办与日志清空，保证每轮都是干净的一轮。
+///
+/// [semester] 是学期摘要（`{startDate, totalWeeks}`）；`null` 表示用户还没
+/// 配学期，此时 `ctx.semester` 为 `null`，插件应退回"不用日期"的路径。
 String buildCtxStateScript({
   required Map<String, String> httpCache,
   required Map<String, String> storage,
   required String cookie,
+  Map<String, Object?>? semester,
 }) {
   return 'var __ctx_http_cache = ${_jsonLiteral(httpCache)};\n'
       'var __ctx_http_pending = [];\n'
@@ -191,6 +208,7 @@ String buildCtxStateScript({
       'var __ctx_logs = [];\n'
       'var __ctx_notifies = [];\n'
       'var __ctx_cookie = ${_jsonLiteral(cookie)};\n'
+      'var __ctx_semester = ${semester == null ? 'null' : _jsonLiteral(semester)};\n'
       // Phase 4.3：错误列表必须每轮清空，否则上一轮的失败会污染本轮判定。
       'var __ctx_http_errors = [];\n';
 }

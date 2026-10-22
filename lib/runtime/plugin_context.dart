@@ -306,6 +306,7 @@ class PluginContext {
     required JsSandbox sandbox,
     required String entryCallScript,
     Duration timeout = kDefaultJsTimeout,
+    Map<String, Object?>? semester,
   }) async {
     final String cookie = await loadCookie();
     final Map<String, String> storage = await loadStorageSnapshot();
@@ -322,6 +323,7 @@ class PluginContext {
         httpCache: httpCache,
         storage: storage,
         cookie: cookie,
+        semester: semester,
       );
       final JsSandboxResult result = await sandbox.execute(
         '$preamble\n$entryCallScript',
