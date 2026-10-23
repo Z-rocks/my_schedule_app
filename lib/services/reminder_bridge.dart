@@ -198,4 +198,65 @@ class ReminderBridge {
       return false;
     }
   }
+
+  // ───────────────────── 上课提醒（独立通道） ─────────────────────
+  //
+  // 与作业提醒用**两条不同的通道**：两者的排期结构和重排时机都不同，
+  // 共用一条 `syncPlan` 会互相覆盖（同步作业把上课提醒冲掉，反之亦然）。
+  // 上课提醒没有后台校验，所以这一组方法里没有"句柄登记"。
+
+  static const MethodChannel _classChannel =
+      MethodChannel('com.zys.myschedule/class_reminder');
+
+  /// 全量下发上课提醒排期。返回是否成功交给原生调度。
+  static Future<bool> syncClassPlan(String planJson) async {
+    if (!isSupported) return false;
+    try {
+      final bool? ok = await _classChannel
+          .invokeMethod<bool>('syncPlan', <String, dynamic>{'json': planJson});
+      return ok ?? false;
+    } catch (error) {
+      debugPrint('[ReminderBridge] 下发上课提醒排期失败：$error');
+      return false;
+    }
+  }
+
+  /// 取消全部上课提醒（关闭开关 / 清空课表时用）。
+  static Future<void> cancelClassPlan() async {
+    if (!isSupported) return;
+    try {
+      await _classChannel.invokeMethod<void>('cancelAll');
+    } catch (error) {
+      debugPrint('[ReminderBridge] 取消上课提醒失败：$error');
+    }
+  }
+
+  /// 是否已授予通知权限。
+  ///
+  /// 通知权限是系统级能力、与"哪类提醒"无关，所以结果与
+  /// [hasNotificationPermission] 相同；单独开一个方法只是为了让调用方
+  /// 不必知道自己用的是哪条通道。
+  static Future<bool> hasClassNotificationPermission() async {
+    if (!isSupported) return false;
+    try {
+      return await _classChannel
+              .invokeMethod<bool>('hasNotificationPermission') ??
+          false;
+    } catch (error) {
+      debugPrint('[ReminderBridge] 查询上课提醒权限失败：$error');
+      return false;
+    }
+  }
+
+  /// 发一条上课提醒的测试通知。
+  static Future<bool> showClassTestNotification() async {
+    if (!isSupported) return false;
+    try {
+      return await _classChannel.invokeMethod<bool>('showTestNotification') ??
+          false;
+    } catch (error) {
+      debugPrint('[ReminderBridge] 上课提醒测试通知失败：$error');
+      return false;
+    }
+  }
 }

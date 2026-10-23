@@ -180,6 +180,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- 上课提醒的闹钟广播：只发通知，不需要前台服务。 -->
+        <receiver
+            android:name=".reminder.ClassReminderReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.zys.myschedule.action.CLASS_REMINDER_FIRE" />
+            </intent-filter>
+        </receiver>
+
         <!-- 开机 / 覆盖安装后重排闹钟。exported=true 是系统广播的要求
              （BOOT_COMPLETED 由系统进程发送）。 -->
         <receiver
