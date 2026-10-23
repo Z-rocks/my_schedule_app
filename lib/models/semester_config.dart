@@ -3,11 +3,23 @@ import 'dart:convert';
 
 /// 学期配置。
 ///
-/// 目前**只支持单学期**（用户已确认）：App 里只保留一份配置，
-/// 由 `SemesterProvider` 存在 `settings` Box 的 [kSemesterConfigKey] 下。
-///
 /// [startDate] 约定为**第 1 周的周一**，[endDate] 由它和 [totalWeeks] 派生。
+///
+/// ## [id] 是**派生**的，不是随机的
+///
+/// 多学期归档需要给每个学期一个稳定标识，用来把课程归到学期下
+/// （`Course.semesterId`）。这里刻意用"名字 + 开学日期"派生出确定性 id
+/// （见 [deriveSemesterId]），而不是随机 UUID：
+/// - 同一份配置在任何设备、任何时刻算出来都一样 → 导出备份到另一台机器后，
+///   课程与学期的关联不会断；
+/// - 重复导入同一份备份不会产生两个"看起来一样但 id 不同"的学期。
+///
+/// 代价是"同名且同一天开学"的两个学期会被视为同一个——那本来就是同一个学期。
 class SemesterConfig {
+  /// 学期标识（`sem-` 前缀 + 派生哈希）。旧数据里可能为空串，
+  /// 读取时用 [ensureId] 补齐，**不写回存储**（纯派生值，没必要落盘）。
+  final String id;
+
   /// 学期名称，如 `"2026-2027学年第一学期"`。
   final String name;
 
@@ -21,11 +33,19 @@ class SemesterConfig {
   final String? description;
 
   const SemesterConfig({
+    this.id = '',
     required this.name,
     required this.startDate,
     required this.totalWeeks,
     this.description,
   });
+
+  /// 是否已经带 id（旧数据为 `false`）。
+  bool get hasId => id.isNotEmpty;
+
+  /// 保证有 id：没有就按 [deriveSemesterId] 补一个。
+  SemesterConfig ensureId() =>
+      hasId ? this : copyWith(id: deriveSemesterId(name, startDate));
 
   /// 学期结束日期（最后一周的周日）。
   ///
@@ -42,6 +62,7 @@ class SemesterConfig {
   factory SemesterConfig.fromJson(Map<String, dynamic> json) {
     final int totalWeeks = _asInt(json['totalWeeks'], fallback: 1);
     return SemesterConfig(
+      id: _asString(json['id']),
       name: _asString(json['name']),
       startDate: _asDateTime(json['startDate']) ?? DateTime.now(),
       totalWeeks: totalWeeks < 1 ? 1 : totalWeeks,
@@ -79,6 +100,7 @@ class SemesterConfig {
   /// 序列化为可写入 Hive / JSON 的 Map（**不含** [endDate]）。
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
+      'id': id,
       'name': name,
       'startDate': startDate.toIso8601String(),
       'totalWeeks': totalWeeks,
@@ -88,6 +110,7 @@ class SemesterConfig {
 
   /// 复制并修改部分字段；`clearDescription` 用于显式把备注置空。
   SemesterConfig copyWith({
+    String? id,
     String? name,
     DateTime? startDate,
     int? totalWeeks,
@@ -95,6 +118,7 @@ class SemesterConfig {
     bool clearDescription = false,
   }) {
     return SemesterConfig(
+      id: id ?? this.id,
       name: name ?? this.name,
       startDate: startDate ?? this.startDate,
       totalWeeks: totalWeeks ?? this.totalWeeks,
@@ -103,8 +127,41 @@ class SemesterConfig {
   }
 
   @override
-  String toString() => 'SemesterConfig(name: $name, startDate: $startDate, '
-      'totalWeeks: $totalWeeks, description: $description)';
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is SemesterConfig &&
+        other.id == id &&
+        other.name == name &&
+        other.startDate == startDate &&
+        other.totalWeeks == totalWeeks &&
+        other.description == description;
+  }
+
+  @override
+  int get hashCode => Object.hash(id, name, startDate, totalWeeks, description);
+
+  @override
+  String toString() => 'SemesterConfig(id: $id, name: $name, '
+      'startDate: $startDate, totalWeeks: $totalWeeks, '
+      'description: $description)';
+}
+
+/// 由"学期名 + 开学日期"派生一个确定性 id（`sem-` + 8 位十六进制）。
+///
+/// 用 FNV-1a 而不是 `String.hashCode`：后者不保证跨进程 / 跨版本稳定，
+/// 而这个 id 会写进课程数据并跟着备份走，必须长期一致。
+///
+/// 只取"年月日"，时分秒不影响结果——同一学期的开学时间改个几点钟，
+/// 不该变成另一个学期。
+String deriveSemesterId(String name, DateTime startDate) {
+  final String key = '${name.trim()}|${startDate.year}-'
+      '${startDate.month.toString().padLeft(2, '0')}-'
+      '${startDate.day.toString().padLeft(2, '0')}';
+  int hash = 0x811C9DC5;
+  for (final int unit in key.codeUnits) {
+    hash = ((hash ^ (unit & 0xFF)) * 0x01000193) & 0xFFFFFFFF;
+  }
+  return 'sem-${hash.toRadixString(16).padLeft(8, '0')}';
 }
 
 /// 安全地把任意值转成 String。

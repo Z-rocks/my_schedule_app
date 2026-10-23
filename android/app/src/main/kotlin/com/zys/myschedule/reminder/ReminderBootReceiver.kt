@@ -29,6 +29,13 @@ class ReminderBootReceiver : BroadcastReceiver() {
                 } catch (e: Exception) {
                     Log.w(TAG, "开机重排失败", e)
                 }
+                // 上课提醒是独立的一套 prefs / 闹钟，同样要在重启后重排。
+                // 单独 try：一边失败不该让另一边也不排。
+                try {
+                    ClassReminderScheduler.reschedule(context)
+                } catch (e: Exception) {
+                    Log.w(TAG, "上课提醒开机重排失败", e)
+                }
             }
         }
     }

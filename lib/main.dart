@@ -18,6 +18,7 @@ import 'providers/semester_provider.dart';
 import 'providers/settings_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/app_log.dart';
+import 'services/class_reminder_service.dart';
 import 'services/storage_service.dart';
 import 'services/homework_check_entry.dart';
 import 'services/homework_reminder_service.dart';
@@ -119,6 +120,16 @@ Future<void> main() async {
   );
   HomeworkReminderController(
     homeworkProvider: homeworkProvider,
+    pluginProvider: pluginProvider,
+  ).start();
+
+  // 上课提醒：与作业提醒并列但**完全独立**（不同通道 / prefs / 通知渠道）。
+  // 它额外盯 `SemesterProvider`——换学期等于整套周次重算。
+  // 同样不持有引用：controller 被各 Provider 的监听闭包与 WidgetsBinding
+  // 观察者列表持有，生命周期与 App 进程一致。
+  ClassReminderController(
+    courseProvider: courseProvider,
+    semesterProvider: semesterProvider,
     pluginProvider: pluginProvider,
   ).start();
 

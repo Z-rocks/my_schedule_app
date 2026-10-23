@@ -47,10 +47,23 @@ const String kThemeSkinIdKey = 'theme_skin_id';
 /// 的数据，避免用兜底值伪造出一个学期。
 const String kSemesterConfigKey = 'semester_config';
 
+/// 已归档的学期列表，值为 `SemesterArchiveEntry` 的 JSON **数组**字符串。
+///
+/// 当前学期仍单独存在 [kSemesterConfigKey]（保持单学期时代的读取路径不变），
+/// 这个键只放"已经结束 / 被换下去"的学期。拆成两个键而不是一个列表，
+/// 是为了让"读当前学期"这条最热的路径不必解析整个列表。
+const String kSemesterArchiveKey = 'semester_archive';
+
 /// 是否允许在课表页左右滑动切换周次，值为 JSON `true` / `false`。
 ///
 /// 属于 **UI 偏好**（只影响交互，不影响数据），由 `SettingsProvider` 管理。
 const String kGestureSwitchWeekKey = 'gesture_switch_week';
+
+/// 上课提醒设置，值为 `ClassReminderSettings` 的 JSON 字符串。
+///
+/// 与作业提醒的设置**分开存**（作业的在 `homework_reminder_*` 系列键里）：
+/// 两者的开关语义不同，一个用户很可能只想要上课提醒。
+const String kClassReminderSettingsKey = 'class_reminder_settings';
 
 /// Hive 存储服务。
 ///

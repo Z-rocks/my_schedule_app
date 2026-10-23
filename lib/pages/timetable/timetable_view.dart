@@ -18,6 +18,7 @@ import '../../runtime/plugin_handle.dart';
 import '../../services/cookie_service.dart';
 import '../../services/course_sync_service.dart';
 import '../../services/section_time_service.dart';
+import '../../services/timetable_image_service.dart';
 import '../../services/timetable_logic.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
@@ -29,30 +30,6 @@ import 'course_detail_sheet.dart';
 
 /// 顶部日期栏的高度。
 const double kTopBarHeight = 48;
-
-/// **兜底**节次时间表（节次 → 上课时间段）。
-///
-/// **Phase 4.4 起这只是一份兜底值**：正常路径是用插件同步下来的真实作息
-/// （`SectionTimeService` 从 Hive `plugin_data.section_times` 读，
-/// 见 `_TimetableViewState._sectionTimes`）。只有当"没有任何插件提供作息"时
-/// 才用这份硬编码——它不可能对每一所学校都正确。
-///
-/// 保留它的另一个原因：新用户还没装插件时，课表时间列得显示点东西，
-/// 而不是一片空白。
-const Map<int, String> kDefaultSectionTimes = <int, String>{
-  1: '08:30-09:15',
-  2: '09:20-10:05',
-  3: '10:25-11:10',
-  4: '11:15-12:00',
-  5: '14:00-14:45',
-  6: '14:50-15:35',
-  7: '15:55-16:40',
-  8: '16:45-17:30',
-  9: '19:00-19:45',
-  10: '19:50-20:35',
-  11: '20:40-21:25',
-  12: '21:30-22:15',
-};
 
 /// 把日期格式化成 `yyyy/M/d`（如 `2026/9/23`，不补零）。
 String formatDateYmd(DateTime date) =>
@@ -114,6 +91,15 @@ class _TimetableViewState extends State<TimetableView> {
 
   /// 是否正在同步（Phase 4.4 顶部栏按钮的防重入闩锁）。
   bool _syncing = false;
+
+  /// 是否正在生成 / 分享课表图片（防连点，连点会生成两张图）。
+  bool _sharingImage = false;
+
+  /// 包住课表主体的 key：截图时靠它拿到 `RenderRepaintBoundary`。
+  ///
+  /// 只包**课表主体**、不含顶部操作栏——那上面有同步和添加按钮，
+  /// 截进图里发给同学很怪。周次信息放在分享标题里。
+  final GlobalKey _captureKey = GlobalKey();
 
   @override
   void didChangeDependencies() {
@@ -279,9 +265,13 @@ class _TimetableViewState extends State<TimetableView> {
       body: SafeArea(
         child: Column(
           children: <Widget>[
-            _buildTopBar(theme, config),
+            _buildTopBar(theme, config, visible),
             Expanded(
-              child: _buildBody(theme, config, visible, gestureSwitchWeek),
+              child: RepaintBoundary(
+                key: _captureKey,
+                child:
+                    _buildBody(theme, config, visible, gestureSwitchWeek),
+              ),
             ),
           ],
         ),
@@ -289,8 +279,12 @@ class _TimetableViewState extends State<TimetableView> {
     );
   }
 
-  /// 顶部日期栏：`[今天日期]  [第 N 周]  (学期已结束)   [+]`。
-  Widget _buildTopBar(AppTheme theme, SemesterConfig? config) {
+  /// 顶部日期栏：`[今天日期]  [第 N 周]  (学期已结束)   [分享] [同步] [+]`。
+  Widget _buildTopBar(
+    AppTheme theme,
+    SemesterConfig? config,
+    List<Course> visible,
+  ) {
     final DateTime today = DateTime.now();
     final bool semesterEnded = _isSemesterEnded(config, today);
 
@@ -348,6 +342,27 @@ class _TimetableViewState extends State<TimetableView> {
                 ),
               ),
             const Spacer(),
+            // 分享本周课表（图片）。没课时不显示——截出来是一张空白网格，
+            // 发了也没意义，反而让人以为功能坏了。
+            if (visible.isNotEmpty)
+              IconButton(
+                icon: _sharingImage
+                    ? SizedBox(
+                        width: theme.bodySize,
+                        height: theme.bodySize,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            theme.primary,
+                          ),
+                        ),
+                      )
+                    : const Icon(Icons.ios_share),
+                tooltip: _sharingImage ? '正在生成图片…' : '分享本周课表',
+                color: theme.primary,
+                onPressed:
+                    _sharingImage ? null : () => _shareTimetable(config),
+              ),
             // Phase 4.4：有可同步的插件时，课表页也能直接同步
             // （原来只能进「设置 → 插件管理 → 详情」才能点同步）。
             if (_syncablePlugins.isNotEmpty)
@@ -379,6 +394,36 @@ class _TimetableViewState extends State<TimetableView> {
         ),
       ),
     );
+  }
+
+  /// 分享本周课表：把当前显示的课表截成 PNG，再拉起系统分享面板。
+  ///
+  /// 截的是**用户看到的这一屏**（所见即所得），不重画一份导出专用的课表——
+  /// 那样等于维护两套布局，改了样式迟早对不上。
+  Future<void> _shareTimetable(SemesterConfig? config) async {
+    if (_sharingImage) return;
+    setState(() => _sharingImage = true);
+    try {
+      final TimetableImageResult result = await TimetableImageService.share(
+        boundaryKey: _captureKey,
+        subject: config == null ? '课表' : '第 $_week 周课表',
+      );
+      if (!mounted) return;
+      if (!result.ok) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(result.message)));
+        return;
+      }
+      if (!result.shared) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('图片已生成，但系统分享不可用：${result.file?.path}'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _sharingImage = false);
+    }
   }
 
   /// 课表页可用的同步插件（空列表 = 不显示同步按钮）。

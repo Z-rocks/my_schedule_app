@@ -1,13 +1,24 @@
 // 设置主页：分组列出扩展 / 外观 / 布局 / 数据 / 关于入口
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../providers/course_provider.dart';
+import '../../providers/exam_provider.dart';
+import '../../providers/homework_provider.dart';
+import '../../providers/message_provider.dart';
+import '../../providers/module_provider.dart';
+import '../../providers/plugin_provider.dart';
+import '../../providers/semester_provider.dart';
+import '../../providers/settings_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/app_version.dart';
+import '../../services/data_backup_service.dart';
 import '../../services/reminder_bridge.dart';
+import '../../services/storage_service.dart';
 import '../../services/system_bridge.dart';
 import '../../services/update_service.dart';
 import '../../services/widget_bridge.dart';
@@ -20,6 +31,7 @@ import 'plugin_manage_page.dart';
 import 'timetable_settings_page.dart';
 import 'widget_guide_page.dart';
 import 'workshop_page.dart';
+import 'class_reminder_page.dart';
 import 'homework_reminder_page.dart';
 
 /// 设置主页。
@@ -29,9 +41,19 @@ import 'homework_reminder_page.dart';
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
 
-  void _showSnack(BuildContext context, String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+  /// 弹一条 SnackBar。
+  ///
+  /// [replace] 为 `true` 时**先顶掉当前那条**再显示。数据导出/导入会先弹
+  /// "正在处理…"、再弹结果，不顶掉的话用户得等前一条自然消失才能看到结果，
+  /// 中间那几秒很像"卡住了"。
+  void _showSnack(
+    BuildContext context,
+    String message, {
+    bool replace = false,
+  }) {
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+    if (replace) messenger.removeCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(content: Text(message)));
   }
 
   /// 「当前主题」的展示值（**Phase 6**）。
@@ -116,13 +138,65 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
-  /// "清理缓存"：先弹确认框，确认后才提示（Phase 2 接真实清理）。
-  Future<void> _confirmClearCache(BuildContext context) async {
+  // ───────────────────── 数据：导出 / 导入 / 清理 ─────────────────────
+
+  /// 导出全部数据并拉起系统分享面板。
+  ///
+  /// 刻意**不做导出前确认**：这是个只读操作，问一遍只会多一次点击。
+  /// 但结果文案必须说清"备份里有什么、没有什么"——"不含登录凭据"这一点
+  /// 用户最容易误解（以为导完就能直接同步）。
+  Future<void> _exportData(BuildContext context) async {
+    _showSnack(context, '正在生成备份…');
+    final BackupResult result = await DataBackupService.export();
+    if (!context.mounted) return;
+
+    if (!result.ok) {
+      _showSnack(context, result.message);
+      return;
+    }
+    final String summary = _summarizeCounts(result.counts);
+    if (result.shared) {
+      _showSnack(context, '已生成备份（$summary）。备份不含登录信息，换机后需重新登录');
+    } else {
+      _showSnack(
+        context,
+        '已生成备份（$summary），但系统分享不可用：${result.file?.path}',
+      );
+    }
+  }
+
+  /// 选一个备份文件并覆盖导入。
+  ///
+  /// 校验放在**确认框之前**：校验不过就不该让用户看到"将覆盖 N 门课程"
+  /// 这种吓人的文案，更不该让他点了确认才发现文件不对。
+  Future<void> _importData(BuildContext context) async {
+    final PickedFile picked = await SystemBridge.pickFile();
+    if (!context.mounted) return;
+    // 用户点了取消：正常操作，不打扰。
+    if (picked.isCancelled) return;
+    if (!picked.ok) {
+      _showSnack(context, picked.error);
+      return;
+    }
+
+    final String text = picked.content!;
+    final String? invalid = DataBackupService.validate(text);
+    if (invalid != null) {
+      _showSnack(context, invalid);
+      return;
+    }
+
+    final Map<String, int> counts = DataBackupService.summarize(text);
     final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext dialogContext) => AlertDialog(
-        title: const Text('清理缓存'),
-        content: const Text('将清除临时文件与图片缓存，不会删除课程数据。'),
+        title: const Text('导入数据'),
+        content: Text(
+          '备份内容：${_summarizeCounts(counts)}\n\n'
+          '导入会「覆盖」当前全部数据。覆盖前会自动保存一份当前数据的'
+          '回滚点，万一导错了还能找回。\n\n'
+          '登录状态不在备份里，导入后需要重新登录插件。',
+        ),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -130,14 +204,157 @@ class SettingsPage extends StatelessWidget {
           ),
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('确定'),
+            child: const Text('覆盖导入'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    final RestoreResult result = await DataBackupService.import(text);
+    if (!context.mounted) return;
+    if (!result.ok) {
+      _showSnack(context, result.message);
+      return;
+    }
+
+    await _reloadAll(context);
+    if (!context.mounted) return;
+    final String plugins =
+        result.pluginCount > 0 ? ' · 插件 ${result.pluginCount} 个' : '';
+    _showSnack(context, '导入完成：${_summarizeCounts(result.counts)}$plugins');
+  }
+
+  /// 清理缓存（临时文件 + 图片缓存）。
+  Future<void> _clearCache(BuildContext context) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('清理缓存'),
+        content: const Text(
+          '将清除临时文件与图片缓存，不会删除课程数据。'
+          '已导出的备份文件也会保留。',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('清理'),
           ),
         ],
       ),
     );
     // showDialog 是异步的，回来时页面可能已被销毁。
     if (confirmed != true || !context.mounted) return;
-    _showSnack(context, '已清理（待实现）');
+
+    final ClearCacheResult result = await DataBackupService.clearCache();
+    if (!context.mounted) return;
+    if (!result.ok) {
+      _showSnack(context, result.message);
+      return;
+    }
+    // 文件删了，内存里的图片缓存还在——不清掉的话，用户感受不到"释放"。
+    PaintingBinding.instance.imageCache
+      ..clear()
+      ..clearLiveImages();
+    _showSnack(
+      context,
+      result.freedBytes == 0
+          ? '缓存已经很干净了'
+          : '已清理 ${_formatBytes(result.freedBytes)}',
+    );
+  }
+
+  /// 清空本机的课表业务数据（保留设置、插件、皮肤）。
+  Future<void> _clearAllData(BuildContext context) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('清空课表数据'),
+        content: const Text(
+          '将删除本机上的全部课程、考试、作业、消息，以及你对课程做过的修改。\n\n'
+          '设置、已装插件、皮肤不受影响。此操作不可撤销——'
+          '建议先「导出数据」留一份备份。',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    final int total = await DataBackupService.clearBusinessData();
+    if (!context.mounted) return;
+    await _reloadAll(context);
+    if (!context.mounted) return;
+    _showSnack(context, total == 0 ? '本来就没有数据' : '已清空 $total 条数据');
+  }
+
+  /// 导入 / 清空之后让内存里的 Provider 重新读盘。
+  ///
+  /// 不重启 App：重启体验太差，用户会以为崩了。但必须**按依赖顺序**来——
+  /// 插件能力决定模块可用性，所以插件先于模块。
+  Future<void> _reloadAll(BuildContext context) async {
+    if (!context.mounted) return;
+    final CourseProvider courses = context.read<CourseProvider>();
+    final ExamProvider exams = context.read<ExamProvider>();
+    final HomeworkProvider homeworks = context.read<HomeworkProvider>();
+    final MessageProvider messages = context.read<MessageProvider>();
+    final SemesterProvider semester = context.read<SemesterProvider>();
+    final SettingsProvider settings = context.read<SettingsProvider>();
+    final ThemeProvider theme = context.read<ThemeProvider>();
+    final PluginProvider plugins = context.read<PluginProvider>();
+    final ModuleProvider modules = context.read<ModuleProvider>();
+
+    await Future.wait(<Future<void>>[
+      courses.loadFromStorage(),
+      exams.loadFromStorage(),
+      homeworks.loadFromStorage(),
+      messages.loadFromStorage(),
+      semester.loadFromStorage(),
+      settings.loadFromStorage(),
+      plugins.loadFromStorage(),
+    ]);
+    await theme.loadFromStorage();
+    await theme.restoreStoredSkin();
+    await modules.loadFromStorage();
+    // 插件 js 可能刚被恢复：重载要起沙箱，慢，不阻塞提示文案。
+    unawaited(plugins.loadAllEnabledPlugins());
+  }
+
+  /// 把各 Box 的条目数拼成一句人话，如「课表 32 · 考试 5 · 作业 12」。
+  static String _summarizeCounts(Map<String, int> counts) {
+    const Map<String, String> labels = <String, String>{
+      kCoursesBoxName: '课表',
+      kExamsBoxName: '考试',
+      kHomeworksBoxName: '作业',
+      kMessagesBoxName: '消息',
+      kOverridesBoxName: '自定义',
+    };
+    final List<String> parts = <String>[];
+    for (final MapEntry<String, String> entry in labels.entries) {
+      final int count = counts[entry.key] ?? 0;
+      if (count > 0) parts.add('${entry.value} $count');
+    }
+    return parts.isEmpty ? '没有可备份的数据' : parts.join(' · ');
+  }
+
+  static String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
   @override
@@ -210,6 +427,12 @@ class SettingsPage extends StatelessWidget {
             title: '提醒',
             children: <Widget>[
               _SettingsTile(
+                title: '上课提醒',
+                subtitleText: '快到上课时间时提醒，按课表自动排期',
+                showChevron: true,
+                onTap: () => _push(context, const ClassReminderPage()),
+              ),
+              _SettingsTile(
                 title: '作业提醒',
                 subtitleText: ReminderBridge.isBackgroundCheckSupported
                     ? '截止前按档位提醒，发通知前先查作业状态'
@@ -242,20 +465,30 @@ class SettingsPage extends StatelessWidget {
                 ),
               ],
             ),
+          // 数据：全 App 唯一的数据安全网。没有后端、没有云同步，
+          // 换手机 / 清应用数据 / 卸载重装全靠这里的导出导入。
           _SettingsGroup(
             title: '数据',
             children: <Widget>[
               _SettingsTile(
                 title: '导出数据',
-                onTap: () => _showSnack(context, '导出（待实现）'),
+                subtitleText: '课表、考试、作业、插件备份成一个文件',
+                onTap: () => _exportData(context),
               ),
               _SettingsTile(
                 title: '导入数据',
-                onTap: () => _showSnack(context, '导入（待实现）'),
+                subtitleText: '从备份文件恢复，会覆盖当前数据',
+                onTap: () => _importData(context),
               ),
               _SettingsTile(
                 title: '清理缓存',
-                onTap: () => _confirmClearCache(context),
+                onTap: () => _clearCache(context),
+              ),
+              _SettingsTile(
+                title: '清空课表数据',
+                subtitleText: '保留设置与插件，删除全部课程与作业',
+                isDestructive: true,
+                onTap: () => _clearAllData(context),
               ),
             ],
           ),
@@ -482,6 +715,8 @@ class _CheckUpdateTileState extends State<_CheckUpdateTile> {
 ///
 /// [onTap] 为 `null` 时该行不可点击（如"版本号"）。
 /// [showChevron] 用于可跳转的条目，[trailingText] 用于展示只读值。
+/// [isDestructive] 让标题用错误色——**不可撤销的操作必须看起来就不一样**，
+/// 不能和"清理缓存"这种随时能重做的操作长一个样。
 class _SettingsTile extends StatelessWidget {
   const _SettingsTile({
     required this.title,
@@ -489,6 +724,7 @@ class _SettingsTile extends StatelessWidget {
     this.showChevron = false,
     this.trailingText,
     this.subtitleText,
+    this.isDestructive = false,
   });
 
   final String title;
@@ -496,6 +732,7 @@ class _SettingsTile extends StatelessWidget {
   final bool showChevron;
   final String? trailingText;
   final String? subtitleText;
+  final bool isDestructive;
 
   @override
   Widget build(BuildContext context) {
@@ -506,7 +743,10 @@ class _SettingsTile extends StatelessWidget {
     return ListTile(
       title: Text(
         title,
-        style: TextStyle(fontSize: theme.bodySize, color: theme.onBackground),
+        style: TextStyle(
+          fontSize: theme.bodySize,
+          color: isDestructive ? theme.error : theme.onBackground,
+        ),
       ),
       subtitle: subtitleText == null
           ? null

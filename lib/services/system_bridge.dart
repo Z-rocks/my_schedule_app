@@ -206,6 +206,38 @@ class SystemBridge {
     }
   }
 
+  /// 让用户挑一个文件并读回文本内容（导入数据用）。
+  ///
+  /// 走 Android 的 SAF（`ACTION_OPEN_DOCUMENT`）：**不需要任何存储权限**，
+  /// 用户能选到"下载 / 微信接收的文件 / 网盘"里的任意位置。
+  ///
+  /// 返回三态（见 [PickedFile]）：成功 / 用户取消 / 失败。
+  /// 必须区分"取消"和"失败"——取消是正常操作，弹错误提示会很烦人；
+  /// 而失败（文件过大、读不出来）不说清楚，用户只会觉得"点了没反应"。
+  ///
+  /// iOS 暂未实现（需要 `UIDocumentPickerViewController`），
+  /// 返回失败并给出可读原因，而不是假装支持。
+  static Future<PickedFile> pickFile({
+    String mimeType = 'application/json',
+  }) async {
+    if (!isAndroidSettingsSupported) {
+      return const PickedFile.failure('当前平台暂不支持导入，请在 Android 设备上操作');
+    }
+    try {
+      final String? text = await _channel.invokeMethod<String>(
+        'pickFile',
+        <String, dynamic>{'mimeType': mimeType},
+      );
+      // 原生侧约定：null = 用户取消，或这台设备没有可用的文件选择器。
+      if (text == null) return const PickedFile.cancelled();
+      return PickedFile.success(text);
+    } on MissingPluginException {
+      return const PickedFile.failure('系统版本过旧，暂不支持选择文件');
+    } on PlatformException catch (error) {
+      return PickedFile.failure(error.message ?? '读取文件失败');
+    }
+  }
+
   static Future<bool> _open(String method) async {
     if (!isAndroidSettingsSupported) return false;
     try {
@@ -217,4 +249,33 @@ class SystemBridge {
       return false;
     }
   }
+}
+
+/// [SystemBridge.pickFile] 的结果：成功 / 用户取消 / 失败三态。
+///
+/// 单独建一个类而不是用可空 `String`，是因为"取消"和"失败"必须能区分：
+/// 取消要静默，失败要告诉用户为什么（文件太大 / 打不开 / 系统不支持）。
+class PickedFile {
+  const PickedFile.success(String text)
+      : content = text,
+        error = '';
+
+  const PickedFile.cancelled()
+      : content = null,
+        error = '';
+
+  const PickedFile.failure(String reason)
+      : content = null,
+        error = reason;
+
+  /// 文件内容；取消或失败时为 `null`。
+  final String? content;
+
+  /// 失败原因（面向用户）；取消时为空串。
+  final String error;
+
+  bool get ok => content != null;
+
+  /// 用户主动取消，或这台设备没有可用的文件选择器。
+  bool get isCancelled => content == null && error.isEmpty;
 }

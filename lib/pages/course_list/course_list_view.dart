@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../models/course.dart';
 import '../../models/time_place.dart';
 import '../../providers/course_provider.dart';
+import '../../services/course_filter.dart';
 import '../../services/timetable_logic.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
@@ -18,15 +19,54 @@ import '../timetable/course_detail_sheet.dart';
 /// 与课表页共用同一个数据源，因此"同步后课表有课、列表没课"这种不一致不会再出现。
 ///
 /// - 空列表 → [EmptyState]（保留 Phase 1.5 的空态样式）
-/// - 有数据 → `ListView.builder`，每张卡片：课程名 / 教师 / 学分 + 类别 / 时间地点
+/// - 有数据 → 搜索框 + 类别筛选 + 课程卡片列表
 /// - 点卡片 → 复用课表页的 [showCourseDetailSheet]（只读详情）
-class CourseListView extends StatelessWidget {
+class CourseListView extends StatefulWidget {
   const CourseListView({super.key});
+
+  @override
+  State<CourseListView> createState() => _CourseListViewState();
+}
+
+class _CourseListViewState extends State<CourseListView> {
+  final TextEditingController _controller = TextEditingController();
+
+  /// 当前搜索词（原样保留，匹配时由 [filterCourses] 处理大小写与空格）。
+  String _query = '';
+
+  /// 当前选中的类别；空串表示"全部"。
+  String _category = '';
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onQueryChanged(String value) {
+    if (value == _query) return;
+    setState(() => _query = value);
+  }
+
+  void _clearQuery() {
+    _controller.clear();
+    _onQueryChanged('');
+  }
 
   @override
   Widget build(BuildContext context) {
     final AppTheme theme = AppThemeExtension.of(context);
-    final List<Course> courses = context.watch<CourseProvider>().visibleCourses;
+    final List<Course> all = context.watch<CourseProvider>().visibleCourses;
+
+    // 数据变了（同步 / 删除）之后，原来选中的类别可能已经不存在——
+    // 不清理的话会出现"筛选了一个不存在的类别 → 永远空列表"。
+    final List<String> categories = collectCategories(all);
+    if (_category.isNotEmpty && !categories.contains(_category)) {
+      _category = '';
+    }
+
+    final List<Course> courses =
+        filterCourses(all, _query, category: _category);
 
     return Scaffold(
       backgroundColor: theme.background,
@@ -34,18 +74,196 @@ class CourseListView extends StatelessWidget {
         title: const Text('课程'),
         centerTitle: true,
       ),
-      body: courses.isEmpty
+      body: all.isEmpty
           ? const EmptyState(
               icon: Icons.book_outlined,
               title: '暂无课程',
               subtitle: '在课表页点右上角 + 添加，或安装插件从教务系统导入',
             )
-          : ListView.builder(
-              padding: EdgeInsets.all(theme.cardPadding),
-              itemCount: courses.length,
-              itemBuilder: (BuildContext context, int index) =>
-                  _CourseListCard(course: courses[index]),
+          : Column(
+              children: <Widget>[
+                _SearchField(
+                  controller: _controller,
+                  onChanged: _onQueryChanged,
+                  onClear: _clearQuery,
+                ),
+                if (categories.length > 1)
+                  _CategoryBar(
+                    categories: categories,
+                    selected: _category,
+                    onSelect: (String value) =>
+                        setState(() => _category = value),
+                  ),
+                Expanded(
+                  child: courses.isEmpty
+                      ? const EmptyState(
+                          icon: Icons.search_off,
+                          title: '没有匹配的课程',
+                          subtitle: '换个关键词试试，或点「全部」看所有课程',
+                        )
+                      : ListView.builder(
+                          padding: EdgeInsets.all(theme.cardPadding),
+                          itemCount: courses.length,
+                          itemBuilder: (BuildContext context, int index) =>
+                              _CourseListCard(course: courses[index]),
+                        ),
+                ),
+              ],
             ),
+    );
+  }
+}
+
+/// 搜索输入框。
+class _SearchField extends StatelessWidget {
+  const _SearchField({
+    required this.controller,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppTheme theme = AppThemeExtension.of(context);
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        theme.cardPadding,
+        theme.gridGap,
+        theme.cardPadding,
+        0,
+      ),
+      child: TextField(
+        controller: controller,
+        onChanged: onChanged,
+        textInputAction: TextInputAction.search,
+        style: TextStyle(fontSize: theme.bodySize, color: theme.onBackground),
+        decoration: InputDecoration(
+          hintText: '搜索课程名 / 教师 / 教室',
+          hintStyle: TextStyle(
+            fontSize: theme.bodySize,
+            color: theme.onBackground.withValues(alpha: 0.4),
+          ),
+          prefixIcon: Icon(
+            Icons.search,
+            size: theme.titleSize,
+            color: theme.onBackground.withValues(alpha: 0.5),
+          ),
+          // 有内容才显示清除按钮：空框上挂一个 ✕ 会让人误以为能点出什么。
+          suffixIcon: controller.text.isEmpty
+              ? null
+              : IconButton(
+                  icon: Icon(Icons.close, size: theme.titleSize),
+                  color: theme.onBackground.withValues(alpha: 0.5),
+                  onPressed: onClear,
+                  tooltip: '清除',
+                ),
+          filled: true,
+          fillColor: theme.surface,
+          isDense: true,
+          contentPadding: EdgeInsets.symmetric(vertical: theme.gridGap * 1.6),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(theme.cardRadius),
+            borderSide: BorderSide.none,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 类别筛选条：`全部` + 各课程类别。
+///
+/// 只有一种类别时整条不显示（筛选一个选项没有意义）。
+class _CategoryBar extends StatelessWidget {
+  const _CategoryBar({
+    required this.categories,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  final List<String> categories;
+  final String selected;
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppTheme theme = AppThemeExtension.of(context);
+
+    return SizedBox(
+      height: theme.titleSize * 2.6,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: EdgeInsets.symmetric(
+          horizontal: theme.cardPadding,
+          vertical: theme.gridGap,
+        ),
+        children: <Widget>[
+          _FilterChip(
+            label: '全部',
+            selected: selected.isEmpty,
+            // 再点一次"全部"不该变成未选中（列表会变成空），保持选中即可。
+            onTap: () => onSelect(''),
+          ),
+          for (final String category in categories)
+            _FilterChip(
+              label: category,
+              selected: selected == category,
+              // 再点一次已选中的类别 = 取消筛选，回到全部。
+              onTap: () => onSelect(selected == category ? '' : category),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FilterChip extends StatelessWidget {
+  const _FilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppTheme theme = AppThemeExtension.of(context);
+
+    return Padding(
+      padding: EdgeInsets.only(right: theme.gridGap),
+      child: Material(
+        color: selected ? theme.primary : theme.surface,
+        borderRadius: BorderRadius.circular(theme.cardRadius),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(theme.cardRadius),
+          onTap: onTap,
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: theme.cardPadding,
+              vertical: theme.gridGap,
+            ),
+            child: Center(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: theme.captionSize,
+                  fontWeight:
+                      selected ? FontWeight.w500 : FontWeight.normal,
+                  color: selected ? theme.onPrimary : theme.onBackground,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

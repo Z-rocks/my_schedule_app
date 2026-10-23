@@ -1,6 +1,7 @@
 package com.zys.myschedule
 
 import android.Manifest
+import android.app.Activity
 import android.app.AlarmManager
 import android.content.ActivityNotFoundException
 import android.content.ContentValues
@@ -13,6 +14,9 @@ import android.util.Log
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
+import com.zys.myschedule.reminder.ClassReminderContract
+import com.zys.myschedule.reminder.ClassReminderNotifier
+import com.zys.myschedule.reminder.ClassReminderScheduler
 import com.zys.myschedule.reminder.HomeworkReminderFireService
 import com.zys.myschedule.reminder.HomeworkReminderNotifier
 import com.zys.myschedule.reminder.HomeworkReminderScheduler
@@ -53,6 +57,15 @@ class MainActivity : FlutterActivity() {
 
     /** Android 7–9 保存相册前的运行时权限申请；等待回调期间暂存参数。 */
     private var pendingQrSave: PendingQrSave? = null
+
+    /**
+     * 「导入数据」选文件时暂存的 MethodChannel.Result。
+     *
+     * 选文件必须走 `startActivityForResult`（用户可能要想很久），
+     * 所以回调不能立刻返回——先把 result 存下来，等 [onActivityResult] 再回。
+     * 同时只允许一个在飞，避免用户连点两次导致 result 被顶掉、Dart 侧永远等不到。
+     */
+    private var pendingPickFile: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -198,6 +211,22 @@ class MainActivity : FlutterActivity() {
                             ),
                         )
                     }
+                    // 导入数据：让用户挑一个备份文件并把内容读回 Dart。
+                    // 走 SAF（ACTION_OPEN_DOCUMENT），不需要任何存储权限，
+                    // 用户能选到"下载 / 微信接收的文件 / 网盘"里的任意位置。
+                    "pickFile" -> {
+                        if (pendingPickFile != null) {
+                            result.error("busy", "已经有一个文件选择框在等待结果", null)
+                        } else {
+                            pendingPickFile = result
+                            if (!launchPickFile(call.argument<String>("mimeType"))) {
+                                pendingPickFile = null
+                                // 没有文件管理器 / 系统拦掉了：返回 null 让 Dart 侧提示，
+                                // 不用 error（那不是异常，是"这台设备做不了"）。
+                                result.success(null)
+                            }
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -306,6 +335,44 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
+        // 6. `com.zys.myschedule/class_reminder`（Dart → Kotlin）：上课提醒。
+        //    与作业提醒**完全独立**的一套通道 / prefs / 通知渠道——两者排期
+        //    时机与条目结构都不同，共用一个 syncPlan 会互相覆盖。
+        //    上课提醒不需要后台校验，所以这里没有前台服务和校验句柄。
+        ClassReminderNotifier.ensureChannel(applicationContext)
+        MethodChannel(messenger, ClassReminderContract.CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "syncPlan" -> {
+                        val json = call.argument<String>("json")
+                        if (json.isNullOrBlank()) {
+                            result.error("bad_args", "json 为空", null)
+                        } else {
+                            result.success(
+                                ClassReminderScheduler.sync(applicationContext, json),
+                            )
+                        }
+                    }
+
+                    "cancelAll" -> {
+                        ClassReminderScheduler.cancelAll(applicationContext)
+                        result.success(null)
+                    }
+
+                    // 通知权限是系统级能力，与"哪类提醒"无关，直接复用同一个申请入口。
+                    "hasNotificationPermission" ->
+                        result.success(ClassReminderNotifier.canPost(applicationContext))
+
+                    "requestNotificationPermission" ->
+                        result.success(requestNotificationPermission())
+
+                    "showTestNotification" ->
+                        result.success(ClassReminderNotifier.postTest(applicationContext))
+
+                    else -> result.notImplemented()
+                }
+            }
+
         // 引擎刚配好：如果启动 intent 里带着点击目标，转存起来等 Dart 取。
         consumeIntentTarget(intent)?.let {
             pendingLaunchTarget = it
@@ -334,12 +401,93 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // ───────────────────── 导入数据：选文件 ─────────────────────
+
+    /**
+     * 拉起系统文件选择器（SAF）。返回 `false` 表示这台设备打不开。
+     *
+     * 刻意**不按单一 MIME 过滤**：备份文件是 `.json`，但不少文件管理器
+     * （尤其国产 ROM 自带的）会把它报成 `text/plain` 或
+     * `application/octet-stream`。只认 `application/json` 的话，用户会在
+     * 自己的手机里"看不到刚导出的那份备份"。
+     */
+    @Suppress("DEPRECATION")
+    private fun launchPickFile(mimeType: String?): Boolean {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = mimeType?.takeIf { it.isNotBlank() } ?: "*/*"
+            putExtra(
+                Intent.EXTRA_MIME_TYPES,
+                arrayOf("application/json", "text/plain", "application/octet-stream"),
+            )
+        }
+        return try {
+            startActivityForResult(intent, REQ_PICK_FILE)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * 选文件回来了：把内容读成 UTF-8 字符串交回 Dart。
+     *
+     * - 用户取消 → `success(null)`：取消是正常操作，不该当错误弹提示；
+     * - 读取失败 / 文件过大 → `error(...)`：让 Dart 侧能说出具体原因。
+     *
+     * 必须调 `super`：Flutter 插件自己的 `startActivityForResult` 也要靠它转发。
+     */
+    @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_PICK_FILE) return
+        val pending = pendingPickFile ?: return
+        pendingPickFile = null
+
+        if (resultCode != Activity.RESULT_OK) {
+            pending.success(null)
+            return
+        }
+        val uri = data?.data
+        if (uri == null) {
+            pending.success(null)
+            return
+        }
+        try {
+            val text = contentResolver.openInputStream(uri)?.use { input ->
+                // 不用 readBytes()：那会把任意大小的文件一次性读进内存。
+                // 备份文件正常只有几十 KB，超过上限的多半是用户选错了文件。
+                val out = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                var total = 0
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    total += read
+                    if (total > MAX_BACKUP_BYTES) {
+                        throw IllegalStateException("文件超过 32MB，不像是备份文件")
+                    }
+                    out.write(buffer, 0, read)
+                }
+                out.toByteArray().toString(Charsets.UTF_8)
+            }
+            if (text == null) {
+                pending.error("read_failed", "无法打开所选文件", null)
+            } else {
+                pending.success(text)
+            }
+        } catch (e: Exception) {
+            pending.error("read_failed", e.message ?: "读取文件失败", null)
+        }
+    }
+
     override fun onDestroy() {
         // 引擎销毁后通道失效：解除桥接，避免 pin 结果回调打到已死的通道。
         widgetMethodChannel?.let { WidgetPinBridge.detach(it) }
         widgetMethodChannel = null
         navMethodChannel = null
         pendingQrSave = null
+        pendingPickFile = null
         super.onDestroy()
     }
 
@@ -551,6 +699,17 @@ class MainActivity : FlutterActivity() {
 
         /** 通知权限（Android 13+）的请求码。 */
         private const val REQ_NOTIFICATIONS = 4702
+
+        /** 「导入数据」选文件的请求码。 */
+        private const val REQ_PICK_FILE = 4703
+
+        /**
+         * 备份文件大小上限（32MB）。
+         *
+         * 正常备份只有几十 KB 到几百 KB（最大的部分是插件 js 源码）。
+         * 设上限是为了防止用户误选了一个大文件把 App 撑爆内存。
+         */
+        private const val MAX_BACKUP_BYTES = 32L * 1024 * 1024
 
         /**
          * 冷启动时暂存的小组件点击目标（Dart 侧 `WidgetNav` 来取）。

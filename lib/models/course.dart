@@ -34,6 +34,14 @@ class Course {
   /// 来源插件 ID，用户自建为 [kUserSourcePluginId]。
   final String sourcePluginId;
 
+  /// 所属学期 id（`SemesterConfig.id`）。空串表示"没打归属"。
+  ///
+  /// **空串的语义是"属于当前学期"**，不是"不属于任何学期"——这是为了让
+  /// 多学期归档上线前的旧数据（全都没有这个字段）在升级后仍然显示在课表上。
+  /// 真正需要"归档隔离"时由 `SemesterArchiveService` 在切换学期那一刻
+  /// 给这些旧课程补上旧学期 id（见 `stampSemester`）。
+  final String semesterId;
+
   /// 用户覆盖层，`null` 表示用户没有做过任何修改。
   final UserOverride? userOverride;
 
@@ -45,8 +53,12 @@ class Course {
     required this.category,
     required this.timePlaces,
     required this.sourcePluginId,
+    this.semesterId = '',
     this.userOverride,
   });
+
+  /// 是否已明确归属某个学期（旧数据为 `false`）。
+  bool get hasSemester => semesterId.isNotEmpty;
 
   /// 从 JSON 构造，缺失或类型异常的字段使用安全默认值，不抛异常。
   factory Course.fromJson(Map<String, dynamic> json) {
@@ -61,6 +73,7 @@ class Course {
       timePlaces: _asTimePlaceList(json['timePlaces']),
       sourcePluginId:
           _asString(json['sourcePluginId'], fallback: kUserSourcePluginId),
+      semesterId: _asString(json['semesterId']),
       userOverride:
           overrideJson == null ? null : UserOverride.fromJson(overrideJson),
     );
@@ -90,6 +103,19 @@ class Course {
   bool isActiveInWeek(int week) =>
       displayTimePlaces.any((TimePlace tp) => tp.isActiveInWeek(week));
 
+  /// 该课程是否属于学期 [semesterId]。
+  ///
+  /// 规则（与 `SemesterArchiveService.coursesOf` 一致，此处只做单条判断）：
+  /// - 课程已打归属 → 严格相等；
+  /// - 课程没有归属（旧数据）→ 只有 [currentSemesterId] 认领它。
+  bool belongsToSemester(
+    String semesterId, {
+    required String currentSemesterId,
+  }) {
+    if (hasSemester) return this.semesterId == semesterId;
+    return semesterId == currentSemesterId;
+  }
+
   /// 序列化为可写入 Hive / JSON 的 Map。
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -100,6 +126,7 @@ class Course {
       'category': category,
       'timePlaces': timePlaces.map((TimePlace e) => e.toJson()).toList(),
       'sourcePluginId': sourcePluginId,
+      'semesterId': semesterId,
       'userOverride': userOverride?.toJson(),
     };
   }
@@ -115,6 +142,7 @@ class Course {
     String? category,
     List<TimePlace>? timePlaces,
     String? sourcePluginId,
+    String? semesterId,
     UserOverride? userOverride,
     bool clearUserOverride = false,
   }) {
@@ -126,6 +154,7 @@ class Course {
       category: category ?? this.category,
       timePlaces: timePlaces ?? this.timePlaces,
       sourcePluginId: sourcePluginId ?? this.sourcePluginId,
+      semesterId: semesterId ?? this.semesterId,
       userOverride:
           clearUserOverride ? null : (userOverride ?? this.userOverride),
     );
@@ -134,7 +163,8 @@ class Course {
   @override
   String toString() => 'Course(id: $id, name: $name, teacher: $teacher, '
       'unit: $unit, category: $category, timePlaces: $timePlaces, '
-      'sourcePluginId: $sourcePluginId, userOverride: $userOverride)';
+      'sourcePluginId: $sourcePluginId, semesterId: $semesterId, '
+      'userOverride: $userOverride)';
 }
 
 /// 安全地把任意值转成 String。

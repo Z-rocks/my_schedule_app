@@ -38,8 +38,9 @@ class SceneDelegate: FlutterSceneDelegate {
     }
     channelsRegistered = true
     ReminderChannelHandler.register(with: controller.binaryMessenger)
+    ClassReminderChannelHandler.register(with: controller.binaryMessenger)
     LoginQrChannelHandler.register(with: controller.binaryMessenger)
     SystemChannelHandler.register(with: controller.binaryMessenger)
-    NSLog("[SceneDelegate] 原生通道已注册（reminder / login_qr / system）")
+    NSLog("[SceneDelegate] 原生通道已注册（reminder / class_reminder / login_qr / system）")
   }
 }
