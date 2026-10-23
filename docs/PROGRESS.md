@@ -2526,4 +2526,6 @@
 | 2026-10-23 | **空串 `semesterId` 的语义定为"属于当前学期"**，不是"无归属"。否则升级后旧课全部不匹配任何学期，课表瞬间变空，用户会以为数据丢了。代价：`switchTo` 必须在切换那一刻先把空串课程打上**旧学期** id，否则它们会被新学期认领——这一步由 `SemesterArchiveService` 自动做 | ✅ 已实现 |
 | 2026-10-23 | **打归属直接改 Box 里的原始 JSON，不走 `Course` 模型**：能保留 Box 里可能存在但模型还不认识的键（向前兼容），也不会把 `userOverride` 从 `overrides` Box 顺手复制进课程 JSON（覆盖层以 `overrides` Box 为权威来源，`CourseProvider` 落盘时是 `clearUserOverride` 的） | ✅ 已实现 + 测试 |
 | 2026-10-23 | **待真机验证**：上课提醒（排期是否真的响、通知点击是否跳课表、开机重排）、课表图片分享（分享面板能否收到 PNG）、课程搜索筛选（输入法全角空格）、多学期归档（无 UI，只需确认升级后课表不变空） | ⚠️ 待真机验证 |
+| 2026-10-23 | **发版 0.7.0 撞上 Gitee 附件配额**：仓库附件总配额 1 GB，9 个版本各 4 个包已占 1004.5 MB，上传到第二个包就报 `400 文件大小已超出仓库附件配额：1 GB`。**以后每次发版前先跑配额预检**（`GET /repos/{o}/{r}/releases/{id}/attach_files` 拿 `size` 求和），单版 4 包约 126 MB，1 GB 只够 8 个版本。本次已删 v0.3.1~v0.3.4 的 APK 腾出 441.7 MB（Release 文字说明与 tag 保留），现余 394.3 MB | ✅ 已解决，后续需持续清理 |
+| 2026-10-23 | **Gitee Release 的 `html_url` 在 API 里返回 `null`**，不要依赖它拼页面地址；固定地址是 `https://gitee.com/{owner}/{repo}/releases/tag/{tag}`。另外 `POST /releases` 失败重试会因「同 tag 已有 Release」返回 400，脚本里已处理为列出已存在的 id | ✅ 已记录 |
 
