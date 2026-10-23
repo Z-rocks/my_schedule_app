@@ -136,6 +136,76 @@ class SystemBridge {
     }
   }
 
+  /// 设备型号，形如 `Xiaomi 2211133C`。
+  ///
+  /// 用途：日志导出的头部信息。**机型特有问题**（MIUI 杀后台、
+  /// 某家 ROM 的权限策略）只有拿到型号才能定位，所以值得单独取一次。
+  /// 非 Android / 通道不可用返回空串。
+  static Future<String> deviceModel() async {
+    if (!isAndroidSettingsSupported) return '';
+    try {
+      final String? value = await _channel.invokeMethod<String>('deviceModel');
+      return value ?? '';
+    } on MissingPluginException {
+      return '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
+  /// 系统版本，形如 `Android 14 (SDK 34)`。
+  ///
+  /// 用途：日志导出的头部信息。**不能用 `Platform.operatingSystemVersion`**：
+  /// Android 上它返回构建指纹（`android BP2A.250605.031.A3`），
+  /// 既不是版本号也不是能对照的编号，排查"某版本才有"的问题时用不上。
+  ///
+  /// 非 Android / 通道不可用返回空串，调用方自行回落。
+  static Future<String> androidRelease() async {
+    if (!isAndroidSettingsSupported) return '';
+    try {
+      final String? value =
+          await _channel.invokeMethod<String>('androidRelease');
+      return value ?? '';
+    } on MissingPluginException {
+      return '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
+  /// 用系统分享面板发一个本地文件（日志导出用）。
+  ///
+  /// 走 `FileProvider` + `Intent.ACTION_SEND`：微信、QQ、邮件、网盘
+  /// 都能作为目标，用户想发到哪就发到哪——比"保存到某个固定目录、
+  /// 再让用户自己去翻文件管理器"靠谱得多。
+  ///
+  /// [filePath] 必须落在 `FileProvider` 声明过的目录下
+  /// （见 `res/xml/file_paths.xml`：缓存目录的 `export/` 子目录）。
+  ///
+  /// 返回 `true` 表示分享面板已拉起（**不代表**用户真的发出去）。
+  static Future<bool> shareFile(
+    String filePath, {
+    String mimeType = 'text/plain',
+    String subject = '',
+  }) async {
+    if (!isAndroidSettingsSupported || filePath.isEmpty) return false;
+    try {
+      final bool? ok = await _channel.invokeMethod<bool>(
+        'shareFile',
+        <String, dynamic>{
+          'path': filePath,
+          'mimeType': mimeType,
+          'subject': subject,
+        },
+      );
+      return ok ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
   static Future<bool> _open(String method) async {
     if (!isAndroidSettingsSupported) return false;
     try {

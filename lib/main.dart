@@ -1,6 +1,8 @@
 // App 入口：装配 Provider 树（含 PluginProvider → ModuleProvider 的能力联动）
 import 'dart:async';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -15,6 +17,7 @@ import 'providers/plugin_provider.dart';
 import 'providers/semester_provider.dart';
 import 'providers/settings_provider.dart';
 import 'providers/theme_provider.dart';
+import 'services/app_log.dart';
 import 'services/storage_service.dart';
 import 'services/homework_check_entry.dart';
 import 'services/homework_reminder_service.dart';
@@ -23,6 +26,19 @@ import 'services/widget_bridge.dart';
 Future<void> main() async {
   // 必须先初始化绑定，Hive.initFlutter() 依赖平台通道（path_provider）。
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 日志**最先**起来：后面任何一步出问题都留得下记录。
+  // 目录拿不到时内部吞掉异常并写进 `AppLog.initError`，不影响启动
+  //（日志系统坏了不能让 App 起不来）。
+  // 初始化会顺手接管全局 `debugPrint`，所以下面的既有日志自动进文件。
+  await AppLog.init();
+  AppLog.i('app', '启动', <String, Object?>{
+    'mode': kReleaseMode ? 'release' : (kProfileMode ? 'profile' : 'debug'),
+    'os': Platform.operatingSystem,
+    'osVersion': Platform.operatingSystemVersion,
+  });
+  // 退到后台 / 被杀之前把缓冲区落盘：崩溃前那几条恰恰最关键。
+  WidgetsBinding.instance.addObserver(_LogLifecycleFlusher());
 
   // 打开 Hive Box；失败不会抛异常，只记日志，App 仍能以"无数据"状态启动。
   await StorageService.init();
@@ -284,3 +300,18 @@ Widget buildApp({
 /// 实际逻辑在 `runHomeworkCheckEntrypoint()`（services/homework_check_entry.dart）。
 @pragma('vm:entry-point')
 void homeworkNotificationCheckMain() => runHomeworkCheckEntrypoint();
+
+/// 生命周期观察者：退到后台 / 被系统回收前把日志落盘。
+///
+/// 为什么不能只靠 800ms 的定时 flush：用户复现完 bug 直接划掉应用，
+/// 最后那几百毫秒的记录正是"点完按钮就崩了"的那部分。
+class _LogLifecycleFlusher extends WidgetsBindingObserver {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      unawaited(AppLog.flush());
+    }
+  }
+}

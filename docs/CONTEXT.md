@@ -179,6 +179,10 @@
 - 网络请求必须有 try-catch
 - 错误用 `debugPrint` 输出，**不用 `print`**
 - 用户可见错误用 SnackBar
+- **用户能感知的失败**（同步失败、登录失败、更新源失败）额外调 `AppLog.e` / `AppLog.w`
+  记一条——`debugPrint` 只进 debug 级，会淹没在进度日志里，日志页标不出来
+- 日志里**绝不能有凭据**：`AppLog.redactMap` 会按 key 抹掉 password / token / cookie，
+  URL 走 `AppLog.sanitizeUrl`（去掉 query，保留端口）。新增埋点时不要绕过这两个函数
 
 ### 4.5 状态管理
 - 所有 Provider 继承 `ChangeNotifier`
@@ -233,4 +237,5 @@
 | v1.2 | 2026-09-23 | Phase 3.4 引入 path_provider，支持插件文件持久化 |
 | v1.3 | 2026-09-23 | Phase 3.5.1 补充 4.2.1：**纯新增**字段（不改名、不改语义、缺键有兼容默认值）无需迁移，只有键改名 / 语义变化才要迁移 |
 | v1.4 | 2026-09-23 | Phase 3.6 新增 **3.6 插件入口函数幂等约定**（`ctx.http` 用"登记待办 + 宿主重放"实现，入口函数会被执行多次）；3.5 存储分离表补插件私有 KV（`plugin_data`） |
+| v1.5 | 2026-10-22 | 新增 **运行日志**（`services/app_log.dart`）：本地文件滚动日志，只留 24 小时，接管全局 `debugPrint` 零改动收集；设置 → 诊断 → 运行日志可查看与导出（FileProvider + 系统分享）。4.4 补充埋点与脱敏约定 |
 | v1.5 | 2026-09-25 | Phase 4.2.2：3.1 小节新增**例外说明**——`android/.../network_security_config.xml` 的域名白名单属 Android **平台安全策略**，不算"内核硬编码学校 URL"；每新增一个用 http 的学校需追加 `domain-config` 并重新发版 |

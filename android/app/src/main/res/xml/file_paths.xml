@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 的目录白名单（日志导出用）。
+
+  只开放两个**窄目录**，不写 `<root-path>`：日志导出文件在缓存目录的
+  `export/` 下，原始日志在 `files/logs/` 下。分享出去的 content:// URI
+  只能指向这两个目录里的文件，别的一概拿不到。
+
+  ⚠️ 这里的路径必须和 Dart 侧一致：
+  - `AppLog.writeExportFile` 写 `getTemporaryDirectory()/export/`
+    （Android 上是 `getCacheDir()`）；
+  - `AppLog.init` 写 `getApplicationSupportDirectory()/logs/`
+    （Android 上是 `getFilesDir()`）。
+-->
+<paths>
+    <cache-path name="export" path="export/" />
+    <files-path name="logs" path="logs/" />
+</paths>

@@ -13,6 +13,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../services/app_log.dart';
 import '../services/storage_service.dart';
 import 'js_sandbox.dart';
 import 'plugin_ctx_script.dart';
@@ -220,6 +221,7 @@ class PluginContext {
 
   /// 执行单个请求，返回统一格式的响应 JSON。
   Future<String> _performOne(PluginHttpRequest request) async {
+    final Stopwatch watch = Stopwatch()..start();
     try {
       final Response<String> response = await _dio.request<String>(
         request.url,
@@ -240,6 +242,14 @@ class PluginContext {
           validateStatus: (int? _) => true,
         ),
       );
+      // 请求级日志：插件"拿不到数据"时，第一步就是看它到底请求了哪个地址、
+      // 返回什么状态码。`AppLog.net` 内部会把 query 抹掉（教务 URL 里带 ticket）。
+      AppLog.net(
+        request.method,
+        request.url,
+        status: response.statusCode,
+        ms: watch.elapsedMilliseconds,
+      );
       return jsonEncode(<String, dynamic>{
         'ok': true,
         'status': response.statusCode,
@@ -247,14 +257,28 @@ class PluginContext {
         'headers': _flattenHeaders(response.headers),
       });
     } on DioException catch (e) {
-      debugPrint('[Plugin:$pluginId] HTTP ${request.method} ${request.url} 失败：'
-          '${e.type}');
+      // 这里也要脱敏：原始 URL 可能带登录凭据，而日志是要发给开发者的。
+      debugPrint('[Plugin:$pluginId] HTTP ${request.method} '
+          '${AppLog.sanitizeUrl(request.url)} 失败：${e.type}');
+      AppLog.net(
+        request.method,
+        request.url,
+        status: e.response?.statusCode,
+        ms: watch.elapsedMilliseconds,
+        error: _errorName(e),
+      );
       return jsonEncode(<String, dynamic>{
         'ok': false,
         'error': _errorName(e),
       });
     } catch (e) {
       debugPrint('[Plugin:$pluginId] HTTP 异常：$e');
+      AppLog.net(
+        request.method,
+        request.url,
+        ms: watch.elapsedMilliseconds,
+        error: e,
+      );
       return jsonEncode(<String, dynamic>{'ok': false, 'error': '$e'});
     }
   }

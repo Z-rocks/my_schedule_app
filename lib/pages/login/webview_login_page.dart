@@ -13,6 +13,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../runtime/plugin_qr_login.dart';
 import '../../services/campus_network_service.dart';
+import '../../services/app_log.dart';
 import '../../services/cookie_service.dart';
 import '../../services/qr_login_bridge.dart';
 import '../../theme/app_theme.dart';
@@ -918,6 +919,12 @@ class _WebViewLoginPageState extends State<WebViewLoginPage>
     if (pluginId != null && pluginId.isNotEmpty) {
       await CookieService.saveCookie(pluginId, cookie);
       debugPrint('[WebViewLoginPage] 已保存 $pluginId 的 Cookie（${cookie.length} 字符）');
+      // 只记"登录成功 + Cookie 长度"，**绝不记 Cookie 内容**：
+      // 那是能直接冒充用户身份的凭据，而日志是要发给开发者的。
+      AppLog.action('plugin_login_ok', <String, Object?>{
+        'plugin': pluginId,
+        'cookieLength': cookie.length,
+      });
     }
     if (!mounted) return;
     Navigator.of(context).pop(cookie);

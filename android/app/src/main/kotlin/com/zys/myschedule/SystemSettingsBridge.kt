@@ -5,6 +5,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.content.FileProvider
+import java.io.File
 
 /**
  * 小组件"省电引导"用的系统设置跳转（Phase W5）。
@@ -153,6 +155,89 @@ object SystemSettingsBridge {
     } catch (e: Exception) {
         // 读不到就当作"不是通用包"，Dart 侧按 ABI 挑裁剪包（原有行为）。
         false
+    }
+
+    /**
+     * 设备型号，形如 `Xiaomi 2211133C`。
+     *
+     * 日志导出用：机型特有问题（MIUI 杀后台、某家 ROM 的权限策略）
+     * 只有拿到型号才能定位。厂商名小写、型号保留原样。
+     */
+    fun deviceModel(): String = try {
+        val maker = Build.MANUFACTURER?.trim().orEmpty()
+        val model = Build.MODEL?.trim().orEmpty()
+        when {
+            maker.isEmpty() -> model
+            model.isEmpty() -> maker
+            // 型号里已经带了厂商名（如 `Xiaomi 2211133C`）就不重复拼。
+            model.lowercase().startsWith(maker.lowercase()) -> model
+            else -> "$maker $model"
+        }
+    } catch (e: Exception) {
+        ""
+    }
+
+    /**
+     * 系统版本，形如 `Android 14 (SDK 34)`。
+     *
+     * 日志导出用。**不能用 `Platform.operatingSystemVersion`**：Android 上
+     * 它返回的是构建指纹（`android BP2A.250605.031.A3`），既不是版本号
+     * 也不是能直接对照的编号，排查"某版本才有"的问题时完全用不上。
+     *
+     * `RELEASE` 是面向用户的版本（`14`），`SDK_INT` 是代码里判断用的
+     * API 级别（`34`），两个都要——用户说"我是安卓 14"、开发者查
+     * `Build.VERSION_CODES` 时用的是 34，缺一个就得多问一轮。
+     */
+    fun androidRelease(): String = try {
+        "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})"
+    } catch (e: Exception) {
+        ""
+    }
+
+    /**
+     * 用系统分享面板发一个本地文件（日志导出）。
+     *
+     * 走 `FileProvider`：Android 7.0 起 `file://` URI 直接抛
+     * `FileUriExposedException`，必须换成 `content://` 并显式授予读权限。
+     * 只授予**这一个 URI** 的读权限（`FLAG_GRANT_READ_URI_PERMISSION`），
+     * 不是整个 provider——目标应用拿不到别的文件。
+     *
+     * 返回 `true` 表示分享面板已拉起（不代表用户真的发出去）；
+     * 文件不存在 / 没有可分享的应用时返回 `false`，Dart 侧提示路径。
+     */
+    fun shareFile(
+        context: Context,
+        path: String,
+        mimeType: String,
+        subject: String,
+    ): Boolean {
+        if (path.isEmpty()) return false
+        val file = File(path)
+        if (!file.exists()) return false
+        return try {
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file,
+            )
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = mimeType.ifEmpty { "text/plain" }
+                putExtra(Intent.EXTRA_STREAM, uri)
+                if (subject.isNotEmpty()) putExtra(Intent.EXTRA_SUBJECT, subject)
+                // ClipData 是必需的：部分 ROM（含 MIUI）在只设 EXTRA_STREAM 时
+                // 不会把读权限传给目标应用，对方打开就是"文件不存在"。
+                clipData = android.content.ClipData.newRawUri(subject.ifEmpty { "log" }, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            val chooser = Intent.createChooser(send, subject.ifEmpty { "分享日志" })
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(chooser)
+            true
+        } catch (e: Exception) {
+            // IllegalArgumentException（文件不在 provider 声明的目录里）/
+            // ActivityNotFoundException（一个能分享的应用都没有）都会走到这里。
+            false
+        }
     }
 
     private fun start(context: Context, intent: Intent): Boolean = try {

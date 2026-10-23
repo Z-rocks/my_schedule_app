@@ -15,6 +15,7 @@ import '../../theme/default_skins.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/theme_extension.dart';
 import 'module_config_page.dart';
+import 'log_viewer_page.dart';
 import 'plugin_manage_page.dart';
 import 'timetable_settings_page.dart';
 import 'widget_guide_page.dart';
@@ -255,6 +256,19 @@ class SettingsPage extends StatelessWidget {
               _SettingsTile(
                 title: '清理缓存',
                 onTap: () => _confirmClearCache(context),
+              ),
+            ],
+          ),
+          // 诊断：这个 App 没有后端，出问题时开发者唯一的线索就是设备日志，
+          // 所以入口必须显眼、文案必须说清"什么时候该点它"。
+          _SettingsGroup(
+            title: '诊断',
+            children: <Widget>[
+              _SettingsTile(
+                title: '运行日志',
+                subtitleText: '记录最近 24 小时的操作与报错，可导出反馈',
+                showChevron: true,
+                onTap: () => _push(context, const LogViewerPage()),
               ),
             ],
           ),
