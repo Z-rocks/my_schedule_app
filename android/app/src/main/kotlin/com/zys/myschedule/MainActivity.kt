@@ -181,6 +181,11 @@ class MainActivity : FlutterActivity() {
                     // 日志导出头部用：`Xiaomi 2211133C` 这类可读型号。
                     "deviceModel" ->
                         result.success(SystemSettingsBridge.deviceModel())
+                    // 日志导出头部用：`Android 14 (SDK 34)`。
+                    // Dart 侧的 `Platform.operatingSystemVersion` 在 Android 上
+                    // 返回的是构建指纹，不能当版本号用。
+                    "androidRelease" ->
+                        result.success(SystemSettingsBridge.androidRelease())
                     // 日志导出：把生成的 txt 交给系统分享面板（微信 / QQ / 邮件）。
                     "shareFile" -> {
                         val path = call.argument<String>("path") ?: ""

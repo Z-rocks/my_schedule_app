@@ -153,6 +153,26 @@ class SystemBridge {
     }
   }
 
+  /// 系统版本，形如 `Android 14 (SDK 34)`。
+  ///
+  /// 用途：日志导出的头部信息。**不能用 `Platform.operatingSystemVersion`**：
+  /// Android 上它返回构建指纹（`android BP2A.250605.031.A3`），
+  /// 既不是版本号也不是能对照的编号，排查"某版本才有"的问题时用不上。
+  ///
+  /// 非 Android / 通道不可用返回空串，调用方自行回落。
+  static Future<String> androidRelease() async {
+    if (!isAndroidSettingsSupported) return '';
+    try {
+      final String? value =
+          await _channel.invokeMethod<String>('androidRelease');
+      return value ?? '';
+    } on MissingPluginException {
+      return '';
+    } on PlatformException {
+      return '';
+    }
+  }
+
   /// 用系统分享面板发一个本地文件（日志导出用）。
   ///
   /// 走 `FileProvider` + `Intent.ACTION_SEND`：微信、QQ、邮件、网盘

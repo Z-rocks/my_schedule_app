@@ -118,6 +118,7 @@ class LogExportService {
     final String version = await AppVersion.load();
     final String model = await SystemBridge.deviceModel();
     final String abi = await SystemBridge.primaryAbi();
+    final String os = await _osLabel();
 
     final List<LogEntry> entries = AppLog.snapshot();
     final DateTime? first = AppLog.firstTime;
@@ -130,8 +131,7 @@ class LogExportService {
       ..writeln('导出时间：${_formatTime(DateTime.now())}')
       ..writeln('App 版本：$version（${_buildMode()}）')
       ..writeln(
-        '设备：${model.isEmpty ? '未知' : model} / '
-        '${Platform.operatingSystem} ${Platform.operatingSystemVersion}'
+        '设备：${model.isEmpty ? '未知' : model} / $os'
         '${abi.isEmpty ? '' : ' / $abi'}',
       )
       ..writeln('日志文件：${AppLog.filePath}')
@@ -141,6 +141,17 @@ class LogExportService {
         '（共 ${entries.length} 条，警告 $warns 条，错误 $errors 条）',
       );
     return buffer.toString();
+  }
+
+  /// 系统版本文案。
+  ///
+  /// 优先用原生给的 `Android 14 (SDK 34)`；拿不到时退回
+  /// `Platform.operatingSystemVersion`——它在 Android 上是构建指纹
+  /// （`android BP2A.250605.031.A3`），信息价值低，但总比"未知"强。
+  static Future<String> _osLabel() async {
+    final String native = await SystemBridge.androidRelease();
+    if (native.isNotEmpty) return native;
+    return '${Platform.operatingSystem} ${Platform.operatingSystemVersion}'.trim();
   }
 
   static String _buildMode() {

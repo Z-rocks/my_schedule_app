@@ -178,6 +178,23 @@ object SystemSettingsBridge {
     }
 
     /**
+     * 系统版本，形如 `Android 14 (SDK 34)`。
+     *
+     * 日志导出用。**不能用 `Platform.operatingSystemVersion`**：Android 上
+     * 它返回的是构建指纹（`android BP2A.250605.031.A3`），既不是版本号
+     * 也不是能直接对照的编号，排查"某版本才有"的问题时完全用不上。
+     *
+     * `RELEASE` 是面向用户的版本（`14`），`SDK_INT` 是代码里判断用的
+     * API 级别（`34`），两个都要——用户说"我是安卓 14"、开发者查
+     * `Build.VERSION_CODES` 时用的是 34，缺一个就得多问一轮。
+     */
+    fun androidRelease(): String = try {
+        "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})"
+    } catch (e: Exception) {
+        ""
+    }
+
+    /**
      * 用系统分享面板发一个本地文件（日志导出）。
      *
      * 走 `FileProvider`：Android 7.0 起 `file://` URI 直接抛
